@@ -23,7 +23,7 @@
     <!-- 🐷 🎗️ -->
     <title>Technoblade Never Dies! | Poke</title>
  <% } %>
- <title><%=cinv.author%> | Poke</title>
+<title><%= cinv?.author ? `${cinv.author} | Poke` : 'Poke' %></title>
 <link rel="manifest" href="/manifest.json">
 <link href="css/yt-ukraine.svg?v=7" rel=icon>
 <link rel="alternate" type="application/rss+xml" href="/feeds/videos.xml?channel_id=<%=ID%>">
