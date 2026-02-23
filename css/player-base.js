@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -181,7 +181,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (aligning) return;
     aligning = true;
     try {
-      // Bypassed muting completely during seek alignment to prevent audio loss/pops
       safeSetCT(audio, t);
       if (intendedPlaying) {
         updateAudioGainImmediate();
@@ -248,8 +247,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (Math.abs(delta) > BIG_DRIFT) {
           softAlignAudioTo(vt); 
         } else if (Math.abs(delta) > MICRO_DRIFT) {
-          // Properly scale audio drift adjustment against the video's current playback rate
-          // This entirely prevents the desync/play-pause loop when using 2x or other speeds.
           const targetRate = baseRate + (delta * (0.20 * baseRate)); 
           try { audio.playbackRate = Math.max(baseRate * 0.85, Math.min(baseRate * 1.15, targetRate)); } catch {}
         } else {
@@ -473,7 +470,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
     try {
-      // Added robust fallback sizes to fix the missing thumbnail issue
       navigator.mediaSession.metadata = new MediaMetadata({
         title: document.title || 'Video',
         artist: typeof authorchannelname !== "undefined" ? authorchannelname : "",
@@ -510,14 +506,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     } catch {}
   }
 
-  // ———————————————————————— Progress save/restore ————————————————————————
   function restoreProgress() {
-    // Disabled restoring progress as requested, starts fresh perfectly synced.
     firstSeekDone = true;
   }
   
   function saveProgressThrottled() {
-    // Disabled saving progress as requested
   }
 
   // ——————————————————————————— Resilience (Ultra-Optimized) ————————————————————————————
@@ -526,7 +519,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
       if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
 
-      // Strictly checks if buffers are genuinely exhausted, removing false buffering pauses
       if (!bothPlayableAt(Number(video.currentTime()))) {
         showError(`${label} buffering…`);
         pauseHard();
@@ -757,22 +749,24 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       window.addEventListener('pagehide', () => { clearSyncLoop(); }, { passive: true });
       window.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') {
-          clearSyncLoop();
-        } else if (intendedPlaying) {
-          if (!syncInterval) startSyncLoop();
-          tryAutoResume();
+        if (document.visibilityState === 'visible') {
+          if (intendedPlaying) {
+            if (!syncInterval) startSyncLoop();
+            const vt = Number(video.currentTime());
+            const at = Number(audio.currentTime);
+            if (isFinite(vt) && isFinite(at) && Math.abs(vt - at) > 0.15) {
+               safeSetCT(audio, vt); 
+               updateAudioGainImmediate();
+            }
+            tryAutoResume();
+          }
         }
       }, { passive: true });
-      window.addEventListener('beforeunload', () => {
-        // Disabled progress saving on unload
-      });
+      window.addEventListener('beforeunload', () => {});
     } catch {}
   } else {
     try {
-      video.on('timeupdate', () => {
-        // Disabled basic progress tracking as well
-      });
+      video.on('timeupdate', () => {});
 
       if ('mediaSession' in navigator) {
         video.on('play', () => {
@@ -787,7 +781,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     } catch {}
     setupMediaSession();
   }
-}); 
+});
 
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
