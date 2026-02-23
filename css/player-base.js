@@ -270,6 +270,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const aPaused = audio.paused;
         const vPaused = videoEl.paused;
 
+        // Visual fix: If audio is playing and video isn't paused, clear buffering state
+        if (!aPaused && !vPaused && videoEl.readyState >= 3) {
+            hideError();
+            if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
+        }
+
         // SCENARIO 1: Audio is playing, but video got paused
         if (!aPaused && vPaused) {
           if (Math.abs(at - vt) > 0.15) {
@@ -290,12 +296,10 @@ document.addEventListener("DOMContentLoaded", () => {
           } catch {
              if (!audio.paused) { squelchAudioEvents(); audio.pause(); }
           }
-          hideError();
         }
 
         // SCENARIO 2: Video is playing, but Audio is paused 
         if (!vPaused && aPaused) {
-          // Verify video isn't actually buffering before resuming audio
           if (videoEl.readyState >= 3) {
             try {
                 squelchAudioEvents();
@@ -311,9 +315,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Strict Enforcement: If video is paused or buffering while audio plays, pause audio.
-        // We check readyState < 3 as a direct indicator of insufficient data (buffering).
         if ((videoEl.paused || videoEl.readyState < 3) && !audio.paused && internalPlayRequest === 0) {
-           // We only enforce this pause if the tab is visible OR if it's a genuine buffer stall
            if (document.visibilityState === 'visible' || videoEl.readyState < 2) {
              squelchAudioEvents();
              audio.pause();
@@ -393,10 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     
-    // GUARD: Never play together if video is currently buffering
-    if (videoEl.readyState < 3) {
-      return;
-    }
+    if (videoEl.readyState < 3) return;
 
     syncing = true;
     lastPlayKickTs = performance.now();
@@ -459,6 +458,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       updateMediaSessionPlaybackState();
+      hideError();
     } finally {
       syncing = false;
     }
@@ -542,7 +542,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
       if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
       
-      // If video stalls, stop audio immediately
       if (label === 'Video') {
         squelchAudioEvents();
         audio.pause();
@@ -560,11 +559,10 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const tryResume = async () => {
-      hideError();
       if (!intendedPlaying || restarting || seekingActive) return;
       const t = Number(video.currentTime());
-      // Wait for BOTH to be ready before resuming
       if (bothPlayableAt(t)) {
+        hideError();
         await ensureUnmutedIfNotUserMuted();
         playTogether({ allowMutedRetry: true });
       }
@@ -572,7 +570,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     el.addEventListener('waiting', pauseIfRealStall);
     el.addEventListener('stalled', pauseIfRealStall);
-    el.addEventListener('playing', hideError);
+    el.addEventListener('playing', () => {
+        hideError();
+        if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
+    });
     el.addEventListener('canplay', tryResume);
     el.addEventListener('canplaythrough', tryResume);
   }
@@ -631,11 +632,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!hasExternalAudio) return;
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
-      // Only trigger group play if video is actually ready
       if (video.paused() && videoEl.readyState >= 3) {
         playTogether({ allowMutedRetry: true });
       } else if (videoEl.readyState < 3) {
-        // Video is buffering, force audio to stay paused
         squelchAudioEvents();
         audio.pause();
       }
@@ -646,8 +645,10 @@ document.addEventListener("DOMContentLoaded", () => {
       pauseTogether();
     });
 
-    videoEl.addEventListener('playing', hideError);
-    audio.addEventListener('playing', hideError);
+    videoEl.addEventListener('playing', () => {
+        hideError();
+        if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
+    });
 
     video.on('ratechange', () => { try { audio.playbackRate = video.playbackRate(); } catch {} });
 
@@ -667,7 +668,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // Buffering guards using Video.js events
     video.on('waiting', () => {
       if (intendedPlaying && !restarting) {
         squelchAudioEvents();
@@ -676,6 +676,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     video.on('playing', () => {
+      hideError();
+      if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
       if (intendedPlaying && !restarting && audio.paused) {
         playTogether({ allowMutedRetry: true });
       }
@@ -683,14 +685,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let wasPlayingBeforeSeek = false;
     let seekStartTime = 0;
-
-    function computeSeekThresholds() {
-      const dur = Number(video.duration()) || 300;
-      const small = Math.max(0.4, Math.min(5, dur * 0.01));
-      const large = Math.max(5, Math.min(45, dur * 0.12));
-      const huge  = Math.max(10, Math.min(60, dur * 0.33));
-      return { small, large, huge };
-    }
 
     video.on('seeking', () => {
       if (restarting) return;
@@ -703,7 +697,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (Math.abs(at - seekStartTime) > 0.25) {
          safeSetCT(audio, seekStartTime); 
       }
-      // Pause audio during seek to prevent audio playing while video buffers new position
       squelchAudioEvents();
       audio.pause();
     });
@@ -724,7 +717,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (wasPlayingBeforeSeek || document.visibilityState === 'visible') {
           intendedPlaying = true;
           updateMediaSessionPlaybackState();
-          // Only play if both are ready; wireResilience will handle the 'canplay' trigger if not
           if (bothPlayableAt(newTime)) {
              playTogether({ allowMutedRetry: true });
           }
