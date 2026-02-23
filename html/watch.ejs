@@ -2689,17 +2689,17 @@ const drawPause = () => {
   }
 };
 
- const forcePlay = async () => {
+const forcePlay = async () => {
    AMvideo.currentTime = 0;
-  
-  try {
+
+   try {
     await AMvideo.play();
-  } catch (err) {
-      try {
-       await AMvideo.play();
-    } catch (e) {
-      console.error("Autoplay failed completely.");
+    
+    if (AMvideo.currentTime > 0.5) { 
+        AMvideo.currentTime = 0;
     }
+  } catch (error) {
+    console.warn("Video playback was blocked:", error);
   }
 };
 
