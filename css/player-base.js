@@ -245,7 +245,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const baseRate = Number(video.playbackRate()) || 1;
 
         if (Math.abs(delta) > BIG_DRIFT) {
-          softAlignAudioTo(vt); 
+          // Seamless catchup: if video lagged (background tab), snap video forward. Otherwise snap audio.
+          if (vt < at) video.currentTime(at);
+          else softAlignAudioTo(vt); 
         } else if (Math.abs(delta) > MICRO_DRIFT) {
           const targetRate = baseRate + (delta * (0.20 * baseRate)); 
           try { audio.playbackRate = Math.max(baseRate * 0.85, Math.min(baseRate * 1.15, targetRate)); } catch {}
@@ -268,13 +270,18 @@ document.addEventListener("DOMContentLoaded", () => {
       if (intendedPlaying) {
         if (video.paused() && bothPlayableAt(vt) && !restarting) {
             hideError();
-            ensureUnmutedIfNotUserMuted().then(() => playTogether({ allowMutedRetry: true }));
+            if (document.visibilityState === 'visible') {
+                ensureUnmutedIfNotUserMuted().then(() => playTogether({ allowMutedRetry: true }));
+            } else {
+                internalPlayRequest++;
+                video.play().catch(() => {});
+            }
         }
         
         if (video.paused() && !audio.paused) {
           try {
             internalPlayRequest++;
-            video.play();
+            video.play().catch(() => {});
           } catch {}
           internalPlayRequest = Math.max(0, internalPlayRequest - 1);
         }
@@ -305,8 +312,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (!intendedPlaying || restarting) return;
-        pauseHard();
-        setTimeout(() => { if (intendedPlaying) playTogether({ allowMutedRetry: true }); }, 120);
+        
+        // Zero-pause seamless resync: No more pauseHard() interruptions
+        if (vt < at) {
+            video.currentTime(at);
+        } else {
+            safeSetCT(audio, vt);
+        }
         return;
       }
 
@@ -747,22 +759,22 @@ document.addEventListener("DOMContentLoaded", () => {
     audio.addEventListener('canplay', tryAutoResume);
 
     try {
-      window.addEventListener('pagehide', () => { clearSyncLoop(); }, { passive: true });
       window.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           if (intendedPlaying) {
-            if (!syncInterval) startSyncLoop();
             const vt = Number(video.currentTime());
             const at = Number(audio.currentTime);
+            // Seamlessly snap throttled video forward to background audio
             if (isFinite(vt) && isFinite(at) && Math.abs(vt - at) > 0.15) {
-               safeSetCT(audio, vt); 
+               if (vt < at) video.currentTime(at);
+               else safeSetCT(audio, vt); 
                updateAudioGainImmediate();
             }
             tryAutoResume();
+            if (!syncInterval) startSyncLoop();
           }
         }
       }, { passive: true });
-      window.addEventListener('beforeunload', () => {});
     } catch {}
   } else {
     try {
@@ -781,8 +793,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
     setupMediaSession();
   }
-});
-
+}); 
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
