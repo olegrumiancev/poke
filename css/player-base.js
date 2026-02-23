@@ -614,10 +614,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     audio.addEventListener('pause', () => {
       if (audioEventsSquelched() || restarting || internalPlayRequest > 0) return;
-      // Only pause everything if the tab is visible and the pause wasn't a glitch
-      if (document.visibilityState === 'visible' && intendedPlaying) {
-          pauseTogether();
-      }
+      // Audio pausing is usually deliberate (media hub or user action).
+      // We must treat it as a hard pause regardless of visibility to prevent sync-looping background restarts.
+      pauseTogether();
     });
 
     videoEl.addEventListener('playing', hideError);
@@ -636,8 +635,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     video.on('pause', () => {
       if (restarting || internalPlayRequest > 0) return;
-      // Only call pauseTogether if the tab is actually visible. 
-      // If hidden, Chromium likely throttled the video; we ignore that pause event to keep audio alive.
+      // Only call pauseTogether if the tab is visible.
+      // If hidden, Chromium likely throttled the video; we ignore that pause to keep audio going.
       if (document.visibilityState === 'visible' && intendedPlaying) {
          pauseTogether();
       }
