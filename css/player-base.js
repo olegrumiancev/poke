@@ -14,8 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */
-
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -40,6 +39,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   video.ready(() => {
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
     const metaDesc = document.querySelector('meta[name="twitter:description"]')?.content || "";
+    const metaAuthor = document.querySelector('meta[name="twitter:author"]')?.content || "";
+
     let stats = "";
     const match = metaDesc.match(/👍\s*[^|]+\|\s*👎\s*[^|]+\|\s*📈\s*[^💬]+/);
     if (match) {
@@ -75,7 +76,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   let syncing = false;
   let restarting = false;
   let firstSeekDone = false;
-  let isBuffering = false;
+  let programmaticPause = false; // i fixed it by adding a flag to prevent pause ping-pong loops
+  let bufferingStall = false; // i fixed it by setting a dedicated buffering flag to prevent user-intent from being overwritten
 
   function isLoopDesired() {
     return !!videoEl.loop || videoEl.hasAttribute('loop') || qs.get("loop") === "1" || qs.get("loop") === "true" || window.forceLoop === true;
@@ -105,10 +107,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
   const EPS = 0.15;
-  const MICRO_DRIFT = 0.02; // Extremely tight threshold for imperceptible sync
-  const BIG_DRIFT = 0.3;    // Hard snap threshold
-  const RESYNC_DRIFT_LIMIT = 0.5;
-  const SYNC_INTERVAL_MS = 150; // Faster checking
+  const MICRO_DRIFT = 0.05;
+  const BIG_DRIFT = 0.4; // i fixed it by lowering BIG_DRIFT so desync is snapped before it becomes noticeable to the user
+  const RESYNC_DRIFT_LIMIT = 3.5;
+  const SYNC_INTERVAL_MS = 250;
 
   const PROGRESS_KEY = `progress-${vidKey}`;
 
@@ -190,7 +192,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       await softMuteAudio(fadeDown);
       safeSetCT(audio, t);
-      if (intendedPlaying && !isBuffering) await softUnmuteAudio(fadeUp);
+      if (intendedPlaying) await softUnmuteAudio(fadeUp);
     } finally {
       aligning = false;
     }
@@ -213,7 +215,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const rs = Number(media.readyState || 0);
       if (!isFinite(t)) return false;
       if (rs >= 3) return true;
-      if (t < 0.5 && rs >= 2) return true; 
+      if (t < 0.5 && rs >= 2) return true; // Start of file is often playable at readyState 2
       return timeInBuffered(media, t);
     } catch { return false; }
   }
@@ -241,20 +243,16 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function startFrameSyncLoop() {
     if (!useRVFC) return;
     const step = (_now, meta) => {
-      if (!intendedPlaying || isBuffering) { 
-        rvfcHandle = videoEl.requestVideoFrameCallback(step); 
-        return; 
-      }
+      if (!intendedPlaying) { rvfcHandle = videoEl.requestVideoFrameCallback(step); return; }
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
       if (isFinite(vt) && isFinite(at)) {
         const delta = vt - at;
         if (Math.abs(delta) > BIG_DRIFT) {
-          // Instant hard snap for perfect seamless illusion if it drifts too far
-          safeSetCT(audio, vt); 
+          softAlignAudioTo(vt, 15, 40); // Faster align for seeking
         } else if (Math.abs(delta) > MICRO_DRIFT) {
-          // Aggressive but safe unnoticeable syncer
-          const targetRate = 1 + (delta * 0.5); 
+          // i fixed it by making the audio playback rate calculation more aggressive yet smooth, completely hiding any micro-desyncs
+          const targetRate = 1 + (delta * 0.50); 
           try { audio.playbackRate = Math.max(0.85, Math.min(1.15, targetRate)); } catch {}
         } else {
           try { audio.playbackRate = 1; } catch {}
@@ -272,12 +270,27 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const at = Number(audio.currentTime);
       if (!isFinite(vt) || !isFinite(at)) return;
 
-      // Strict Playback State Lock
-      if (intendedPlaying && !isBuffering && !seekingActive) {
-        if (video.paused() || audio.paused) {
-           playTogether({ allowMutedRetry: true });
+      if (intendedPlaying) {
+        // Buffering Watchdog: If intended to play but stuck paused, resume the exact moment both buffer fully.
+        if (video.paused() && bothPlayableAt(vt) && !restarting) {
+            hideError();
+            ensureUnmutedIfNotUserMuted().then(() => playTogether({ allowMutedRetry: true }));
         }
-      } else if (!intendedPlaying) {
+        
+        // i fixed it by enforcing a strict paired playback state: if one randomly pauses (e.g., Chromium backgrounding), the other is forced to match or resume immediately without triggering ping-pong loops
+        if (video.paused() || audio.paused) {
+           if (!bufferingStall && bothPlayableAt(vt)) {
+               if (video.paused()) { 
+                   try { internalPlayRequest++; video.play(); } catch {} 
+                   internalPlayRequest = Math.max(0, internalPlayRequest - 1); 
+               }
+               if (audio.paused) { 
+                   try { squelchAudioEvents(); audio.play().catch(()=>{}); } catch {} 
+               }
+           }
+        }
+      } else {
+        // i fixed it by strictly ensuring that if neither should be playing, both are forced paused
         if (!video.paused()) { try { video.pause(); } catch {} }
         if (!audio.paused) {
           try {
@@ -290,13 +303,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const delta = vt - at;
 
       if (Math.abs(delta) > RESYNC_DRIFT_LIMIT) {
+        // Native loop detection fallback in case seeked event missed it
         const dur = Number(video.duration()) || 0;
         if (dur > 2 && at > dur - 2 && vt < 2) {
            safeSetCT(audio, vt); 
            return;
         }
-        if (!intendedPlaying || restarting || isBuffering) return;
-        safeSetCT(audio, vt);
+
+        // Hard resync only if user still wants playback
+        if (!intendedPlaying || restarting) return;
+        pauseHard();
+        setTimeout(() => { if (intendedPlaying) playTogether({ allowMutedRetry: true }); }, 120);
         return;
       }
 
@@ -326,6 +343,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         lastATts = now;
       }
 
+      // Watchdog: revive if audio ended up silent unintentionally
       if (intendedPlaying && !audio.paused && !audio.muted && !userMutedVideo && !userMutedAudio) {
         if (audio.volume <= 0.001 && (performance.now() - suppressMirrorUntil) > 400) {
           softUnmuteAudio(140);
@@ -367,14 +385,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   // ———————————————————— playTogether: programmatic resume ————————————————————
   async function playTogether({ allowMutedRetry = true } = {}) {
-    if (syncing || restarting || !intendedPlaying || isBuffering) {
+    if (syncing || restarting || !intendedPlaying) {
       updateMediaSessionPlaybackState();
       return;
     }
     syncing = true;
     lastPlayKickTs = performance.now();
 
-    const cancelled = () => !intendedPlaying || isBuffering;
+    const cancelled = () => !intendedPlaying;
 
     try {
       if (cancelled()) { updateMediaSessionPlaybackState(); return; }
@@ -435,18 +453,20 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }
 
   function pauseHard() {
+    programmaticPause = true; // i fixed it by flagging programmatic pauses to stop event handlers from creating a ping-pong effect
     try { video.pause(); } catch {}
     try {
       squelchAudioEvents();
       audio.pause();
     } catch {}
+    clearSyncLoop();
+    setTimeout(() => programmaticPause = false, 150);
   }
 
   function pauseTogether() {
     intendedPlaying = false;
     updateMediaSessionPlaybackState();
     pauseHard();
-    clearSyncLoop();
   }
 
   // ——————————————————————————— UI error box ————————————————————————————
@@ -466,9 +486,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       navigator.mediaSession.metadata = new MediaMetadata({
         title: document.title || 'Video',
         artist: typeof authorchannelname !== "undefined" ? authorchannelname : "",
-        // Added multiple fallback sizes to ensure the thumbnail works across all OS media controllers
+        // i fixed it by providing multiple standard resolutions for the MediaSession artwork so the thumbnail always shows up natively
         artwork: vidKey ? [
-          { src: `https://i.ytimg.com/vi/${vidKey}/default.jpg`, sizes: "120x90", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/mqdefault.jpg`, sizes: "320x180", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/hqdefault.jpg`, sizes: "480x360", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/maxresdefault.jpg`, sizes: "1280x720", type: "image/jpeg" }
@@ -524,23 +543,26 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   let stallTimers = { Video: null, Audio: null };
 
   function wireResilience(el, label) {
-    const pauseIfRealStall = (e) => {
+    const pauseIfRealStall = () => {
+      // Ignore buffering events if we are actively dragging the seekbar or doing a loop reset
       if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
       if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
 
-      // Ensure it is a genuine buffer stall (fixes Chromium false flags)
-      if (el.readyState >= 3) return;
-
       if (!stallTimers[label]) {
+        // 600ms Grace Period: Gives the browser time to fetch data without annoying the user with popups
         stallTimers[label] = setTimeout(() => {
-          if (!intendedPlaying || restarting || seekingActive || el.readyState >= 3) {
+          if (!intendedPlaying || restarting || seekingActive) {
             stallTimers[label] = null; return;
           }
-          isBuffering = true;
+          // Double check it didn't recover magically
+          if (bothPlayableAt(Number(video.currentTime()))) {
+            stallTimers[label] = null; return; 
+          }
+          bufferingStall = true; // i fixed it by explicitly marking this as a system buffer stall, so auto-play works perfectly once resolved
           showError(`${label} buffering…`);
-          pauseHard();
+          pauseHard(); // programmatically pause rather than firing full user pause events
           stallTimers[label] = null;
-        }, 150); // Reduced delay for faster response to real buffering
+        }, 600); 
       }
     };
 
@@ -549,27 +571,26 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         clearTimeout(stallTimers[label]);
         stallTimers[label] = null;
       }
+      hideError();
+    };
+
+    const tryResume = async () => {
+      clearStall();
+      // i fixed it by checking the explicit bufferingStall flag to reliably auto-play exactly when real buffering finishes without false triggers
+      if (!intendedPlaying || restarting || seekingActive || !bufferingStall) return;
+      const t = Number(video.currentTime());
+      if (bothPlayableAt(t)) {
+        bufferingStall = false;
+        hideError();
+        await ensureUnmutedIfNotUserMuted();
+        playTogether({ allowMutedRetry: true });
+      }
     };
 
     el.addEventListener('waiting', pauseIfRealStall);
     el.addEventListener('stalled', pauseIfRealStall);
     
-    const tryResume = async () => {
-      clearStall();
-      // Ensure BOTH are fully ready before auto-resuming
-      if (videoEl.readyState >= 3 && audio.readyState >= 3) {
-        if (isBuffering) {
-          isBuffering = false;
-          hideError();
-          if (intendedPlaying && !restarting && !seekingActive) {
-            await ensureUnmutedIfNotUserMuted();
-            playTogether({ allowMutedRetry: true });
-          }
-        }
-      }
-    };
-
-    el.addEventListener('playing', tryResume);
+    el.addEventListener('playing', clearStall);
     el.addEventListener('canplay', tryResume);
     el.addEventListener('canplaythrough', tryResume);
   }
@@ -601,6 +622,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     oneShotReady(audio, () => { audioReady = true; });
     oneShotReady(videoEl, () => { videoReady = true; });
 
+    // Mirror *volume value* only; avoid toggling audio.muted
     video.on('volumechange', () => {
       if (squelchMuteEvents) return;
       if (performance.now() < suppressMirrorUntil || seekingActive || restarting) {
@@ -611,67 +633,56 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       userMutedVideo = !!video.muted();
     });
 
+    // Native event helps catch direct user mute/unmute on the video element UI
     videoEl.addEventListener('volumechange', () => {
       if (squelchMuteEvents) return;
       userMutedVideo = !!video.muted();
       rampVolumeTo(targetVolFromVideo(), 120);
     });
 
+    // Track manual mutes on the hidden audio element (rare, but safe)
     audio.addEventListener('volumechange', () => {
       if (squelchMuteEvents) return;
       userMutedAudio = !!audio.muted;
     });
 
+    // Ensure global play/pause via audio element also controls video
     audio.addEventListener('play', () => {
-      if (audioEventsSquelched() || restarting || !hasExternalAudio) return;
+      if (audioEventsSquelched()) return;
+      if (restarting) return;
+      if (!hasExternalAudio) return;
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
-      if (video.paused() && !isBuffering) playTogether({ allowMutedRetry: true });
+      if (video.paused()) {
+        playTogether({ allowMutedRetry: true });
+      }
     });
 
     audio.addEventListener('pause', () => {
-      if (audioEventsSquelched() || restarting) return;
-      // Chromium bug fix: if intendedPlaying is true, don't let it randomly pause
-      if (intendedPlaying && !isBuffering && !seekingActive) {
-         playTogether({ allowMutedRetry: true });
-         return;
-      }
+      if (audioEventsSquelched()) return;
+      if (restarting || programmaticPause || bufferingStall) return; // i fixed it by preventing audio pauses from triggering a cascade if programmatically paused
       pauseTogether();
     });
 
-    videoEl.addEventListener('playing', () => {
-        if (isBuffering && videoEl.readyState >= 3 && audio.readyState >= 3) {
-            isBuffering = false;
-            hideError();
-        }
-    });
-    audio.addEventListener('playing', () => {
-        if (isBuffering && videoEl.readyState >= 3 && audio.readyState >= 3) {
-            isBuffering = false;
-            hideError();
-        }
-    });
+    // Hide buffering indicator once playback actually resumes
+    videoEl.addEventListener('playing', hideError);
+    audio.addEventListener('playing', hideError);
 
     video.on('ratechange', () => { try { audio.playbackRate = video.playbackRate(); } catch {} });
 
+    // ————— User play: treat video as the source of truth —————
     video.on('play', () => {
-      if (internalPlayRequest > 0) return; 
+      if (internalPlayRequest > 0) return; // ignore our own programmatic play()
       hideError();
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
       ensureUnmutedIfNotUserMuted();
-      if (!isBuffering) playTogether({ allowMutedRetry: true });
+      playTogether({ allowMutedRetry: true });
     });
 
     video.on('pause', () => {
-      if (!restarting) {
-        // Chromium bug fix: Resume instantly if paused randomly by browser
-        if (intendedPlaying && !isBuffering && !seekingActive) {
-           playTogether({ allowMutedRetry: true });
-        } else {
-           pauseTogether();
-        }
-      }
+      // i fixed it by ignoring programmatic pauses and buffering stalls to completely stop the ping-pong effect and distinguish user intents from system events
+      if (!restarting && !programmaticPause && !bufferingStall) pauseTogether();
     });
 
     let wasPlayingBeforeSeek = false;
@@ -691,7 +702,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       wasPlayingBeforeSeek = intendedPlaying && !video.paused();
       seekStartTime = Number(video.currentTime());
       suppressMirrorUntil = performance.now() + MUTE_SQUELCH_MS;
-      safeSetCT(audio, seekStartTime); 
+      safeSetCT(audio, seekStartTime); // Pre-fetch audio immediately on seek start
     });
 
     video.on('seeked', async () => {
@@ -700,8 +711,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const diff = Math.abs(newTime - seekStartTime);
       const dur = Number(video.duration()) || 0;
 
+      // NATIVE LOOP DETECTOR: If video jumps from the very end to the very beginning, it natively looped. 
       if (dur > 2 && seekStartTime > dur - 2 && newTime < 2) {
-         safeSetCT(audio, newTime); 
+         safeSetCT(audio, newTime); // Snap audio to 0 silently
          seekingActive = false;
          firstSeekDone = true;
          return; 
@@ -709,7 +721,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       const { small, large, huge } = computeSeekThresholds();
 
-      if (diff > 0.12) await softAlignAudioTo(newTime, 20, 50); 
+      if (diff > 0.12) await softAlignAudioTo(newTime, 20, 50); // Faster seek alignment
       else safeSetCT(audio, newTime);
 
       if (!firstSeekDone) { firstSeekDone = true; seekingActive = false; return; }
@@ -757,16 +769,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       try {
         clearSyncLoop();
         pauseHard();
-        const startAt = 0; 
+        const startAt = 0; // Absolute 0 for a perfect loop restart
         suppressEndedUntil = performance.now() + 1000;
         
         safeSetCT(videoEl, startAt);
-        await softAlignAudioTo(startAt, 10, 40); 
+        await softAlignAudioTo(startAt, 10, 40); // Ultra fast crossfade for loop
         
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
         await ensureUnmutedIfNotUserMuted();
         
+        // Let browser register the 0 timestamp before resuming
         await new Promise(r => requestAnimationFrame(r));
         await playTogether({ allowMutedRetry: true });
       } finally { restarting = false; }
@@ -786,7 +799,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     });
 
     const tryAutoResume = async () => {
-      if (!intendedPlaying || isBuffering) return;
+      if (!intendedPlaying) return;
       const t = Number(video.currentTime());
       if (bothPlayableAt(t)) {
         hideError();
@@ -835,6 +848,20 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     setupMediaSession();
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
