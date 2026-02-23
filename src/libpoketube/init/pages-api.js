@@ -291,63 +291,42 @@ module.exports = function (app, config, renderTemplate) {
     }
   });
   
- function sendErrorPage(res, statusCode, statusText, requestedUrl) {
-  const html = `<!DOCTYPE html><html lang=en>
-  <meta charset=utf-8>
-  <meta name=viewport content="initial-scale=1, minimum-scale=1, width=device-width">
-  <meta http-equiv="refresh" content="4;url=/" /> 
-  <title>Error ${statusCode} (${statusText})!!1</title>
-  <style>
-    *{margin:0;padding:0}
-    html,code{font:15px/22px arial,sans-serif}
-     html{background:#121212;color:#e0e0e0;padding:15px} 
-    body{margin:7% auto 0;max-width:390px;min-height:180px;padding:30px 0 15px}
-    * > body{background:url(//www.google.com/images/errors/robot.png) 100% 5px no-repeat;padding-right:205px}
-    p{margin:11px 0 22px;overflow:hidden}
-    ins{color:#999;text-decoration:none}
-    a img{border:0}
-    @media screen and (max-width:772px){body{background:none;margin-top:0;max-width:none;padding-right:0}}
-     #logo{background:url(https://poketube.fun/static/logo-poke.svg) no-repeat center; background-size: contain;}
-    #logo{display:inline-block;height:54px;width:150px}
-  </style>
-  <a href="/"><span id=logo aria-label="PokeTube"></span></a>
-  <p><b>${statusCode}.</b> <ins>That’s an error.</ins>
-  <p>The requested URL <code>${requestedUrl}</code> resulted in an error. <ins>That’s all we know.</ins></p>
-  <p><ins>Redirecting you to the home page...</ins></p>
-  </html>`;
-
-   res.status(statusCode).set('Content-Type', 'text/html').send(html);
-}
-
 app.get("/feeds/videos.xml", async (req, res) => {
   const channelId = req.query.channel_id;
   const playlistId = req.query.playlist_id;
 
-  let url;
+   const sendError = (status) => {
+     const safeUrl = req.originalUrl.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    const errorHtml = `<!DOCTYPE html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="initial-scale=1, minimum-scale=1, width=device-width"><title>Error ${status}</title><style>*{margin:0;padding:0}html,code{font:15px/22px arial,sans-serif}html{background:#121212;color:#e0e0e0;padding:15px}body{margin:7% auto 0;max-width:390px;min-height:180px;padding:30px 0 15px}*>body{background:url(//www.google.com/images/errors/robot.png) 100% 5px no-repeat;padding-right:205px}p{margin:11px 0 22px;overflow:hidden}ins{color:#aaa;text-decoration:none}a img{border:0;height:54px}@media screen and (max-width:772px){body{background:none;margin-top:0;max-width:none;padding-right:0}}</style><a href="/"><img src="https://poketube.fun/static/logo-poke.svg" alt="Poke Logo"></a><p><b>${status}.</b> <ins>That’s an error.</ins><p>The requested URL <code>${safeUrl}</code> resulted in an error. <ins>That’s all we know.</ins></html>`;
+    
+    res.status(status).type('html').send(errorHtml);
+  };
 
-  if (channelId) {
-    url = `https://youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-  } else if (playlistId) {
-    url = `https://youtube.com/feeds/videos.xml?playlist_id=${playlistId}`;
-  } else {
-     return sendErrorPage(res, 400, "Bad Request", req.originalUrl);
+  if (!channelId && !playlistId) {
+    return sendError(400); 
   }
+
+  const url = channelId
+    ? `https://youtube.com/feeds/videos.xml?channel_id=${channelId}`
+    : `https://youtube.com/feeds/videos.xml?playlist_id=${playlistId}`;
 
   try {
     let f = await modules.fetch(url, {
       method: req.method,
-      headers: headers,
+      headers: headers, 
     });
 
      if (!f.ok) {
-      return sendErrorPage(res, f.status, f.statusText || "Not Found", req.originalUrl);
+      return sendError(f.status);
     }
 
     res.set('Content-Type', 'application/xml');
     f.body.pipe(res);
+    
   } catch (error) {
     console.error("Error fetching YouTube feed:", error);
-     return sendErrorPage(res, 500, "Internal Server Error", req.originalUrl);
+    sendError(500);  
   }
 });
 
