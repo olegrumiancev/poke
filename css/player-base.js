@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
-  document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -101,7 +101,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   try { audio.loop = false; audio.removeAttribute?.('loop'); } catch {}
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
-  const EPS = 0.15;
+  const EPS = 1.0; 
   const MICRO_DRIFT = 0.05;
   const BIG_DRIFT = 1.2; 
   const SYNC_INTERVAL_MS = 300;
@@ -272,38 +272,41 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         const vPlayable = canPlayAt(videoEl, vt);
         const aPlayable = canPlayAt(audio, at);
 
-        // 1. Audio playing but video is not (buffering or paused)
-        if (!aPaused && (vPaused || !vPlayable)) {
+        const vBuffering = !vPaused && (video.hasClass('vjs-waiting') || (videoEl.readyState < 3 && !vPlayable));
+        const aBuffering = !aPaused && (audio.readyState < 3 && !aPlayable);
+
+        if (vBuffering && !aPaused) {
           if (internalPlayRequest === 0) {
             squelchAudioEvents();
             audio.pause();
-            if (!vPlayable && !vPaused) showError("Video buffering…");
+            showError("Video buffering…");
           }
         } 
-        
-        // 2. Video playing but audio is not (buffering or paused)
-        else if (!vPaused && (aPaused || !aPlayable)) {
+        else if (aBuffering && !vPaused) {
           if (internalPlayRequest === 0) {
-            if (!aPlayable) {
-              internalPlayRequest++;
-              try { video.pause(); } catch {}
-              setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
-              showError("Audio buffering…");
-            } else if (vPlayable) {
-              squelchAudioEvents();
-              safeSetCT(audio, vt);
-              audio.play().catch(() => {});
-            }
+            internalPlayRequest++;
+            try { video.pause(); } catch {}
+            setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
+            showError("Audio buffering…");
           }
         } 
-        
-        // 3. Both paused, but both playable and intended to play
+        else if (!aPaused && vPaused && !vBuffering) {
+          if (internalPlayRequest === 0) {
+            squelchAudioEvents();
+            audio.pause();
+          }
+        } 
+        else if (!vPaused && aPaused && !aBuffering) {
+          if (internalPlayRequest === 0) {
+            squelchAudioEvents();
+            safeSetCT(audio, vt);
+            audio.play().catch(() => {});
+          }
+        } 
         else if (vPaused && aPaused && vPlayable && aPlayable) {
           ensureUnmutedIfNotUserMuted().then(() => playTogether({ allowMutedRetry: true }));
         } 
-        
-        // 4. Drift correction when both playing smoothly
-        else if (!vPaused && !aPaused && vPlayable && aPlayable) {
+        else if (!vPaused && !aPaused && !vBuffering && !aBuffering) {
           hideError();
           if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
           if (Math.abs(at - vt) > 0.4) safeSetCT(videoEl, at);
@@ -528,11 +531,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
       if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
       
-      if (label === 'Video') {
-        squelchAudioEvents();
-        audio.pause();
-      }
-
       if (document.visibilityState === 'hidden') return;
 
       if (!bothPlayableAt(Number(video.currentTime()))) {
@@ -540,6 +538,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (label === 'Video') {
            squelchAudioEvents();
            audio.pause();
+        } else if (label === 'Audio') {
+           internalPlayRequest++;
+           try { video.pause(); } catch {}
+           setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
         }
       }
     };
@@ -558,7 +560,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     el.addEventListener('stalled', pauseIfRealStall);
     el.addEventListener('playing', () => {
         hideError();
-        if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
+        if (label === 'Video' && video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
     });
     el.addEventListener('canplay', tryResume);
     el.addEventListener('canplaythrough', tryResume);
@@ -660,6 +662,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (intendedPlaying && !restarting) {
         squelchAudioEvents();
         audio.pause();
+        showError("Video buffering…");
       }
     });
 
@@ -807,8 +810,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     } catch {}
     setupMediaSession();
   }
-});
-
+}); 
  document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
