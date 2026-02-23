@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -270,13 +270,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const aPaused = audio.paused;
         const vPaused = videoEl.paused;
 
-        // Visual fix: If audio is playing and video isn't paused, clear buffering state
         if (!aPaused && !vPaused && videoEl.readyState >= 3) {
             hideError();
             if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
         }
 
-        // SCENARIO 1: Audio is playing, but video got paused
         if (!aPaused && vPaused) {
           if (Math.abs(at - vt) > 0.15) {
                safeSetCT(videoEl, at);
@@ -298,7 +296,6 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
 
-        // SCENARIO 2: Video is playing, but Audio is paused 
         if (!vPaused && aPaused) {
           if (videoEl.readyState >= 3) {
             try {
@@ -309,12 +306,10 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
 
-        // SCENARIO 3: Both are playing but heavily desynced
         if (!aPaused && !vPaused && Math.abs(at - vt) > 0.4) {
            safeSetCT(videoEl, at); 
         }
 
-        // Strict Enforcement: If video is paused or buffering while audio plays, pause audio.
         if ((videoEl.paused || videoEl.readyState < 3) && !audio.paused && internalPlayRequest === 0) {
            if (document.visibilityState === 'visible' || videoEl.readyState < 2) {
              squelchAudioEvents();
@@ -322,7 +317,6 @@ document.addEventListener("DOMContentLoaded", () => {
            }
         }
 
-        // Startup / Buffering Watchdog
         if (vPaused && aPaused && bothPlayableAt(vt)) {
             ensureUnmutedIfNotUserMuted().then(() => playTogether({ allowMutedRetry: true }));
         }
@@ -630,18 +624,22 @@ document.addEventListener("DOMContentLoaded", () => {
       if (audioEventsSquelched()) return;
       if (restarting) return;
       if (!hasExternalAudio) return;
+      if (seekingActive) return;
+      if (videoEl.readyState < 2) {
+        squelchAudioEvents();
+        audio.pause();
+        return;
+      }
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
       if (video.paused() && videoEl.readyState >= 3) {
         playTogether({ allowMutedRetry: true });
-      } else if (videoEl.readyState < 3) {
-        squelchAudioEvents();
-        audio.pause();
       }
     });
 
     audio.addEventListener('pause', () => {
       if (audioEventsSquelched() || restarting || internalPlayRequest > 0) return;
+      if (seekingActive) return;
       pauseTogether();
     });
 
@@ -653,7 +651,8 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on('ratechange', () => { try { audio.playbackRate = video.playbackRate(); } catch {} });
 
     video.on('play', () => {
-      if (internalPlayRequest > 0) return; 
+      if (internalPlayRequest > 0) return;
+      if (seekingActive) return;
       hideError();
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
@@ -663,13 +662,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     video.on('pause', () => {
       if (restarting || internalPlayRequest > 0) return;
+      if (seekingActive) return;
       if (document.visibilityState === 'visible' && intendedPlaying) {
          pauseTogether();
       }
     });
 
     video.on('waiting', () => {
-      if (intendedPlaying && !restarting) {
+      if (intendedPlaying && !restarting && !seekingActive) {
         squelchAudioEvents();
         audio.pause();
       }
@@ -678,13 +678,14 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on('playing', () => {
       hideError();
       if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
-      if (intendedPlaying && !restarting && audio.paused) {
+      if (intendedPlaying && !restarting && audio.paused && !seekingActive) {
         playTogether({ allowMutedRetry: true });
       }
     });
 
     let wasPlayingBeforeSeek = false;
     let seekStartTime = 0;
+    let seekTimeoutHandle = null;
 
     video.on('seeking', () => {
       if (restarting) return;
@@ -697,12 +698,22 @@ document.addEventListener("DOMContentLoaded", () => {
       if (Math.abs(at - seekStartTime) > 0.25) {
          safeSetCT(audio, seekStartTime); 
       }
-      squelchAudioEvents();
+      squelchAudioEvents(800);
       audio.pause();
+
+      if (seekTimeoutHandle) clearTimeout(seekTimeoutHandle);
+      seekTimeoutHandle = setTimeout(() => {
+        if (seekingActive && !intendedPlaying) {
+          seekingActive = false;
+        }
+      }, 3000);
     });
 
     video.on('seeked', async () => {
       if (restarting) return;
+      if (seekTimeoutHandle) clearTimeout(seekTimeoutHandle);
+      seekTimeoutHandle = null;
+
       const newTime = Number(video.currentTime());
       const at = Number(audio.currentTime);
 
@@ -715,10 +726,10 @@ document.addEventListener("DOMContentLoaded", () => {
       await ensureUnmutedIfNotUserMuted();
 
       if (wasPlayingBeforeSeek || document.visibilityState === 'visible') {
-          intendedPlaying = true;
-          updateMediaSessionPlaybackState();
           if (bothPlayableAt(newTime)) {
-             playTogether({ allowMutedRetry: true });
+            intendedPlaying = true;
+            updateMediaSessionPlaybackState();
+            await playTogether({ allowMutedRetry: true });
           }
       } else {
           pauseTogether();
@@ -764,7 +775,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     const tryAutoResume = async () => {
-      if (!intendedPlaying) return;
+      if (!intendedPlaying || seekingActive) return;
       const t = Number(video.currentTime());
       if (bothPlayableAt(t)) {
         hideError();
@@ -782,7 +793,7 @@ document.addEventListener("DOMContentLoaded", () => {
              intendedPlaying = true;
           }
 
-          if (intendedPlaying) {
+          if (intendedPlaying && !seekingActive) {
             if (!syncInterval) startSyncLoop();
             
             const at = Number(audio.currentTime);
