@@ -161,7 +161,7 @@ if (typeof query === 'string') {
       if (req.query.from === 'hashtag') {
         searchUrl = `${config.invapi}/hashtag/${query}?hl=en-gb`;
       } else {
-        searchUrl = `${config.invapi}/search?q=${encodeURIComponent(query)}&page=${encodeURIComponent(continuation)}&date=${date}&type=${type}&duration=${duration}&sort=${sort}&hl=en+gb`;
+        searchUrl = `${config.invapi}/search?q=${encodeURIComponent(query)}&page=${encodeURIComponent(continuation)}&date=${date}&type=${type}&duration=${duration}&sort=${sort}&hl=en-gb`;
       }
 
       const xmlData = await fetch(searchUrl, {
@@ -403,7 +403,7 @@ const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
        });
     } catch (error) {
       console.error("Failed to render channel page:", error);
-      res.redirect("/");
+      res.send(error)
     }
   });
 };
