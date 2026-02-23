@@ -41,7 +41,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const metaAuthor = document.querySelector('meta[name="twitter:author"]')?.content || "";
 
     let stats = "";
-    const match = metaDesc.match(/👍\s*[^|]+\|\s*👎\s*[^|]+\|\s*📈\s*[^💬]+/);
+    const match = metaDesc.match(/👍\s*[^|]+|\s*👎\s*[^|]+|\s*📈\s*[^💬]+/);
     if (match) {
       stats = match[0]
         .replace(/👍/g, "👍")
@@ -485,6 +485,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ensureUnmutedIfNotUserMuted().then(() => playTogether());
       });
       navigator.mediaSession.setActionHandler('pause', () => {
+        intendedPlaying = false;
         pauseTogether();
       });
       navigator.mediaSession.setActionHandler('seekforward', (d) => {
@@ -601,6 +602,7 @@ document.addEventListener("DOMContentLoaded", () => {
     audio.addEventListener('pause', () => {
       if (audioEventsSquelched()) return;
       if (restarting) return;
+      intendedPlaying = false;
       pauseTogether();
     });
 
@@ -619,7 +621,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     video.on('pause', () => {
-      if (!restarting) pauseTogether();
+      if (!restarting) {
+        intendedPlaying = false;
+        pauseTogether();
+      }
     });
 
     let wasPlayingBeforeSeek = false;
@@ -675,6 +680,7 @@ document.addEventListener("DOMContentLoaded", () => {
             playTogether({ allowMutedRetry: true });
          }
       } else {
+         intendedPlaying = false;
          pauseTogether();
       }
       seekingActive = false;
@@ -708,13 +714,19 @@ document.addEventListener("DOMContentLoaded", () => {
       if (restarting) return;
       if (performance.now() < suppressEndedUntil) return;
       if (isLoopDesired()) restartLoop();
-      else pauseTogether();
+      else {
+        intendedPlaying = false;
+        pauseTogether();
+      }
     });
     audio.addEventListener('ended', () => {
       if (restarting) return;
       if (performance.now() < suppressEndedUntil) return;
       if (isLoopDesired()) restartLoop();
-      else pauseTogether();
+      else {
+        intendedPlaying = false;
+        pauseTogether();
+      }
     });
 
     const tryAutoResume = async () => {
@@ -765,7 +777,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
-
 
 
 document.addEventListener('keydown', function(event) {
