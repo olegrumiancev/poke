@@ -212,8 +212,7 @@ function channelurlfixer(text) {
 
   app.get("/channel/", async (req, res) => {
     const { fetch } = await import("undici");
-    try {
-      var media_proxy = config.media_proxy;
+       var media_proxy = config.media_proxy;
 
       if (req.useragent.source.includes("Pardus")) {
         var media_proxy = "https://media-proxy.ashley0143.xyz";
@@ -323,7 +322,7 @@ const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
         getChannelData(channelINVUrl),
       ]);
 
-      var bannedchannels = ["UC1okSIA8UEY8OqvtjGHFvzA", "UClsVg5LkK2COQRo1mVS4taA", "UCIr4vkCsn0tdTW2xZ1jRG1g"];
+      var bannedchannels = [""];
       var bypassQuery = "cG9rZXR1YmVjaGFubmVsYnlwYXNzbG9scGVvcGxldGhpbmt0aGlzaXNjZW5zb3JzaGlwLTQ1OTBh";
 
       var bypassExists = req.query.bypass === bypassQuery;
@@ -365,7 +364,6 @@ const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
       }
 
       const subscribers = convert(cinv?.subCount || 0);
-    
  
       let ChannelFirstVideoObject = {
         subCountText: "0",
@@ -403,9 +401,6 @@ const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
           ? subscribers.replace("subscribers", "")
           : "None",
        });
-    } catch (error) {
-      console.error("Failed to render channel page:", error);
-      res.send(`error: ${cinv.error}`)
-    }
+ 
   });
 };
