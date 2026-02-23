@@ -290,19 +290,66 @@ module.exports = function (app, config, renderTemplate) {
       res.status(500).json("whoops (error 500) >~<");
     }
   });
+  
+ function sendErrorPage(res, statusCode, statusText, requestedUrl) {
+  const html = `<!DOCTYPE html><html lang=en>
+  <meta charset=utf-8>
+  <meta name=viewport content="initial-scale=1, minimum-scale=1, width=device-width">
+  <meta http-equiv="refresh" content="4;url=/" /> 
+  <title>Error ${statusCode} (${statusText})!!1</title>
+  <style>
+    *{margin:0;padding:0}
+    html,code{font:15px/22px arial,sans-serif}
+     html{background:#121212;color:#e0e0e0;padding:15px} 
+    body{margin:7% auto 0;max-width:390px;min-height:180px;padding:30px 0 15px}
+    * > body{background:url(//www.google.com/images/errors/robot.png) 100% 5px no-repeat;padding-right:205px}
+    p{margin:11px 0 22px;overflow:hidden}
+    ins{color:#999;text-decoration:none}
+    a img{border:0}
+    @media screen and (max-width:772px){body{background:none;margin-top:0;max-width:none;padding-right:0}}
+     #logo{background:url(https://poketube.fun/static/logo-poke.svg) no-repeat center; background-size: contain;}
+    #logo{display:inline-block;height:54px;width:150px}
+  </style>
+  <a href="/"><span id=logo aria-label="PokeTube"></span></a>
+  <p><b>${statusCode}.</b> <ins>That’s an error.</ins>
+  <p>The requested URL <code>${requestedUrl}</code> resulted in an error. <ins>That’s all we know.</ins></p>
+  <p><ins>Redirecting you to the home page...</ins></p>
+  </html>`;
 
-  app.get("/feeds/videos.xml", async (req, res) => {
-    const id = req.query.channel_id;
+   res.status(statusCode).set('Content-Type', 'text/html').send(html);
+}
 
-    let url = `https://youtube.com/feeds/videos.xml?channel_id=${id}`;
+app.get("/feeds/videos.xml", async (req, res) => {
+  const channelId = req.query.channel_id;
+  const playlistId = req.query.playlist_id;
 
+  let url;
+
+  if (channelId) {
+    url = `https://youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  } else if (playlistId) {
+    url = `https://youtube.com/feeds/videos.xml?playlist_id=${playlistId}`;
+  } else {
+     return sendErrorPage(res, 400, "Bad Request", req.originalUrl);
+  }
+
+  try {
     let f = await modules.fetch(url, {
       method: req.method,
       headers: headers,
     });
 
+     if (!f.ok) {
+      return sendErrorPage(res, f.status, f.statusText || "Not Found", req.originalUrl);
+    }
+
+    res.set('Content-Type', 'application/xml');
     f.body.pipe(res);
-  });
+  } catch (error) {
+    console.error("Error fetching YouTube feed:", error);
+     return sendErrorPage(res, 500, "Internal Server Error", req.originalUrl);
+  }
+});
 
   app.get("/api/manifest/dash/id/:id", async (req, res) => {
     const id = req.params.id;
