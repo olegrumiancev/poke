@@ -119,8 +119,6 @@ const generateUUIDv7 = (function() {
   return () => (defaultGenerator || (defaultGenerator = new V7Generator())).generate().toString();
 })();
 
-// --- Your Tracking Logic Below ---
-
 function sendStats(videoId) {
   if (!videoId) return;
 
@@ -131,29 +129,59 @@ function sendStats(videoId) {
   }
 
   let userId;
+  let useNexus = false;
+
   try {
+    // 1. Setup or get User ID
     userId = localStorage.getItem("poke_uid");
     if (!userId) {
-      // Uses the standalone UUIDv7 generator above
-      userId = "u_" + generateUUIDv7();
+       userId = "u_" + generateUUIDv7();
       localStorage.setItem("poke_uid", userId);
     }
+    
+    // 2. Check if we already know /api/stats is blocked
+    useNexus = localStorage.getItem("poke_use_nexus") === "1";
   } catch (e) {
     return;
   }
 
   const payload = JSON.stringify({ videoId, userId });
 
-  if (navigator.sendBeacon) {
-    const blob = new Blob([payload], { type: "application/json" });
-    navigator.sendBeacon("/api/stats", blob);
+  // Helper function to send payload (prefers sendBeacon for page unloads)
+  const sendToEndpoint = (endpoint) => {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: "application/json" });
+      navigator.sendBeacon(endpoint, blob);
+    } else {
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(() => {});
+    }
+  };
+
+  if (useNexus) {
+    // If we previously marked /api/stats as blocked, skip straight to /api/nexus
+    sendToEndpoint("/api/nexus");
   } else {
+    // Try /api/stats using fetch so we can catch the ad-blocker network error
     fetch("/api/stats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: payload,
       keepalive: true
-    }).catch(() => {});
+    }).catch((err) => {
+      // If fetch fails (usually meaning an ad-blocker killed the request), 
+      // save the preference to localStorage so we don't try /api/stats again.
+      try {
+        localStorage.setItem("poke_use_nexus", "1");
+      } catch (e) {}
+      
+      // Immediately retry with our stealth endpoint
+      sendToEndpoint("/api/nexus");
+    });
   }
 }
 
