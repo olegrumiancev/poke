@@ -201,17 +201,13 @@ document.addEventListener("DOMContentLoaded", () => {
   let mediaPauseTxnUntil = 0;
 
   let bgResumeRetryTimer = null;
-  let seekResumeRetryTimer = null;
-  let hiddenKeepAliveTimer = null;
 
   let lastMediaAction = "";
   let lastMediaActionTs = 0;
 
   let bgControllerPlayGuardUntil = 0;
 
-  let seekResumePending = false;
-  let seekResumeTarget = 0;
-  let seekResumeGuardUntil = 0;
+  let seekResumeToken = 0;
 
   function setBgControllerPlayGuard(ms = 2400) {
     bgControllerPlayGuardUntil = Math.max(bgControllerPlayGuardUntil, performance.now() + ms);
@@ -310,20 +306,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function clearSeekResumeRetryTimer() {
-    if (seekResumeRetryTimer) {
-      clearTimeout(seekResumeRetryTimer);
-      seekResumeRetryTimer = null;
-    }
-  }
-
-  function clearHiddenKeepAliveTimer() {
-    if (hiddenKeepAliveTimer) {
-      clearInterval(hiddenKeepAliveTimer);
-      hiddenKeepAliveTimer = null;
-    }
-  }
-
   function scheduleBgResumeRetry(delay = 450) {
     if (!shouldUseBgControllerRetry()) return;
     clearBgResumeRetryTimer();
@@ -331,6 +313,48 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!intendedPlaying || restarting || seekingActive || syncing) return;
       playTogether().catch(() => {});
     }, delay);
+  }
+
+  function queueSeekResumeBurst() {
+    const token = ++seekResumeToken;
+    const delays = [0, 60, 140, 260, 420, 700, 1100];
+    for (const delay of delays) {
+      setTimeout(async () => {
+        if (token !== seekResumeToken) return;
+        if (!intendedPlaying || restarting || seekingActive) return;
+
+        const vt = Number(video.currentTime());
+        const at = Number(audio.currentTime);
+        if (!isFinite(vt) || !isFinite(at)) return;
+
+        if (Math.abs(at - vt) > 0.12) {
+          safeSetCT(audio, vt);
+        }
+
+        try { audio.playbackRate = Number(video.playbackRate()) || 1; } catch {}
+
+        const shouldHoldAudio =
+          (androidResumeGuardActive() && isVideoPaused()) ||
+          (document.visibilityState === "hidden" && shouldUseBgControllerRetry() && isVideoPaused());
+
+        if (!shouldHoldAudio && audio.paused) {
+          try {
+            squelchAudioEvents(250);
+            await audio.play().catch(() => {});
+          } catch {}
+        }
+
+        if (!syncing) {
+          await playTogether().catch(() => {});
+        }
+
+        const vt2 = Number(video.currentTime());
+        const at2 = Number(audio.currentTime);
+        if (isFinite(vt2) && isFinite(at2) && Math.abs(at2 - vt2) > 0.2) {
+          safeSetCT(audio, vt2);
+        }
+      }, delay);
+    }
   }
 
   function execProgrammaticVideoPause() {
@@ -405,69 +429,6 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const hasExternalAudio = !!audio && audio.tagName === "AUDIO" && !!pickAudioSrc();
-
-  function markSeekResumePending(t, ms = 2800) {
-    seekResumePending = true;
-    seekResumeTarget = Math.max(0, Number(t) || 0);
-    seekResumeGuardUntil = performance.now() + ms;
-  }
-
-  function clearSeekResumePending() {
-    seekResumePending = false;
-    seekResumeTarget = 0;
-    seekResumeGuardUntil = 0;
-  }
-
-  function seekResumePendingActive() {
-    return seekResumePending && performance.now() < seekResumeGuardUntil;
-  }
-
-  function scheduleSeekResumeRetry(delay = 80) {
-    clearSeekResumeRetryTimer();
-    seekResumeRetryTimer = setTimeout(() => {
-      if (!seekResumePending || !intendedPlaying || restarting || seekingActive || syncing) return;
-      playTogether().catch(() => {});
-    }, delay);
-  }
-
-  function queueSeekResumeBurst() {
-    const delays = [0, 60, 120, 220, 360, 550, 800];
-    for (const delay of delays) {
-      setTimeout(() => {
-        if (!seekResumePending || !intendedPlaying || restarting || seekingActive || syncing) return;
-        playTogether().catch(() => {});
-      }, delay);
-    }
-  }
-
-  function ensureHiddenKeepAlive() {
-    if (hiddenKeepAliveTimer) return;
-
-    hiddenKeepAliveTimer = setInterval(() => {
-      if (document.visibilityState !== "hidden") {
-        clearHiddenKeepAliveTimer();
-        return;
-      }
-
-      if (!hasExternalAudio) return;
-      if (!intendedPlaying || restarting || syncing || seekingActive) return;
-      if (mediaPauseTxnActive() || mediaActionRecently("pause", 1600)) return;
-
-      const vt = Number(video.currentTime());
-      const at = Number(audio.currentTime);
-
-      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.35) {
-        safeSetCT(audio, vt);
-      }
-
-      if (isVideoPaused() || audio.paused) {
-        setPauseEventGuard(1600);
-        setBgControllerPlayGuard(1800);
-        scheduleBgResumeRetry(120);
-        playTogether().catch(() => {});
-      }
-    }, 900);
-  }
 
   let syncInterval = null;
   let lastAT = 0, lastATts = 0;
@@ -694,36 +655,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const vWaiting = getVideoReadyState() < 3 || video.hasClass("vjs-waiting");
       const bgRetryBrowser = shouldUseBgControllerRetry();
 
-      if (seekResumePending) {
-        if (!seekResumePendingActive()) {
-          clearSeekResumeRetryTimer();
-          clearSeekResumePending();
-        } else {
-          const target = isFinite(seekResumeTarget) ? seekResumeTarget : vt;
-
-          if (Math.abs(at - target) > 0.15) safeSetCT(audio, target);
-
-          if (!canPlayAt(audio, target)) {
-            if (!aPaused) {
-              squelchAudioEvents();
-              audio.pause();
-            }
-            if (!vPaused) execProgrammaticVideoPause();
-            scheduleSeekResumeRetry(90);
-            return;
-          }
-
-          if ((vPaused || aPaused) && intendedPlaying && !restarting && !seekingActive && !syncing) {
-            scheduleSeekResumeRetry(40);
-          }
-
-          if (!vPaused && !aPaused && Math.abs(at - vt) < 0.35) {
-            clearSeekResumeRetryTimer();
-            clearSeekResumePending();
-          }
-        }
-      }
-
       if (intendedPlaying && !restarting && !seekingActive && !syncing) {
         if (vWaiting) {
           if (!aPaused) {
@@ -862,37 +793,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const isHidden = document.visibilityState === "hidden";
       const bgRetryBrowser = shouldUseBgControllerRetry();
 
-      if (seekResumePending) {
-        if (!seekResumePendingActive()) {
-          clearSeekResumeRetryTimer();
-          clearSeekResumePending();
-        } else {
-          const target = isFinite(seekResumeTarget) ? seekResumeTarget : vt;
-
-          try {
-            if (Math.abs(Number(video.currentTime()) - target) > 0.15) {
-              safeSetCT(videoEl, target);
-              const inner = getPlayableVideoEl();
-              if (inner && inner !== videoEl) safeSetCT(inner, target);
-            }
-          } catch {}
-
-          if (Math.abs(Number(audio.currentTime) - target) > 0.15) {
-            safeSetCT(audio, target);
-          }
-
-          if (!canPlayAt(audio, target)) {
-            if (!isVideoPaused()) execProgrammaticVideoPause();
-            try {
-              squelchAudioEvents(500);
-              if (!audio.paused) audio.pause();
-            } catch {}
-            scheduleSeekResumeRetry(90);
-            return;
-          }
-        }
-      }
-
       if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
         if (!(isHidden && !audio.paused && at > vt)) safeSetCT(audio, vt);
       }
@@ -977,20 +877,6 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => { startupPhase = false; }, 800);
       }
 
-      if (seekResumePending) {
-        const vtn = Number(video.currentTime());
-        const atn = Number(audio.currentTime);
-        if (!isVideoPaused() && !audio.paused && isFinite(vtn) && isFinite(atn) && Math.abs(atn - vtn) < 0.35) {
-          clearSeekResumeRetryTimer();
-          clearSeekResumePending();
-        } else if (seekResumePendingActive()) {
-          scheduleSeekResumeRetry(120);
-        } else {
-          clearSeekResumeRetryTimer();
-          clearSeekResumePending();
-        }
-      }
-
       updateMediaSessionPlaybackState();
     } finally {
       syncing = false;
@@ -1020,9 +906,6 @@ document.addEventListener("DOMContentLoaded", () => {
   function pauseHard() {
     clearAndroidResumeRepairTimer();
     clearBgResumeRetryTimer();
-    clearSeekResumeRetryTimer();
-    clearHiddenKeepAliveTimer();
-    clearSeekResumePending();
     execProgrammaticVideoPause();
     try {
       squelchAudioEvents(700);
@@ -1066,7 +949,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         clearAndroidResumeRepairTimer();
         clearBgResumeRetryTimer();
-        clearSeekResumeRetryTimer();
 
         setAndroidResumeGuard(1800);
         setPauseEventGuard(1800);
@@ -1129,7 +1011,6 @@ document.addEventListener("DOMContentLoaded", () => {
         markMediaAction("pause");
         clearAndroidResumeRepairTimer();
         clearBgResumeRetryTimer();
-        clearSeekResumeRetryTimer();
 
         setPauseEventGuard(1000);
         setMediaPauseTxn(1000);
@@ -1174,6 +1055,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const pauseIfRealStall = () => {
       if (restarting || !intendedPlaying || seekingActive) return;
       if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
+      if (document.visibilityState === "hidden") return;
 
       if (label === "Video") {
         squelchAudioEvents();
@@ -1270,19 +1152,18 @@ document.addEventListener("DOMContentLoaded", () => {
     audio.addEventListener("pause", () => {
       if (audioEventsSquelched() || restarting || isProgrammaticPause) return;
       if (shouldIgnorePauseAsTransient()) {
-        if (intendedPlaying && document.visibilityState === "hidden") {
-          ensureHiddenKeepAlive();
-          scheduleBgResumeRetry(120);
+        if (intendedPlaying && document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
+          scheduleBgResumeRetry(220);
         }
         return;
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
-        setPauseEventGuard(1400);
-        setBgControllerPlayGuard(1600);
-        ensureHiddenKeepAlive();
-        scheduleBgResumeRetry(120);
-        return;
+        if (shouldUseBgControllerRetry()) {
+          scheduleBgResumeRetry(220);
+          return;
+        }
+        if (mediaActionRecently("play", 1800)) return;
       }
 
       pauseTogether();
@@ -1307,19 +1188,18 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on("pause", () => {
       if (restarting || isProgrammaticPause) return;
       if (shouldIgnorePauseAsTransient()) {
-        if (intendedPlaying && document.visibilityState === "hidden") {
-          ensureHiddenKeepAlive();
-          scheduleBgResumeRetry(120);
+        if (intendedPlaying && document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
+          scheduleBgResumeRetry(220);
         }
         return;
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
-        setPauseEventGuard(1400);
-        setBgControllerPlayGuard(1600);
-        ensureHiddenKeepAlive();
-        scheduleBgResumeRetry(120);
-        return;
+        if (shouldUseBgControllerRetry()) {
+          scheduleBgResumeRetry(220);
+          return;
+        }
+        if (mediaActionRecently("play", 1800)) return;
       }
 
       if (performance.now() < pauseGuard && intendedPlaying) {
@@ -1351,26 +1231,14 @@ document.addEventListener("DOMContentLoaded", () => {
       seekingActive = true;
       seekStartTime = Number(video.currentTime());
       suppressMirrorUntil = performance.now() + MUTE_SQUELCH_MS;
-
-      if (intendedPlaying) {
-        markSeekResumePending(seekStartTime, 3200);
-        setPauseEventGuard(1200);
-        setMediaActionLock(1000);
-      } else {
-        clearSeekResumeRetryTimer();
-        clearSeekResumePending();
-      }
+      seekResumeToken++;
 
       const at = Number(audio.currentTime);
       if (isFinite(seekStartTime) && isFinite(at) && Math.abs(at - seekStartTime) > 0.25) {
         safeSetCT(audio, seekStartTime);
       }
 
-      if (intendedPlaying) {
-        execProgrammaticVideoPause();
-      }
-
-      squelchAudioEvents(700);
+      squelchAudioEvents();
       audio.pause();
     });
 
@@ -1378,34 +1246,32 @@ document.addEventListener("DOMContentLoaded", () => {
       if (restarting) return;
 
       const newTime = Number(video.currentTime());
-
-      safeSetCT(videoEl, newTime);
-      try {
-        const inner = getPlayableVideoEl();
-        if (inner && inner !== videoEl) safeSetCT(inner, newTime);
-      } catch {}
-
       safeSetCT(audio, newTime);
+      try { audio.playbackRate = Number(video.playbackRate()) || 1; } catch {}
 
       seekingActive = false;
       firstSeekDone = true;
 
+      setPauseEventGuard(900);
+      setMediaActionLock(700);
+
       await ensureUnmutedIfNotUserMuted();
 
       if (intendedPlaying) {
-        markSeekResumePending(newTime, 3200);
-        setPauseEventGuard(1400);
-        setMediaActionLock(1200);
+        const holdAudio =
+          (androidResumeGuardActive() && isVideoPaused()) ||
+          (document.visibilityState === "hidden" && shouldUseBgControllerRetry() && isVideoPaused());
 
-        execProgrammaticVideoPause();
-        squelchAudioEvents(800);
-        audio.pause();
+        if (!holdAudio) {
+          try {
+            squelchAudioEvents(700);
+            await audio.play().catch(() => {});
+          } catch {}
+        }
 
+        await playTogether().catch(() => {});
         queueSeekResumeBurst();
-        scheduleSeekResumeRetry(90);
       } else {
-        clearSeekResumeRetryTimer();
-        clearSeekResumePending();
         squelchAudioEvents();
         audio.pause();
       }
@@ -1475,7 +1341,6 @@ document.addEventListener("DOMContentLoaded", () => {
           setPauseEventGuard(900);
           setMediaActionLock(500);
           clearBgResumeRetryTimer();
-          clearHiddenKeepAliveTimer();
 
           if (intendedPlaying) {
             syncing = false;
@@ -1496,7 +1361,6 @@ document.addEventListener("DOMContentLoaded", () => {
             updateAudioGainImmediate();
 
             if (isVideoPaused() || audio.paused) {
-              ensureHiddenKeepAlive();
               playTogether().catch(() => {});
             }
 
@@ -1505,20 +1369,20 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } else {
-          setPauseEventGuard(5000);
-          setMediaActionLock(2500);
+          setPauseEventGuard(3000);
+          setMediaActionLock(1200);
+
           if (intendedPlaying) {
-            setBgControllerPlayGuard(5000);
-            ensureHiddenKeepAlive();
-            scheduleBgResumeRetry(120);
+            setBgControllerPlayGuard(3500);
+            if (shouldUseBgControllerRetry()) {
+              scheduleBgResumeRetry(180);
+            }
           }
         }
       }, { passive: true });
 
       window.addEventListener("beforeunload", () => {
         clearBgResumeRetryTimer();
-        clearSeekResumeRetryTimer();
-        clearHiddenKeepAliveTimer();
       });
     } catch {}
   } else {
@@ -1538,7 +1402,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
-
 
 
 
