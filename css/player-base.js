@@ -125,6 +125,17 @@ document.addEventListener("DOMContentLoaded", () => {
     return isAndroidChromium() || isIOSWebKitLike();
   }
 
+  function isDesktopChromiumLike() {
+    try {
+      const { mobile } = getMobilePlatform();
+      if (mobile) return false;
+      const ua = navigator.userAgent || "";
+      return /Chrome|Chromium|Edg|OPR/i.test(ua) && !/Firefox/i.test(ua);
+    } catch {
+      return false;
+    }
+  }
+
   video.ready(() => {
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
     const metaDesc = document.querySelector('meta[name="twitter:description"]')?.content || "";
@@ -188,6 +199,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let bgResumeRetryTimer = null;
 
+  let lastMediaAction = "";
+  let lastMediaActionTs = 0;
+
+  function markMediaAction(type) {
+    lastMediaAction = type;
+    lastMediaActionTs = performance.now();
+  }
+
+  function mediaActionRecently(type, ms = 1600) {
+    return lastMediaAction === type && (performance.now() - lastMediaActionTs) < ms;
+  }
+
+  function inMediaTxnWindow() {
+    return mediaActionLocked() || mediaPlayTxnActive() || mediaPauseTxnActive();
+  }
+
+  function shouldIgnorePauseAsTransient() {
+    if (inMediaTxnWindow()) return true;
+    if (mediaActionRecently("play", 1800)) return true;
+    if (shouldIgnorePauseEvents() && androidResumeGuardActive()) return true;
+    return false;
+  }
+
   function setAndroidResumeGuard(ms = 1800) {
     if (!isAndroidChromium()) return;
     androidMediaSessionResumeGuardUntil = performance.now() + ms;
@@ -246,6 +280,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function scheduleBgResumeRetry(delay = 450) {
+    if (!isProblemMobileBrowser()) return;
     clearBgResumeRetryTimer();
     bgResumeRetryTimer = setTimeout(() => {
       if (!intendedPlaying || restarting || seekingActive || syncing) return;
@@ -557,7 +592,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (!vPaused && aPaused) {
           const mustHoldAudio =
             (androidResumeGuardActive() && isVideoPaused()) ||
-            (isHidden && isVideoPaused());
+            (mobileProblem && isHidden && isVideoPaused());
 
           if (!mustHoldAudio) {
             squelchAudioEvents();
@@ -569,6 +604,14 @@ document.addEventListener("DOMContentLoaded", () => {
           squelchAudioEvents();
           audio.pause();
           if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
+
+          if (intendedPlaying && !vWaiting) {
+            if (!(mobileProblem && isHidden)) {
+              playTogether().catch(() => {});
+            } else {
+              scheduleBgResumeRetry(550);
+            }
+          }
         } else if (vPaused && aPaused) {
           if (!vWaiting) {
             if (!(mobileProblem && isHidden)) {
@@ -704,7 +747,7 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           const shouldHoldAudio =
             (androidResumeGuardActive() && isVideoPaused()) ||
-            (isHidden && isVideoPaused());
+            (mobileProblem && isHidden && isVideoPaused());
 
           if (shouldHoldAudio) {
             aOk = false;
@@ -734,7 +777,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!vOk && !aOk) {
         if (!isHidden || !mobileProblem) {
-          if (isHidden) {
+          if (isHidden && mobileProblem) {
             scheduleBgResumeRetry(500);
           } else {
             intendedPlaying = false;
@@ -747,7 +790,7 @@ document.addEventListener("DOMContentLoaded", () => {
         squelchAudioEvents();
         audio.pause();
         aOk = false;
-        if (isHidden) scheduleBgResumeRetry(500);
+        if (isHidden && mobileProblem) scheduleBgResumeRetry(500);
       }
 
       updateAudioGainImmediate();
@@ -774,10 +817,12 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (intendedPlaying && isVideoPaused() && !audio.paused) {
         squelchAudioEvents();
         audio.pause();
-        if (isHidden) {
+        if (isHidden && isProblemMobileBrowser()) {
           scheduleBgResumeRetry(500);
-        } else if (isProblemMobileBrowser() && !videoRepairing) {
+        } else if (!isHidden && isProblemMobileBrowser() && !videoRepairing) {
           kickVideo().catch(() => {});
+        } else if (!isHidden) {
+          playTogether().catch(() => {});
         }
       }
     }
@@ -823,6 +868,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       navigator.mediaSession.setActionHandler("play", () => {
+        markMediaAction("play");
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
 
@@ -883,7 +929,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   safeSetCT(audio, Number(video.currentTime()) || 0);
                 }
               }, 320);
-            } else {
+            } else if (isProblemMobileBrowser()) {
               if (intendedPlaying && isVideoPaused() && !audio.paused) {
                 squelchAudioEvents(700);
                 audio.pause();
@@ -896,6 +942,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       navigator.mediaSession.setActionHandler("pause", () => {
+        markMediaAction("pause");
         clearAndroidResumeRepairTimer();
         clearBgResumeRetryTimer();
 
@@ -1044,14 +1091,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     audio.addEventListener("pause", () => {
       if (audioEventsSquelched() || restarting || isProgrammaticPause) return;
-      if (mediaActionLocked() || mediaPlayTxnActive() || mediaPauseTxnActive()) return;
+      if (shouldIgnorePauseAsTransient()) return;
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
-        scheduleBgResumeRetry(500);
-        return;
+        if (isProblemMobileBrowser()) {
+          scheduleBgResumeRetry(500);
+          return;
+        }
+        if (mediaActionRecently("play", 1800)) return;
       }
 
-      if (shouldIgnorePauseEvents() && androidResumeGuardActive()) return;
       pauseTogether();
     });
 
@@ -1073,14 +1122,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     video.on("pause", () => {
       if (restarting || isProgrammaticPause) return;
-      if (mediaActionLocked() || mediaPlayTxnActive() || mediaPauseTxnActive()) return;
+      if (shouldIgnorePauseAsTransient()) return;
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
-        scheduleBgResumeRetry(500);
-        return;
+        if (isProblemMobileBrowser()) {
+          scheduleBgResumeRetry(500);
+          return;
+        }
+        if (mediaActionRecently("play", 1800)) return;
       }
-
-      if (shouldIgnorePauseEvents() && androidResumeGuardActive()) return;
 
       if (performance.now() < pauseGuard && intendedPlaying) {
         execProgrammaticVideoPlay();
@@ -1133,7 +1183,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await ensureUnmutedIfNotUserMuted();
 
       if (intendedPlaying) {
-        if (audio.paused && !(androidResumeGuardActive() && isVideoPaused()) && !(document.visibilityState === "hidden" && isVideoPaused())) {
+        if (audio.paused && !(androidResumeGuardActive() && isVideoPaused()) && !(document.visibilityState === "hidden" && isProblemMobileBrowser() && isVideoPaused())) {
           squelchAudioEvents();
           audio.play().catch(() => {});
         }
@@ -1237,7 +1287,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         } else {
           setMediaActionLock(350);
-          if (intendedPlaying) scheduleBgResumeRetry(700);
+          if (intendedPlaying && isProblemMobileBrowser()) scheduleBgResumeRetry(700);
         }
       }, { passive: true });
 
