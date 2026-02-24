@@ -34,6 +34,24 @@ document.addEventListener("DOMContentLoaded", () => {
     videoEl.setAttribute('webkit-playsinline', '');
   } catch {}
 
+  function getPlayableVideoEl() {
+    try {
+      const techEl =
+        (typeof video.tech === "function" && video.tech() && typeof video.tech().el === "function" && video.tech().el()) ||
+        (video.tech_ && typeof video.tech_.el === "function" && video.tech_.el()) ||
+        null;
+      if (techEl && typeof techEl.play === "function") return techEl;
+    } catch {}
+    try {
+      if (videoEl && typeof videoEl.play === "function") return videoEl;
+    } catch {}
+    try {
+      const inner = video?.el?.()?.querySelector?.("video");
+      if (inner && typeof inner.play === "function") return inner;
+    } catch {}
+    return null;
+  }
+
   // ——————————————————————— TitleBar on fullscreen ——————————————————————
   video.ready(() => {
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
@@ -89,18 +107,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function execProgrammaticVideoPause() {
     isProgrammaticPause = true;
-    try { videoEl.pause(); } catch {}
-    setTimeout(() => { isProgrammaticPause = false; }, 100);
+    try { video.pause(); } catch {}
+    try {
+      const v = getPlayableVideoEl();
+      if (v && !v.paused) v.pause();
+    } catch {}
+    setTimeout(() => { isProgrammaticPause = false; }, 120);
   }
 
   function execProgrammaticVideoPlay() {
     isProgrammaticPlay = true;
     try {
-      const p = videoEl.play();
+      let p = null;
+      try { p = video.play(); } catch {}
+      if (!p) {
+        const v = getPlayableVideoEl();
+        if (v) p = v.play();
+      }
+
       if (p && p.finally) {
-        p.finally(() => { setTimeout(() => { isProgrammaticPlay = false; }, 100); });
+        p.finally(() => { setTimeout(() => { isProgrammaticPlay = false; }, 120); });
       } else {
-        setTimeout(() => { isProgrammaticPlay = false; }, 100);
+        setTimeout(() => { isProgrammaticPlay = false; }, 120);
       }
       return p;
     } catch (e) {
@@ -538,33 +566,63 @@ document.addEventListener("DOMContentLoaded", () => {
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
 
-        // FIX: consume the media-control action immediately on the VIDEO element
-        // so the browser doesn't resume only the audio.
-        let videoPlayPromise = null;
+        // CRITICAL FIX: wake the Video.js player and the tech element immediately.
+        let playerPromise = null;
+        let rawPromise = null;
+
+        isProgrammaticPlay = true;
+        try { playerPromise = video.play(); } catch {}
         try {
-          if (videoEl.paused) {
-            videoPlayPromise = execProgrammaticVideoPlay();
-          }
+          const v = getPlayableVideoEl();
+          if (v && v.paused) rawPromise = v.play();
         } catch {}
 
-        Promise.resolve(videoPlayPromise)
-          .catch(() => {})
-          .finally(async () => {
-            if (!intendedPlaying) return;
+        Promise.allSettled([playerPromise, rawPromise]).finally(async () => {
+          setTimeout(() => { isProgrammaticPlay = false; }, 120);
 
-            await ensureUnmutedIfNotUserMuted().catch(() => {});
-            await playTogether({ allowMutedRetry: false }).catch(() => {});
+          if (!intendedPlaying) return;
 
-            // Hard guard: never allow audio-only playback after media key play
-            if (intendedPlaying && videoEl.paused && !audio.paused) {
+          await ensureUnmutedIfNotUserMuted().catch(() => {});
+          await playTogether({ allowMutedRetry: false }).catch(() => {});
+
+          // Hard stop if media key resumed audio without video
+          const v = getPlayableVideoEl();
+          const videoPausedNow = !!(v ? v.paused : videoEl.paused);
+          if (intendedPlaying && videoPausedNow && !audio.paused) {
+            squelchAudioEvents();
+            audio.pause();
+            safeSetCT(audio, Number(video.currentTime()) || 0);
+
+            // one more forced video resume attempt, then sync both
+            try { await Promise.resolve(video.play()); } catch {}
+            try {
+              const v2 = getPlayableVideoEl();
+              if (v2 && v2.paused) await Promise.resolve(v2.play());
+            } catch {}
+
+            if (!(getPlayableVideoEl()?.paused ?? videoEl.paused)) {
               squelchAudioEvents();
-              audio.pause();
+              await audio.play().catch(() => {});
               safeSetCT(audio, Number(video.currentTime()) || 0);
             }
-          });
+          }
+        });
       });
 
       navigator.mediaSession.setActionHandler('pause', () => {
+        // CRITICAL FIX: pause player + raw video + audio together from media controls
+        isProgrammaticPause = true;
+        try { video.pause(); } catch {}
+        try {
+          const v = getPlayableVideoEl();
+          if (v && !v.paused) v.pause();
+        } catch {}
+        try {
+          squelchAudioEvents();
+          audio.pause();
+        } catch {}
+        setTimeout(() => { isProgrammaticPause = false; }, 120);
+
         pauseTogether();
       });
 
@@ -858,6 +916,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
