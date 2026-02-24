@@ -90,14 +90,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function execProgrammaticVideoPause() {
     isProgrammaticPause = true;
-    try { videoEl.pause(); } catch {}
+    try { video.pause(); } catch {}
     setTimeout(() => { isProgrammaticPause = false; }, 100);
   }
 
   function execProgrammaticVideoPlay() {
     isProgrammaticPlay = true;
     try {
-      const p = videoEl.play();
+      const p = video.play();
       if (p && p.finally) {
         p.finally(() => { setTimeout(() => { isProgrammaticPlay = false; }, 100); });
       } else {
@@ -300,21 +300,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const aPaused = audio.paused;
         const vWaiting = videoEl.readyState < 3 || video.hasClass('vjs-waiting');
 
-        if (!vPaused && aPaused) {
-            if (!vWaiting) {
+        if (vWaiting) {
+            if (!aPaused) {
                 squelchAudioEvents();
-                audio.play().catch(()=>{});
-                updateAudioGainImmediate();
+                audio.pause();
+                safeSetCT(audio, vt);
             }
+        } else if (!vPaused && aPaused) {
+            squelchAudioEvents();
+            audio.play().catch(()=>{});
+            updateAudioGainImmediate();
             if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
         } else if (vPaused && !aPaused) {
             squelchAudioEvents();
             audio.pause();
             if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
         } else if (vPaused && aPaused) {
-            if (!vWaiting) {
-                playTogether({ allowMutedRetry: false });
-            }
+            playTogether({ allowMutedRetry: false });
         } else {
             if (Math.abs(at - vt) > 1.2) {
                 safeSetCT(audio, vt);
@@ -528,8 +530,11 @@ document.addEventListener("DOMContentLoaded", () => {
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
         await ensureUnmutedIfNotUserMuted();
-        try { await videoEl.play(); } catch(e) {}
-        try { await audio.play(); } catch(e) {}
+        try { video.play(); } catch(e) {}
+        try { 
+          squelchAudioEvents();
+          audio.play(); 
+        } catch(e) {}
         if (!syncing && !seekingActive) playTogether({ allowMutedRetry: false });
       });
       navigator.mediaSession.setActionHandler('pause', () => {
