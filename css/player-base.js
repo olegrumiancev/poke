@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
  
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -85,13 +85,29 @@ document.addEventListener("DOMContentLoaded", () => {
   let intendedPlaying = false;
   let pauseGuard = 0; 
 
-  // Absolute Time-Based Event Guard (Replaces the leaky integer counter)
-  let internalEventGuardUntil = 0;
-  function setInternalGuard(ms = 150) {
-      internalEventGuardUntil = performance.now() + ms;
+  let isProgrammaticPause = false;
+  let isProgrammaticPlay = false;
+
+  function execProgrammaticVideoPause() {
+    isProgrammaticPause = true;
+    try { video.pause(); } catch {}
+    setTimeout(() => { isProgrammaticPause = false; }, 100);
   }
-  function isInternalGuardActive() {
-      return performance.now() < internalEventGuardUntil;
+
+  function execProgrammaticVideoPlay() {
+    isProgrammaticPlay = true;
+    try {
+      const p = video.play();
+      if (p && p.finally) {
+        p.finally(() => { setTimeout(() => { isProgrammaticPlay = false; }, 100); });
+      } else {
+        setTimeout(() => { isProgrammaticPlay = false; }, 100);
+      }
+      return p;
+    } catch (e) {
+      isProgrammaticPlay = false;
+      throw e;
+    }
   }
 
   let userMutedVideo = false;
@@ -163,7 +179,6 @@ document.addEventListener("DOMContentLoaded", () => {
     target = clamp01(target);
     const from = clamp01(audio.volume);
     
-    // Fix: Insta-resolve if the tab is hidden to prevent requestAnimationFrame background deadlocks on Firefox.
     if (!isFinite(from) || ms <= 0 || Math.abs(target - from) < 0.001 || document.visibilityState === 'hidden') { 
       setImmediateVolume(target); 
       return Promise.resolve(); 
@@ -271,7 +286,6 @@ document.addEventListener("DOMContentLoaded", () => {
     rvfcHandle = videoEl.requestVideoFrameCallback(step);
   }
 
-  // The Ultra-Sophisticated State Reconciler Loop
   function startSyncLoop() {
     clearSyncLoop();
     syncInterval = setInterval(() => {
@@ -284,7 +298,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (intendedPlaying && !restarting && !seekingActive && !syncing) {
         const vPaused = videoEl.paused;
         const aPaused = audio.paused;
-        const vWaiting = video.hasClass('vjs-waiting');
+        const vWaiting = videoEl.readyState < 3 || video.hasClass('vjs-waiting');
 
         if (!vPaused && aPaused) {
             if (!vWaiting) {
@@ -304,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
             audio.pause();
             if (Math.abs(at - vt) > 0.3) safeSetCT(audio, vt);
         } else if (vPaused && aPaused) {
-            if (!isInternalGuardActive() && !vWaiting) {
+            if (!vWaiting) {
                 playTogether({ allowMutedRetry: true });
             }
         } else {
@@ -314,8 +328,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } else if (!intendedPlaying && !restarting && !seekingActive && !syncing) {
         if (!videoEl.paused) {
-            setInternalGuard(150); 
-            try { video.pause(); } catch {}
+            execProgrammaticVideoPause();
         }
         if (!audio.paused) { 
           squelchAudioEvents(); 
@@ -349,7 +362,6 @@ document.addEventListener("DOMContentLoaded", () => {
         lastATts = now;
       }
 
-      // Auto-unmute Chromium recovery
       if (intendedPlaying && !audio.paused && !userMutedVideo && !userMutedAudio) {
         if (audio.muted) {
            try { audio.muted = false; } catch {}
@@ -404,10 +416,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       let vOk = true, aOk = true;
 
-      if (video.paused()) {
+      if (videoEl.paused) {
         try {
-          setInternalGuard(200);
-          const p = video.play();
+          const p = execProgrammaticVideoPlay();
           if (p && p.then) await p;
         } catch (err) {
           if (err.name !== 'AbortError') vOk = false;
@@ -427,7 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
               aOk = true;
           } else {
               aOk = false;
-              if (allowMutedRetry && (err.name === 'NotAllowedError' || err.message.toLowerCase().includes('play') || err.message.includes('interact'))) { 
+              if (allowMutedRetry) { 
                 audio.muted = true;
                 try {
                   const paRetry = audio.play();
@@ -442,8 +453,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      // Hardline fail-safe: Make sure audio always plays if video is playing.
-      if (!aOk && vOk && intendedPlaying) {
+      if (!aOk && vOk && intendedPlaying && !videoEl.paused) {
          try {
             safeSetCT(audio, Number(video.currentTime()));
             squelchAudioEvents();
@@ -451,16 +461,14 @@ document.addEventListener("DOMContentLoaded", () => {
             if (p && p.then) await p;
             aOk = !audio.paused;
          } catch(e) {}
+         if (!aOk) {
+            audio.muted = true;
+            squelchAudioEvents();
+            audio.play().catch(()=>{});
+         }
       }
 
       if (!intendedPlaying) return;
-
-      if (!aOk && vOk) {
-        intendedPlaying = false;
-        pauseHard();
-        updateMediaSessionPlaybackState();
-        return;
-      }
 
       if (!vOk && !aOk) {
         intendedPlaying = false;
@@ -492,10 +500,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function pauseHard() {
-    try { 
-      setInternalGuard(150);
-      video.pause(); 
-    } catch {}
+    execProgrammaticVideoPause();
     try {
       squelchAudioEvents();
       audio.pause();
@@ -511,7 +516,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ——————————————————————————— UI error box (Removed per request) ————————————————————————————
+  // ——————————————————————————— UI error box ————————————————————————————
   const showError = () => {};
   const hideError = () => {};
 
@@ -564,7 +569,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function saveProgressThrottled() {
   }
 
-  // ——————————————————————————— Resilience (Ultra-Optimized) ————————————————————————————
+  // ——————————————————————————— Resilience ————————————————————————————
   function wireResilience(el, label) {
     const pauseIfRealStall = () => {
       if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
@@ -574,8 +579,7 @@ document.addEventListener("DOMContentLoaded", () => {
          squelchAudioEvents();
          audio.pause();
       } else if (label === 'Audio') {
-         setInternalGuard(150);
-         try { video.pause(); } catch {}
+         execProgrammaticVideoPause();
       }
     };
 
@@ -646,16 +650,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     audio.addEventListener('play', () => {
-      if (audioEventsSquelched() || restarting || isInternalGuardActive()) return;
+      if (audioEventsSquelched() || restarting || isProgrammaticPlay) return;
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
-      if (!syncing && !seekingActive && video.paused()) {
+      if (!syncing && !seekingActive && videoEl.paused) {
         playTogether({ allowMutedRetry: true });
       }
     });
 
     audio.addEventListener('pause', () => {
-      if (audioEventsSquelched() || restarting || isInternalGuardActive()) return;
+      if (audioEventsSquelched() || restarting || isProgrammaticPause) return;
       pauseTogether();
     });
 
@@ -666,7 +670,7 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on('ratechange', () => { try { audio.playbackRate = video.playbackRate(); } catch {} });
 
     video.on('play', () => {
-      if (restarting || isInternalGuardActive()) return; 
+      if (restarting || isProgrammaticPlay) return; 
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
       ensureUnmutedIfNotUserMuted();
@@ -676,11 +680,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     video.on('pause', () => {
-      if (restarting || isInternalGuardActive()) return;
-      // Guard against Chromium tab background-throttle ghost events
+      if (restarting || isProgrammaticPause) return;
       if (performance.now() < pauseGuard && intendedPlaying) {
-          setInternalGuard(150);
-          video.play().catch(()=>{});
+          execProgrammaticVideoPlay();
           return;
       }
       pauseTogether(); 
@@ -786,11 +788,10 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       window.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          // Block Chromium's auto-pause glitch for 800ms when returning to the tab
           pauseGuard = performance.now() + 800; 
           
           if (intendedPlaying) {
-            syncing = false; // Immediately clear lock to prevent deadlocks from Firefox background throttling
+            syncing = false;
             if (!syncInterval) startSyncLoop();
             
             const vt = Number(video.currentTime());
@@ -826,7 +827,8 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
     setupMediaSession();
   }
-}); 
+});
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
