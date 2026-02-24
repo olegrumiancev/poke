@@ -14,7 +14,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
- document.addEventListener("DOMContentLoaded", () => {
+ 
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs('video', {
     controls: true,
     autoplay: false,
@@ -269,18 +270,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (intendedPlaying && !restarting && !seekingActive && !syncing) {
         const vPaused = videoEl.paused;
         const aPaused = audio.paused;
-        const vPlayable = canPlayAt(videoEl, vt);
-        const aPlayable = canPlayAt(audio, at);
 
-        const vBuffering = video.hasClass('vjs-waiting') || (!vPaused && videoEl.readyState < 3);
-        const aBuffering = !aPaused && audio.readyState < 3;
+        const vReady = canPlayAt(videoEl, vt);
+        const aReady = canPlayAt(audio, at);
 
-        if (vBuffering || aBuffering) {
-          if (vBuffering && !aBuffering && !aPaused) { 
-            squelchAudioEvents(); 
-            audio.pause(); 
-          }
-          if (aBuffering && !vBuffering && !vPaused) {
+        const vBufferingNatively = !vPaused && !vReady;
+        const aBufferingNatively = !aPaused && !aReady;
+
+        if (vBufferingNatively) {
+          if (!aPaused) { squelchAudioEvents(); audio.pause(); }
+        } else if (aBufferingNatively) {
+          if (!vPaused) {
             internalPlayRequest++;
             try { video.pause(); } catch {}
             setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
@@ -289,11 +289,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
 
           if (vPaused || aPaused) {
-            if (vPlayable && aPlayable && internalPlayRequest === 0) {
+            if (internalPlayRequest === 0) {
               playTogether({ allowMutedRetry: true });
             }
           } else {
-            if (Math.abs(at - vt) > 0.3) {
+            const hardDriftLimit = useRVFC ? BIG_DRIFT : 0.4;
+            if (Math.abs(at - vt) > hardDriftLimit) {
               safeSetCT(audio, vt); 
             }
           }
@@ -353,8 +354,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       audio.pause();
       safeSetCT(audio, t + 0.001);
       squelchAudioEvents();
-      const p = audio.play();
-      if (p && p.catch) p.catch(() => {});
+      await audio.play().catch(() => {});
       updateAudioGainImmediate();
     } catch {}
   }
@@ -373,8 +373,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       updateMediaSessionPlaybackState();
       return;
     }
-    
-    if (videoEl.readyState < 2) return;
 
     syncing = true;
     lastPlayKickTs = performance.now();
@@ -387,19 +385,23 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
       
-      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.15) {
+      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > BIG_DRIFT) {
         safeSetCT(audio, vt);
       }
 
       if (cancelled()) { updateMediaSessionPlaybackState(); return; }
 
+      let vOk = true, aOk = true;
+
       if (video.paused()) {
         try {
           internalPlayRequest++;
           const p = video.play();
-          if (p && p.catch) p.catch(() => {});
+          if (p && p.then) await p;
+        } catch {
+          vOk = false;
         } finally {
-          setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
+          internalPlayRequest = Math.max(0, internalPlayRequest - 1);
         }
       }
 
@@ -409,11 +411,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         try {
           squelchAudioEvents();
           const pa = audio.play();
-          if (pa && pa.catch) pa.catch(() => {});
-        } catch {}
+          if (pa && pa.then) await pa;
+        } catch {
+          aOk = false;
+        }
       }
 
       if (cancelled()) { updateMediaSessionPlaybackState(); return; }
+
+      if (!vOk && !aOk) {
+        updateMediaSessionPlaybackState();
+        return;
+      }
 
       updateAudioGainImmediate();
       if (cancelled()) { updateMediaSessionPlaybackState(); return; }
@@ -449,10 +458,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     updateMediaSessionPlaybackState();
     pauseHard();
   }
-
-  // ——————————————————————————— UI error box ————————————————————————————
-  const showError = () => {};
-  const hideError = () => {};
 
   // ——————————————————————————— Media Session ————————————————————————————
   function setupMediaSession() {
@@ -503,31 +508,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   // ——————————————————————————— Resilience (Ultra-Optimized) ————————————————————————————
   function wireResilience(el, label) {
-    const pauseIfRealStall = () => {
-      if (startupPhase || restarting || !intendedPlaying || seekingActive) return;
-      if (performance.now() - lastPlayKickTs < STARTUP_GRACE_MS) return;
-      
-      if (label === 'Video') {
-         squelchAudioEvents();
-         audio.pause();
-      } else if (label === 'Audio') {
-         internalPlayRequest++;
-         try { video.pause(); } catch {}
-         setTimeout(() => { internalPlayRequest = Math.max(0, internalPlayRequest - 1); }, 50);
-      }
-    };
-
     const tryResume = async () => {
       if (!intendedPlaying || restarting || seekingActive) return;
       const t = Number(video.currentTime());
-      if (bothPlayableAt(t)) {
+      if (canPlayAt(videoEl, t) && canPlayAt(audio, t)) {
         await ensureUnmutedIfNotUserMuted();
         playTogether({ allowMutedRetry: true });
       }
     };
 
-    el.addEventListener('waiting', pauseIfRealStall);
-    el.addEventListener('stalled', pauseIfRealStall);
     el.addEventListener('playing', () => {
         if (label === 'Video' && video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
     });
@@ -585,11 +574,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     audio.addEventListener('play', () => {
       if (audioEventsSquelched() || restarting || internalPlayRequest > 0) return;
-      if (videoEl.readyState < 2) {
-        squelchAudioEvents();
-        audio.pause();
-        return;
-      }
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
       if (video.paused()) {
@@ -620,13 +604,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (restarting || internalPlayRequest > 0) return;
       if (document.visibilityState === 'visible') {
          pauseTogether();
-      }
-    });
-
-    video.on('waiting', () => {
-      if (intendedPlaying && !restarting) {
-        squelchAudioEvents();
-        audio.pause();
       }
     });
 
@@ -716,7 +693,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     const tryAutoResume = async () => {
       if (!intendedPlaying) return;
       const t = Number(video.currentTime());
-      if (bothPlayableAt(t)) {
+      if (canPlayAt(videoEl, t) && canPlayAt(audio, t)) {
         await ensureUnmutedIfNotUserMuted();
         playTogether({ allowMutedRetry: true });
       }
@@ -737,18 +714,19 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             const vt = Number(video.currentTime());
             const at = Number(audio.currentTime);
             
-            if (Math.abs(at - vt) > 0.4) {
+            if (Math.abs(at - vt) > BIG_DRIFT) {
                safeSetCT(audio, vt);
             }
             updateAudioGainImmediate();
             
             if (videoEl.paused || audio.paused) {
-               internalPlayRequest++;
-               playTogether({ allowMutedRetry: true }).finally(() => {
-                   setTimeout(() => {
-                       internalPlayRequest = Math.max(0, internalPlayRequest - 1);
-                   }, 150);
-               });
+               if (internalPlayRequest === 0) {
+                   playTogether({ allowMutedRetry: true }).finally(() => {
+                       setTimeout(() => {
+                           internalPlayRequest = Math.max(0, internalPlayRequest - 1);
+                       }, 150);
+                   });
+               }
             }
           }
         }
@@ -773,7 +751,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     setupMediaSession();
   }
 });
- document.addEventListener('keydown', function(event) {
+
+document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
         return;
