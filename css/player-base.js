@@ -26,6 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const qs = new URLSearchParams(window.location.search);
   const qua = qs.get("quality") || "";
   const vidKey = qs.get('v');
+  const wantsAutoplay = !!video.options_.autoplay || qs.get("autoplay") === "1" || qs.get("autoplay") === "true";
 
   const videoEl = document.getElementById('video');
   const audio = document.getElementById('aud');
@@ -130,7 +131,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
   const EPS = 1.0; 
   const MICRO_DRIFT = 0.05;
-  const BIG_DRIFT = 1.5; // Increased to prevent aggressive lag/stutter corrections
+  const BIG_DRIFT = 1.5; 
   const SYNC_INTERVAL_MS = 300;
 
   const pickAudioSrc = () => {
@@ -275,7 +276,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Math.abs(delta) > BIG_DRIFT) {
           softAlignAudioTo(vt); 
         } else if (Math.abs(delta) > MICRO_DRIFT) {
-          const targetRate = baseRate + (delta * (0.20 * baseRate)); 
+          const targetRate = baseRate + (delta * (0.25 * baseRate)); 
           try { audio.playbackRate = Math.max(baseRate * 0.85, Math.min(baseRate * 1.15, targetRate)); } catch {}
         } else {
           try { audio.playbackRate = baseRate; } catch {}
@@ -300,24 +301,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const aPaused = audio.paused;
         const vWaiting = videoEl.readyState < 3 || video.hasClass('vjs-waiting');
 
-        if (!vPaused && aPaused) {
-            if (!vWaiting) {
-                squelchAudioEvents();
-                audio.play().catch(()=>{});
-                updateAudioGainImmediate();
-            }
-            if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
-        } else if (vPaused && !aPaused) {
+        if (vPaused && !aPaused) {
             squelchAudioEvents();
             audio.pause();
             if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
-        } else if (vPaused && aPaused) {
+        } else if (!vPaused && aPaused) {
             if (!vWaiting) {
-                playTogether({ allowMutedRetry: false });
+                squelchAudioEvents();
+                audio.play().catch(() => {
+                    // Interaction token lost or autoplay blocked, pause video to stay in sync
+                    execProgrammaticVideoPause();
+                    intendedPlaying = false;
+                    updateMediaSessionPlaybackState();
+                });
+                updateAudioGainImmediate();
             }
         } else {
-            // Increased threshold to prevent video lagging/stuttering after sync
-            if (Math.abs(at - vt) > 1.2) {
+            // Failsafe drift check to prevent massive desync
+            if (Math.abs(at - vt) > 2.0) {
                 safeSetCT(audio, vt);
             }
         }
@@ -341,22 +342,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } catch {}
 
-      const now = performance.now();
-      if (!audio.paused && intendedPlaying) {
-        if (Math.abs(at - lastAT) < 0.001) {
-          if (now - lastATts > 1500) {
-            kickAudio();
-            lastATts = now;
-          }
-        } else {
-          lastAT = at;
-          lastATts = now;
-        }
-      } else {
-        lastAT = at;
-        lastATts = now;
-      }
-
       if (intendedPlaying && !audio.paused && !userMutedVideo && !userMutedAudio) {
         if (audio.muted) {
            try { audio.muted = false; } catch {}
@@ -370,18 +355,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (useRVFC) startFrameSyncLoop();
   }
 
-  async function kickAudio() {
-    try {
-      const t = Number(audio.currentTime) || 0;
-      squelchAudioEvents();
-      audio.pause();
-      safeSetCT(audio, t + 0.001);
-      squelchAudioEvents();
-      await audio.play().catch(() => {});
-      updateAudioGainImmediate();
-    } catch {}
-  }
-
   // ———————————————————— MediaSession playbackState ————————————————————
   function updateMediaSessionPlaybackState() {
     if (!('mediaSession' in navigator)) return;
@@ -391,7 +364,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ———————————————————— playTogether: programmatic resume ————————————————————
-  async function playTogether({ allowMutedRetry = false } = {}) {
+  async function playTogether() {
     if (syncing || restarting) return;
     
     syncing = true;
@@ -403,19 +376,20 @@ document.addEventListener("DOMContentLoaded", () => {
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
       
-      // Don't force strict sync on micro drift to prevent lag
-      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.3) {
+      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
         safeSetCT(audio, vt);
       }
 
       if (!intendedPlaying) return;
 
-      let vOk = true, aOk = true;
+      let vOk = !videoEl.paused;
+      let aOk = !audio.paused;
 
-      if (videoEl.paused) {
+      if (!vOk) {
         try {
           const p = execProgrammaticVideoPlay();
           if (p && p.then) await p;
+          vOk = !videoEl.paused;
         } catch (err) {
           if (err.name !== 'AbortError') vOk = false;
         }
@@ -423,36 +397,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!intendedPlaying) return;
 
-      if (audio.paused) {
+      // Crucial Fix: If video strictly failed to play (e.g., background tab media block), DO NOT play audio.
+      if (!vOk) {
+        intendedPlaying = false;
+        pauseHard();
+        updateMediaSessionPlaybackState();
+        return;
+      }
+
+      if (!aOk) {
         try {
           squelchAudioEvents();
           const pa = audio.play();
           if (pa && pa.then) await pa;
           aOk = !audio.paused;
         } catch (err) {
-          if (err.name === 'AbortError') {
-              aOk = true;
-          } else {
-              // Intentionally removed auto-mute fallback here. Do not mute user audio to force autoplay.
+          if (err.name !== 'AbortError') {
               aOk = false; 
           }
         }
       }
 
-      if (!aOk && vOk && intendedPlaying && !videoEl.paused) {
-         try {
-            safeSetCT(audio, Number(video.currentTime()));
-            squelchAudioEvents();
-            const p = audio.play();
-            if (p && p.then) await p;
-            aOk = !audio.paused;
-         } catch(e) {}
-      }
-
       if (!intendedPlaying) return;
 
+      // Crucial Fix: If audio refuses to play unmuted, pause video. We do not force mute.
       if (!aOk && vOk) {
-        // Autoplay policy prevented audio from playing. Pause cleanly until user interaction.
         intendedPlaying = false;
         pauseHard();
         updateMediaSessionPlaybackState();
@@ -482,7 +451,12 @@ document.addEventListener("DOMContentLoaded", () => {
          pauseHard();
       } else if (intendedPlaying && !videoEl.paused && audio.paused) {
          squelchAudioEvents();
-         audio.play().catch(()=>{}); 
+         audio.play().catch(() => {
+            // Secondary catch if late-stage block happens
+            pauseHard();
+            intendedPlaying = false;
+            updateMediaSessionPlaybackState();
+         }); 
       }
     }
   }
@@ -529,7 +503,7 @@ document.addEventListener("DOMContentLoaded", () => {
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
         ensureUnmutedIfNotUserMuted().then(() => {
-          if (!syncing && !seekingActive) playTogether({ allowMutedRetry: false });
+          if (!syncing && !seekingActive) playTogether();
         });
       });
       navigator.mediaSession.setActionHandler('pause', () => {
@@ -576,7 +550,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const t = Number(video.currentTime());
       if (bothPlayableAt(t)) {
         await ensureUnmutedIfNotUserMuted();
-        playTogether({ allowMutedRetry: false });
+        playTogether();
       }
     };
 
@@ -611,6 +585,13 @@ document.addEventListener("DOMContentLoaded", () => {
       setupMediaSession();
       updateAudioGainImmediate();
       setTimeout(() => { if (!firstPlayCommitted) startupPhase = false; }, 2500);
+
+      if (wantsAutoplay && !intendedPlaying) {
+        setTimeout(() => {
+          intendedPlaying = true;
+          playTogether().catch(()=>{});
+        }, 300);
+      }
     };
 
     oneShotReady(audio, () => { audioReady = true; });
@@ -642,7 +623,7 @@ document.addEventListener("DOMContentLoaded", () => {
       intendedPlaying = true;
       updateMediaSessionPlaybackState();
       if (!syncing && !seekingActive && videoEl.paused) {
-        playTogether({ allowMutedRetry: false });
+        playTogether();
       }
     });
 
@@ -663,7 +644,7 @@ document.addEventListener("DOMContentLoaded", () => {
       updateMediaSessionPlaybackState();
       ensureUnmutedIfNotUserMuted();
       if (!syncing && !seekingActive) {
-        playTogether({ allowMutedRetry: false });
+        playTogether();
       }
     });
 
@@ -686,7 +667,7 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on('playing', () => {
       if (video.hasClass('vjs-waiting')) video.removeClass('vjs-waiting');
       if (intendedPlaying && !restarting && audio.paused && !seekingActive && !syncing) {
-        playTogether({ allowMutedRetry: false });
+        playTogether();
       }
     });
 
@@ -718,12 +699,11 @@ document.addEventListener("DOMContentLoaded", () => {
       await ensureUnmutedIfNotUserMuted();
 
       if (intendedPlaying) {
-          // Immediately kick the audio play state to fix the "no audio after seek" issue
           if (audio.paused) {
              squelchAudioEvents();
              audio.play().catch(()=>{}); 
           }
-          playTogether({ allowMutedRetry: false });
+          playTogether();
       } else {
           squelchAudioEvents();
           audio.pause();
@@ -750,7 +730,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await ensureUnmutedIfNotUserMuted();
         
         await new Promise(r => requestAnimationFrame(r));
-        await playTogether({ allowMutedRetry: false });
+        await playTogether();
       } finally { restarting = false; }
     }
 
@@ -772,7 +752,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const t = Number(video.currentTime());
       if (bothPlayableAt(t)) {
         await ensureUnmutedIfNotUserMuted();
-        playTogether({ allowMutedRetry: false });
+        playTogether();
       }
     };
     videoEl.addEventListener('canplay', tryAutoResume);
@@ -781,7 +761,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       window.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          pauseGuard = performance.now() + 800; 
+          pauseGuard = performance.now() + 500; 
           
           if (intendedPlaying) {
             syncing = false;
@@ -790,13 +770,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const vt = Number(video.currentTime());
             const at = Number(audio.currentTime);
             
-            if (Math.abs(at - vt) > 0.4) {
+            if (Math.abs(at - vt) > 0.5) {
                safeSetCT(audio, vt);
             }
             updateAudioGainImmediate();
             
             if (videoEl.paused || audio.paused) {
-               playTogether({ allowMutedRetry: false }).catch(()=>{}); 
+               playTogether().catch(()=>{}); 
             }
           }
         }
@@ -821,6 +801,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
