@@ -2689,29 +2689,24 @@ const drawPause = () => {
     animationFrameId = null;
   }
 };
-
-// Grab the audio element
-const AMaudio = document.getElementById("aud");
+ 
+ const AMaudio = document.getElementById("aud");
 
 let isPlayPending = false; 
 
-// 1. Intercept the VIDEO's pause function
-const originalVideoPause = AMvideo.pause;
+ const originalVideoPause = AMvideo.pause;
 AMvideo.pause = function() {
   if (isPlayPending) {
-    console.log("Blocked a video pause() attempt during forcePlay.");
     return; 
   }
   return originalVideoPause.apply(this, arguments);
 };
 
-// 2. Intercept the AUDIO's pause function (if the element exists)
-if (AMaudio) {
+ if (AMaudio) {
   const originalAudioPause = AMaudio.pause;
   AMaudio.pause = function() {
     if (isPlayPending) {
-      console.log("Blocked an audio pause() attempt during forcePlay.");
-      return; 
+      return;  
     }
     return originalAudioPause.apply(this, arguments);
   };
@@ -2736,7 +2731,6 @@ const forcePlay = async () => {
     
     // Wait for both to successfully start
     await Promise.all(playPromises);
-    console.log("Video and Audio successfully started playing."); 
     
     if (AMvideo.currentTime > 0.5) {
       AMvideo.currentTime = 0;
@@ -2744,12 +2738,11 @@ const forcePlay = async () => {
     }
   } catch (error) {
     if (error.name !== "AbortError") {
-      console.error("Play failed for another reason:", error.name, error.message);
+       console.error("Play failed for another reason:", error.name, error.message);
     }
   } finally {
     setTimeout(() => {
       isPlayPending = false; 
-      console.log("Pause functions restored.");
     }, 50); 
   }
 };
