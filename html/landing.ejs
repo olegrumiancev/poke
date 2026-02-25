@@ -390,7 +390,6 @@ const randomFeatures = features.sort(() => 0.5 - Math.random()).slice(0, 3);
       .pk-marquee__track { animation: none; }
     }
   </style>
-
 <%
   const _terms = Array.isArray(typeof searchMarquee !== 'undefined' ? searchMarquee : null) && (typeof searchMarquee !== 'undefined')
     ? searchMarquee
@@ -418,7 +417,25 @@ const randomFeatures = features.sort(() => 0.5 - Math.random()).slice(0, 3);
       "Persona 5", "Final Fantasy VII", "Kingdom Hearts", "Genshin Impact", "Honkai Star Rail",
       "NieR: Automata", "Tekken 8", "Street Fighter 6", "Valorant", "Overwatch 2",
       "Apex Legends", "Fortnite", "Roblox", "Terraria", "osu!", "Steam Deck", "Proton",
-      "Wine", "Lutris", "RetroArch", "PCSX2", "RPCS3", "Yuzu", "Ryujinx", "PPSSPP"
+      "Wine", "Lutris", "RetroArch", "PCSX2", "RPCS3", "Yuzu", "Ryujinx", "PPSSPP",
+      "Hollow Knight: Silksong", "Metroid Prime 4: Beyond", "Grand Theft Auto VI", "Hades II", "Ghost of Yotei",
+      "Death Stranding 2: On The Beach", "Little Nightmares III", "Hyper Light Breaker", "Animal Crossing: New Horizons", "Baldur's Gate 3",
+      "Dragon Age: The Veilguard", "Starfield: Shattered Space", "Lies of P", "Armored Core VI", "Xenia Emulator",
+      "Dolphin Emulator", "Vita3K", "MiSTer FPGA", "Analogue Pocket", "Speedrun highlights",
+      "NixOS", "Gentoo Linux", "Pop!_OS", "Framework Laptop", "PinePhone",
+      "GrapheneOS", "Mullvad VPN", "Self-hosting guides", "Nextcloud", "Jellyfin",
+      "Home Assistant", "Bitwarden", "Proton Mail", "RISC-V Architecture", "Raspberry Pi 5",
+      "Mechanical Keyboards", "Custom firmware", "Coreboot", "Right to Repair", "Digital sovereignty",
+      "NewJeans", "LE SSERAFIM", "IVE", "Tame Impala", "Gorillaz",
+      "Tyler, The Creator", "Sleep Token", "Chappell Roan", "Mitski", "Hozier",
+      "Slowed + Reverb mixes", "Breakcore", "Math rock", "Dark Academia playlist", "Dungeon Synth",
+      "Future Funk", "Eurobeat", "8-bit covers", "Binaural beats", "Vinyl collecting",
+      "Dune: Part Two", "Everything Everywhere All At Once", "Chainsaw Man", "Spy x Family", "Jujutsu Kaisen",
+      "Frieren: Beyond Journey's End", "Blue Eye Samurai", "The Last of Us (HBO)", "Fallout Series", "Severance",
+      "Studio Ghibli aesthetics", "Analog horror", "Found footage", "Video essayists", "Lost media mysteries",
+      "Desk setup inspiration", "Bullet journaling", "Urban gardening", "Solarpunk", "Cybercore",
+      "Cottagecore", "Liminal spaces", "Dreamcore", "Retro photography", "Mechanical pencil reviews",
+      "Fountain pens", "Minimalist living", "Thrifting hauls", "Rainy night in Tokyo", "Deep sea exploration"
     ];
 
   const shuffle = arr => arr
@@ -429,7 +446,6 @@ const randomFeatures = features.sort(() => 0.5 - Math.random()).slice(0, 3);
   const shuffledTerms = shuffle(_terms);
   const enc = str => encodeURIComponent(String(str));
 %>
-
 
   <div class="pk-marquee" aria-label="Quick search suggestions. Hover to pause.">
     <div class="pk-marquee__track" aria-hidden="false">
