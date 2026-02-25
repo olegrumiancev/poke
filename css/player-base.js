@@ -970,24 +970,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let bgCatchUpInFlight = false;
   let bgCatchUpCooldownUntil = 0;
 
-  // NEW: audio-carry mode (when Chromium pauses video but audio keeps going, we never pause audio)
-  let bgAudioCarryWanted = false;
-  let bgAudioCarryUntil = 0;
-
-  function setBgAudioCarry(ms = 4200) {
-    bgAudioCarryWanted = true;
-    bgAudioCarryUntil = Math.max(bgAudioCarryUntil, performance.now() + Math.max(0, Number(ms) || 0));
-  }
-
-  function bgAudioCarryActive() {
-    return !!bgAudioCarryWanted && performance.now() < bgAudioCarryUntil;
-  }
-
-  function clearBgAudioCarry() {
-    bgAudioCarryWanted = false;
-    bgAudioCarryUntil = 0;
-  }
-
   function getBufferedEnd(media) {
     try {
       const br = media?.buffered;
@@ -1027,11 +1009,6 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const at = Number(audio.currentTime);
         if (isFinite(at) && at > bgHiddenBaseVT) bgHiddenBaseVT = at;
-      } catch {}
-
-      // NEW: if audio is currently playing when we go hidden, enable audio-carry.
-      try {
-        if (!audio.paused && intendedPlaying) setBgAudioCarry(60000);
       } catch {}
     } catch {}
   }
@@ -1074,49 +1051,6 @@ document.addEventListener("DOMContentLoaded", () => {
       try { vt = Number(video.currentTime()); } catch {}
       try { at = Number(audio.currentTime); } catch {}
 
-      const audioIsRunning = !audio.paused && isFinite(at);
-      const audioAdvanced =
-        audioIsRunning &&
-        isFinite(bgHiddenBaseAT) &&
-        (at - bgHiddenBaseAT) > 0.12;
-
-      // NEW: if audio kept running in background, NEVER pause it.
-      if (audioAdvanced) {
-        setBgAudioCarry(6000);
-
-        const targetA = dur > 0 ? Math.min(at, Math.max(0, dur - 0.25)) : at;
-
-        markExplicitPlay(15000);
-        setResumeWarm(1800);
-        setSmoothNoHold(1600);
-        setPauseEventGuard(1800);
-        setMediaPlayTxn(2600);
-        setBgControllerPlayGuard(2600);
-        setAndroidResumeGuard(1800);
-
-        clearMediaSessionForcedPause();
-
-        // pull video forward to audio clock; leave audio untouched
-        try { safeSetVideoTime(targetA); } catch {}
-
-        forceUnmuteForPlaybackIfAllowed();
-        updateAudioGainImmediate();
-
-        queuePlayRetryBurst();
-
-        try {
-          const vp = execProgrammaticVideoPlay();
-          if (vp && vp.then) await vp;
-        } catch {}
-
-        if (!syncInterval) startSyncLoop();
-
-        // clear background markers once we've processed a resume
-        bgHiddenWasPlaying = false;
-        bgHiddenSince = 0;
-        return;
-      }
-
       // if audio continued in bg, prefer it as ground truth
       let target = expected;
       if (isFinite(at) && isFinite(bgHiddenBaseAT) && (at - bgHiddenBaseAT) > 0.15) {
@@ -1158,11 +1092,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // tiny fade down/up so the resume doesn't "pop"
       const volTarget = clamp01(targetVolFromVideo());
-      const doFade =
-        (document.visibilityState === "visible") &&
-        volTarget > 0.001 &&
-        !userMutedAudio &&
-        audio.paused;
+      const doFade = (document.visibilityState === "visible") && volTarget > 0.001 && !userMutedAudio;
 
       if (doFade) {
         try { await rampVolumeTo(0, 70); } catch {}
@@ -1611,8 +1541,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (isFinite(vt) && isFinite(at)) {
         const delta = vt - at;
         const baseRate = Number(video.playbackRate()) || 1;
+        const now = performance.now();
 
-        if (postSeekSmoothActive() || smoothNoHoldActive() || bgAudioCarryActive()) {
+        if (postSeekSmoothActive() || smoothNoHoldActive()) {
           try {
             if (Math.abs(audio.playbackRate - baseRate) > 0.01) audio.playbackRate = baseRate;
           } catch {}
@@ -1646,13 +1577,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
       if (!isFinite(vt) || !isFinite(at)) return;
-
-      // NEW: auto-clear carry once we are tight again
-      if (bgAudioCarryActive()) {
-        try {
-          if (!isVideoPaused() && !audio.paused && Math.abs(at - vt) < 0.20) clearBgAudioCarry();
-        } catch {}
-      }
 
       if (intendedPlaying && !restarting && !seekingActive && !syncing) {
         enforceStrictBufferSync("sync-loop");
@@ -1696,26 +1620,14 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } else if (vPaused && !aPaused) {
-          // NEW: if audio is playing and we're hidden or in carry mode, do NOT pause audio.
-          if ((isHidden && bgRetryBrowser && intendedPlaying) || (bgAudioCarryActive() && intendedPlaying)) {
-            resumeOnVisible = true;
-            if (!isHidden) {
-              try {
-                const t = Number(audio.currentTime);
-                if (isFinite(t)) safeSetVideoTime(t);
-                execProgrammaticVideoPlay();
-              } catch {}
-            }
-          } else {
-            execProgrammaticAudioPause();
-            if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
+          execProgrammaticAudioPause();
+          if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
 
-            if (intendedPlaying && !vWaiting && !strictBufferHold) {
-              if (!(bgRetryBrowser && isHidden)) {
-                if (!inMediaTxnWindow()) playTogether().catch(() => {});
-              } else {
-                scheduleBgResumeRetry(250);
-              }
+          if (intendedPlaying && !vWaiting && !strictBufferHold) {
+            if (!(bgRetryBrowser && isHidden)) {
+              if (!inMediaTxnWindow()) playTogether().catch(() => {});
+            } else {
+              scheduleBgResumeRetry(250);
             }
           }
         } else if (vPaused && aPaused) {
@@ -1961,17 +1873,50 @@ document.addEventListener("DOMContentLoaded", () => {
       const vWaiting = getVideoReadyState() < 3 || video.hasClass("vjs-waiting");
 
       if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
-        // NEW: in carry mode, push video forward to audio instead of pulling audio back
-        if (bgAudioCarryActive() && !audio.paused && at > vt) {
-          const dur = Number(video.duration()) || 0;
-          const t = dur > 0 ? Math.min(at, Math.max(0, dur - 0.25)) : at;
-          safeSetVideoTime(t);
-        } else {
-          if (!(isHidden && !audio.paused && at > vt)) safeSetCT(audio, vt);
-        }
+        if (!(isHidden && !audio.paused && at > vt)) safeSetCT(audio, vt);
       }
 
       if (!intendedPlaying) return;
+
+      const warmStartNow = (document.visibilityState === "visible" && (resumeWarmActive() || (startupPhase && !audioEverStarted)));
+      if (warmStartNow && isVideoPaused() && audio.paused && !strictBufferHold) {
+        const vTech0 = getPlayableVideoEl() || videoEl;
+        const vtWarm = Number(video.currentTime()) || 0;
+
+        let warmReady = false;
+        try { warmReady = (Number(vTech0.readyState || 0) >= 3) && canStartAudioAt(vtWarm); } catch {}
+
+        if (warmReady) {
+          try {
+            forceUnmuteForPlaybackIfAllowed();
+          } catch {}
+          try {
+            updateAudioGainImmediate();
+          } catch {}
+
+          try { safeSetCT(audio, vtWarm); } catch {}
+
+          let vp0 = null;
+          let ap0 = null;
+
+          try { vp0 = execProgrammaticVideoPlay(); } catch {}
+          try {
+            const canKickFirstAudio0 = !audioEverStarted && canStartAudioAt(vtWarm);
+            ap0 = execProgrammaticAudioPlay({
+              squelchMs: canKickFirstAudio0 ? 260 : 320,
+              minGapMs: 0,
+              force: true
+            });
+          } catch {}
+
+          try { await Promise.allSettled([vp0, ap0]); } catch {}
+
+          if (!isVideoPaused() && !audio.paused) {
+            setSmoothNoHold(1300);
+            setPostSeekSmooth(0);
+          }
+        }
+      }
 
       let vOk = true;
       let aOk = true;
@@ -2094,25 +2039,13 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
       } else if (intendedPlaying && isVideoPaused() && !audio.paused) {
-        // NEW: in carry mode, don't pause audio; push video forward and restart video.
-        if (bgAudioCarryActive() && document.visibilityState === "visible" && intendedPlaying) {
-          try {
-            const dur = Number(video.duration()) || 0;
-            const at = Number(audio.currentTime);
-            const t = dur > 0 ? Math.min(at, Math.max(0, dur - 0.25)) : at;
-            if (isFinite(t)) safeSetVideoTime(t);
-          } catch {}
-          try { execProgrammaticVideoPlay(); } catch {}
-          setSmoothNoHold(900);
-        } else {
-          execProgrammaticAudioPause();
-          if (isHidden && shouldUseBgControllerRetry()) {
-            scheduleBgResumeRetry(250);
-          } else if (!isHidden && isProblemMobileBrowser() && !videoRepairing) {
-            kickVideo().catch(() => {});
-          } else if (!isHidden) {
-            playTogether().catch(() => {});
-          }
+        execProgrammaticAudioPause();
+        if (isHidden && shouldUseBgControllerRetry()) {
+          scheduleBgResumeRetry(250);
+        } else if (!isHidden && isProblemMobileBrowser() && !videoRepairing) {
+          kickVideo().catch(() => {});
+        } else if (!isHidden) {
+          playTogether().catch(() => {});
         }
       }
     }
@@ -2134,7 +2067,6 @@ document.addEventListener("DOMContentLoaded", () => {
       execProgrammaticAudioPause(700);
     } catch {}
     clearSyncLoop();
-    clearBgAudioCarry();
   }
 
   function pauseTogether() {
@@ -2254,11 +2186,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 if (intendedPlaying && isVideoPaused() && !audio.paused) {
-                  // NEW: audio-carry mode: don't pause audio here; catch video up on visible instead.
-                  if (bgAudioCarryActive()) {
-                    resumeOnVisible = true;
-                    return;
-                  }
                   execProgrammaticAudioPause(700);
                   safeSetCT(audio, Number(video.currentTime()) || 0);
                 }
@@ -2267,10 +2194,6 @@ document.addEventListener("DOMContentLoaded", () => {
               if (!mediaSessionActionIsCurrent(actionSerial)) return;
 
               if (intendedPlaying && isVideoPaused() && !audio.paused) {
-                if (bgAudioCarryActive()) {
-                  resumeOnVisible = true;
-                  return;
-                }
                 execProgrammaticAudioPause(700);
                 safeSetCT(audio, Number(video.currentTime()) || 0);
                 scheduleBgResumeRetry(220);
@@ -2789,9 +2712,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       window.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-          // If audio is already playing, enable carry before any sync logic runs.
-          try { if (intendedPlaying && !audio.paused) setBgAudioCarry(6000); } catch {}
-
           // BACKGROUND SEAMLESS RESUME: first thing, catch up timeline if we were paused/frozen.
           if (intendedPlaying) seamlessBgCatchUp("visibility-visible").catch(() => {});
 
@@ -2816,19 +2736,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const vt = Number(video.currentTime());
             const at = Number(audio.currentTime);
 
-            // In carry mode, push video forward to audio. Otherwise keep prior behavior.
-            if (bgAudioCarryActive() && !audio.paused && isFinite(at) && isFinite(vt) && at > vt + 0.25) {
-              const dur = Number(video.duration()) || 0;
-              const t = dur > 0 ? Math.min(at, Math.max(0, dur - 0.25)) : at;
-              safeSetVideoTime(t);
-            } else {
-              if (Math.abs(at - vt) > 0.4) {
-                if (!audio.paused && isVideoPaused() && at > vt) {
-                  const dur = Number(video.duration()) || 0;
-                  if (dur > 0) safeSetCT(videoEl, Math.min(at, dur - 0.5));
-                } else {
-                  safeSetCT(audio, vt);
-                }
+            if (Math.abs(at - vt) > 0.4) {
+              if (!audio.paused && isVideoPaused() && at > vt) {
+                const dur = Number(video.duration()) || 0;
+                if (dur > 0) safeSetCT(videoEl, Math.min(at, dur - 0.5));
+              } else {
+                safeSetCT(audio, vt);
               }
             }
 
