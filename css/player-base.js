@@ -216,6 +216,9 @@ document.addEventListener("DOMContentLoaded", () => {
   let audioPauseInFlightUntil = 0;
   let startupAudioHoldUntil = 0;
 
+  let hiddenSinceTs = document.visibilityState === "hidden" ? performance.now() : 0;
+  let hiddenPauseIntentTimer = null;
+
   function setBgControllerPlayGuard(ms = 2400) {
     bgControllerPlayGuardUntil = Math.max(bgControllerPlayGuardUntil, performance.now() + ms);
   }
@@ -230,6 +233,53 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function startupAudioHoldActive() {
     return performance.now() < startupAudioHoldUntil;
+  }
+
+  function hiddenForMs() {
+    if (document.visibilityState !== "hidden") return 0;
+    return Math.max(0, performance.now() - hiddenSinceTs);
+  }
+
+  function clearHiddenPauseIntentTimer() {
+    if (hiddenPauseIntentTimer) {
+      clearTimeout(hiddenPauseIntentTimer);
+      hiddenPauseIntentTimer = null;
+    }
+  }
+
+  function scheduleHiddenPauseIntentCheck() {
+    if (document.visibilityState !== "hidden" || !intendedPlaying || !shouldUseBgControllerRetry()) return false;
+
+    clearHiddenPauseIntentTimer();
+
+    hiddenPauseIntentTimer = setTimeout(() => {
+      hiddenPauseIntentTimer = null;
+
+      if (document.visibilityState !== "hidden" || !intendedPlaying) return;
+
+      const vPausedNow = isVideoPaused();
+      const aPausedNow = !!audio.paused;
+
+      const likelyUserPause =
+        hiddenForMs() > 450 &&
+        vPausedNow &&
+        aPausedNow &&
+        !mediaActionRecently("play", 1800) &&
+        !mediaPlayTxnActive() &&
+        !bgControllerPlayGuardActive();
+
+      if (likelyUserPause) {
+        pauseTogether();
+        return;
+      }
+
+      if (intendedPlaying && (vPausedNow || aPausedNow)) {
+        setBgControllerPlayGuard(1200);
+        scheduleBgResumeRetry(220);
+      }
+    }, 140);
+
+    return true;
   }
 
   function queuePlayRetryBurst() {
@@ -1032,6 +1082,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function pauseHard() {
+    clearHiddenPauseIntentTimer();
     clearAndroidResumeRepairTimer();
     clearBgResumeRetryTimer();
     clearSeekRecoveryTimers();
@@ -1071,6 +1122,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       navigator.mediaSession.setActionHandler("play", () => {
+        clearHiddenPauseIntentTimer();
         markMediaAction("play");
         intendedPlaying = true;
         updateMediaSessionPlaybackState();
@@ -1134,6 +1186,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       navigator.mediaSession.setActionHandler("pause", () => {
+        clearHiddenPauseIntentTimer();
         markMediaAction("pause");
         clearAndroidResumeRepairTimer();
         clearBgResumeRetryTimer();
@@ -1285,9 +1338,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying && shouldUseBgControllerRetry()) {
-        setBgControllerPlayGuard(1200);
-        scheduleBgResumeRetry(220);
-        return;
+        if (scheduleHiddenPauseIntentCheck()) return;
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
@@ -1324,9 +1375,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying && shouldUseBgControllerRetry()) {
-        setBgControllerPlayGuard(1200);
-        scheduleBgResumeRetry(220);
-        return;
+        if (scheduleHiddenPauseIntentCheck()) return;
       }
 
       if (document.visibilityState === "hidden" && intendedPlaying) {
@@ -1478,6 +1527,8 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       window.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
+          hiddenSinceTs = 0;
+          clearHiddenPauseIntentTimer();
           startupAudioHoldUntil = 0;
           pauseGuard = performance.now() + 800;
           setPauseEventGuard(1200);
@@ -1511,6 +1562,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } else {
+          hiddenSinceTs = performance.now();
+          clearHiddenPauseIntentTimer();
           setMediaActionLock(350);
           if (intendedPlaying && shouldUseBgControllerRetry()) {
             setPauseEventGuard(1200);
@@ -1521,6 +1574,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }, { passive: true });
 
       window.addEventListener("beforeunload", () => {
+        clearHiddenPauseIntentTimer();
         clearBgResumeRetryTimer();
         clearSeekRecoveryTimers();
       });
@@ -1542,6 +1596,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
