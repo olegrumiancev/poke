@@ -161,44 +161,126 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
 
     const officialHost = "poketube.fun";
     const officialApi = config.invapi
-
-   if (req.hostname !== officialHost && config.invapi === officialApi) {
+if (req.hostname !== officialHost && config.invapi === officialApi) {
     const message = `
-      <style>
-        body {
-          background: #0d1117;
-          color: #e6edf3;
-          font-family: system-ui, sans-serif;
-          padding: 40px;
-          line-height: 1.6;
-        }
-        h1 { color: #ff6b81; font-size: 1.7rem; }
-        code { background: #161b22; padding: 4px 6px; border-radius: 6px; }
-        a { color: #58a6ff; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-      </style>
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Configuration Error</title>
+        <style>
+          @font-face {  
+            font-family: "PokeTube Flex";  
+            src: url("/static/robotoflex.ttf");  
+            font-style: normal;  
+            font-stretch: 1% 800%;  
+            font-display: swap;
+          }
 
-      <h1>⚠️ Configuration Error</h1>
-      <p>
-        It looks like you're using <code>Poke</code>'s own Invidious API endpoint
-        for your custom instance.
-      </p>
-
-      <p>
-        Please edit your <code>config.json</code> to match your own setup — using
-        Poke’s shared API is kinda lame 😅 since it also rate-limits <b>poketube.fun</b>
-        itself when too many people use it.
-      </p>
-
-      <p>
-        Set up your own Invidious instance instead — it’s easy!  
-        See the official setup guide:  
-        <a href="https://docs.invidious.io" target="_blank">docs.invidious.io</a>
-      </p>
-
-      <p style="margin-top: 1em; color: #999;">
-        Once you've updated <code>config.json</code>, restart your server and everything will work fine. 
-      </p>
+          body {
+            background-color: #0f0f0f;
+            color: #f1f1f1;
+            font-family: "PokeTube Flex", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+          }
+          
+          .error-container {
+            background-color: #212121;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
+          }
+          
+          .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+          }
+          
+          h1 { 
+            color: #f1f1f1; 
+            font-size: 24px; 
+            font-weight: 500;
+            margin: 0 0 16px 0; 
+          }
+          
+          p {
+            color: #aaaaaa;
+            font-size: 15px;
+            line-height: 1.5;
+            margin-bottom: 20px;
+          }
+          
+          b {
+            color: #f1f1f1;
+            font-weight: 500;
+          }
+          
+          code { 
+            background: #000000; 
+            color: #f1f1f1; 
+            padding: 4px 8px; 
+            border-radius: 6px; 
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+          }
+          
+          .btn {
+            display: inline-block;
+            background-color: #3ea6ff;
+            color: #0f0f0f;
+            text-decoration: none;
+            padding: 10px 24px;
+            border-radius: 18px;
+            font-weight: 500;
+            font-size: 14px;
+            margin-top: 8px;
+            transition: background-color 0.2s ease;
+          }
+          
+          .btn:hover { 
+            background-color: #65b8ff; 
+          }
+          
+          .footer-text {
+            margin-top: 32px;
+            margin-bottom: 0;
+            font-size: 13px;
+            color: #717171;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <div class="icon">⚠️</div>
+          <h1>Configuration Error</h1>
+          
+          <p>
+            It looks like you're using <code>Poke</code>'s own Invidious API endpoint
+            for your custom instance.
+          </p>
+          
+          <p>
+            Please edit your <code>config.json</code> to match your own setup. Using
+            Poke’s shared API rate-limits <b>poketube.fun</b> itself when too many people use it.
+          </p>
+          
+          <a href="https://docs.invidious.io" target="_blank" class="btn">View Setup Guide</a>
+          
+          <p class="footer-text">
+            Once you've updated <code>config.json</code>, restart your server to apply the changes.
+          </p>
+        </div>
+      </body>
+      </html>
     `;
 
     return res.status(500).send(message);
