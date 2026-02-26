@@ -2689,7 +2689,6 @@ const drawPause = () => {
     animationFrameId = null;
   }
 }; 
-
 let isPlayPending = false;
 
 const forcePlay = async () => {
@@ -2697,6 +2696,9 @@ const forcePlay = async () => {
   isPlayPending = true;
 
   const AMaudio = document.getElementById('aud');
+
+  if (AMvideo) AMvideo.setAttribute('preload', 'auto');
+  if (AMaudio) AMaudio.setAttribute('preload', 'auto');
 
   const getVjsPlayer = () => new Promise(resolve => {
     if (!window.videojs || !AMvideo) return resolve(null);
@@ -2712,15 +2714,20 @@ const forcePlay = async () => {
     }
   });
 
-  const loadMedia = (media) => new Promise(resolve => {
-    if (!media || media.readyState >= 2) return resolve();
-    media.addEventListener('loadeddata', resolve, { once: true });
-    media.load();
+  const waitForMeta = (media) => new Promise(resolve => {
+    if (!media || media.readyState > 0) return resolve();
+    const done = () => {
+      media.removeEventListener('loadedmetadata', done);
+      resolve();
+    };
+    media.addEventListener('loadedmetadata', done);
+    setTimeout(done, 500); 
   });
 
   try {
     const vjsPlayer = await getVjsPlayer();
-    await Promise.all([loadMedia(AMvideo), loadMedia(AMaudio)]);
+    
+    await Promise.all([waitForMeta(AMvideo), waitForMeta(AMaudio)]);
 
     if (vjsPlayer) vjsPlayer.currentTime(0);
     else AMvideo.currentTime = 0;
