@@ -2696,54 +2696,49 @@ const forcePlay = async () => {
   isPlayPending = true;
 
   const AMaudio = document.getElementById('aud');
-  let playerAPI = null;
+  let vjsPlayer = null;
 
-  if (window.videojs && AMvideo) {
-    const vjsNode = AMvideo.closest('.video-js');
-    playerAPI = (vjsNode && vjsNode.player) ? vjsNode.player : window.videojs.getPlayer(AMvideo.id);
+  if (window.videojs) {
+    vjsPlayer = AMvideo.id ? window.videojs.getPlayer(AMvideo.id) : null;
+    if (!vjsPlayer && AMvideo.closest('.video-js')) {
+      vjsPlayer = AMvideo.closest('.video-js').player;
+    }
   }
 
-  const syncAndPlay = async () => {
-    AMvideo.currentTime = 0;
+  try {
+    if (vjsPlayer) vjsPlayer.currentTime(0);
+    else AMvideo.currentTime = 0;
+    
     if (AMaudio) AMaudio.currentTime = 0;
 
-    try {
-      if (playerAPI && typeof playerAPI.play === 'function') {
-        const playPromise = playerAPI.play();
-        if (playPromise !== undefined) {
-          await playPromise;
-        }
-      } else {
-        await AMvideo.play();
-      }
-      
-      if (AMaudio) await AMaudio.play();
-
-      if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
-        AMaudio.currentTime = AMvideo.currentTime;
-      }
-      return true;
-    } catch (e) {
-      return false;
+    const promises = [];
+    
+    if (vjsPlayer) {
+      const p = vjsPlayer.play();
+      if (p !== undefined) promises.push(p);
+    } else {
+      promises.push(AMvideo.play());
     }
-  };
+    
+    if (AMaudio) promises.push(AMaudio.play());
 
-  const success = await syncAndPlay();
+    await Promise.all(promises);
 
-  if (!success) {
-    const unlockMedia = async () => {
-      ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach(e => 
-        document.removeEventListener(e, unlockMedia, true)
-      );
-      await syncAndPlay();
+    if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
+      AMaudio.currentTime = AMvideo.currentTime;
+    }
+
+  } catch (err) {
+    const unlock = () => {
+      ['click', 'keydown', 'touchend'].forEach(evt => document.removeEventListener(evt, unlock));
+      isPlayPending = false;
+      forcePlay();
     };
 
-    ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach(e => 
-      document.addEventListener(e, unlockMedia, { once: true, capture: true, passive: true })
-    );
+    ['click', 'keydown', 'touchend'].forEach(evt => document.addEventListener(evt, unlock, { once: true }));
+  } finally {
+    isPlayPending = false;
   }
-
-  isPlayPending = false;
 };
 
 const handleFullscreen = () => {
