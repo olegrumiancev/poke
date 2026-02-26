@@ -3381,30 +3381,142 @@ try {
 // custom video.js ui for POKE PLAYER 
  const customVideoJsUI = document.createElement('style');
 customVideoJsUI.innerHTML = `
+/* --- Global Legibility Enhancements --- */
+.video-js {
+  --glass-bg: rgba(20, 20, 20, 0.35); /* Darker tint for visibility on white */
+  --glass-border: rgba(255, 255, 255, 0.2);
+  --glass-border-dark: rgba(0, 0, 0, 0.15);
+  --accent-gradient: linear-gradient(to right, #ff0045, #ff1d79);
+  color: #fff;
+}
+
+/* Text Shadow for all UI text to prevent disappearing on white scenes */
+.vjs-control-bar, .vjs-title-bar {
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* --- Title & Description --- */
+.vjs-title-bar {
+  background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%) !important;
+  padding: 20px !important;
+}
 
 .vjs-title-bar-description {
-  background: #0007;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   width: fit-content;
-  border-radius: 1em;
-  padding: 1em;
-  font-family: "poketube flex";
+  border-radius: 12px;
+  padding: 0.8em 1.2em;
+  font-family: "poketube flex", sans-serif;
   font-weight: 600;
-  font-stretch: semi-expanded;
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
 }
 
-.vjs-title-bar {
-  background: none !important;
-  border-radius: 16px;
-  overflow: hidden;
-}
 .vjs-title-bar-title {
   font-family: "PokeTube Flex", sans-serif !important;
   font-stretch: ultra-expanded;
   font-weight: 1000;
-  font-size: 1.5em;
+  font-size: 1.8em;
+  margin-bottom: 4px;
 }
-.vjs-play-progress{background-image:linear-gradient(to right,#ff0045,#ff0e55,#ff1d79)}.video-js .vjs-control-bar{bottom:12px!important}.vjs-poster{border-radius:16px}.vjs-poster img{border-radius:16px}.vjs-control-bar{background:transparent!important;border:none!important;box-shadow:none!important;display:flex!important;align-items:center!important;gap:2px;padding:6px 10px;border-radius:16px}.vjs-fullscreen-control,.vjs-remaining-time{background-color:transparent!important}.vjs-control-bar .vjs-button{width:38px;height:38px;min-width:38px;border-radius:50%;background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08));-webkit-backdrop-filter:blur(12px) saturate(160%);backdrop-filter:blur(12px) saturate(160%);border:1px solid rgba(255,255,255,.18);box-shadow:0 8px 24px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.10);display:inline-flex;align-items:center;justify-content:center;margin:0 6px;transition:transform 0.12s ease,box-shadow 0.2s ease,background 0.2s ease;vertical-align:middle}.vjs-control-bar .vjs-button:hover{background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.12));box-shadow:0 10px 28px rgba(0,0,0,.4),inset 0 0 0 1px rgba(255,255,255,.16);transform:translateY(-1px)}.vjs-control-bar .vjs-button:active{transform:translateY(0)}.vjs-control-bar .vjs-button:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,0,90,.35),inset 0 0 0 1px rgba(255,255,255,.2)}.vjs-control-bar .vjs-icon-placeholder:before{font-size:18px;line-height:38px}.vjs-current-time,.vjs-duration,.vjs-remaining-time,.vjs-time-divider{background:transparent;padding:0 8px;border-radius:999px;box-shadow:none;margin:0;height:38px;line-height:1;display:inline-flex;align-items:center}.vjs-progress-control{flex:1 1 auto;display:flex!important;align-items:center!important;margin:0 6px;padding:0;height:38px}.vjs-progress-control .vjs-progress-holder{height:8px!important;border-radius:999px!important;background:transparent!important;border:none;box-shadow:none;position:relative;margin:0;width:100%}.vjs-progress-control .vjs-progress-holder::before{position:absolute;inset:0;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.08));-webkit-backdrop-filter:blur(12px) saturate(160%);backdrop-filter:blur(12px) saturate(160%);border:1px solid rgba(255,255,255,.18);box-shadow:0 8px 24px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.10);pointer-events:none}.vjs-progress-control .vjs-load-progress,.vjs-progress-control .vjs-play-progress{position:relative;z-index:1;border-radius:inherit!important}.vjs-progress-control .vjs-play-progress{background-image:linear-gradient(to right,#ff0045,#ff0e55,#ff1d79)!important}.vjs-progress-control .vjs-slider-handle{width:14px!important;height:14px!important;border-radius:50%!important;background:#fff!important;border:1px solid rgba(255,255,255,.9);box-shadow:0 6px 18px rgba(0,0,0,.35),0 0 0 3px rgba(255,0,90,.20);top:-4px!important;z-index:2}.vjs-volume-panel{gap:8px;align-items:center!important;padding:0;height:38px}.vjs-volume-bar{height:6px!important;border-radius:999px!important;background:#2c2c2c!important;border:none;box-shadow:none;position:relative}.vjs-volume-level{border-radius:inherit!important;background-image:linear-gradient(to right,#ff0045,#ff1d79)!important}.vjs-volume-bar .vjs-slider-handle{width:12px!important;height:12px!important;border-radius:50%!important;background:#fff!important;border:1px solid rgba(255,255,255,.9);top:-3px!important;box-shadow:0 4px 14px rgba(0,0,0,.3),0 0 0 3px rgba(255,0,90,.18)}@media (max-width:640px){.video-js .vjs-control-bar{bottom:10px!important}.vjs-control-bar{gap:8px;padding:6px 8px}.vjs-control-bar .vjs-button{width:34px;height:34px;min-width:34px}.vjs-control-bar .vjs-icon-placeholder:before{font-size:16px;line-height:34px}.vjs-current-time,.vjs-duration,.vjs-remaining-time,.vjs-time-divider{height:34px}.vjs-progress-control{height:34px}.vjs-progress-control .vjs-slider-handle{width:12px!important;height:12px!important;top:-3px!important}}
-`; 
+
+/* --- Control Bar --- */
+.video-js .vjs-control-bar {
+  bottom: 20px !important;
+  background: transparent !important;
+  height: 60px;
+  padding: 0 15px;
+}
+
+/* --- Glass Buttons --- */
+.vjs-control-bar .vjs-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  /* Dual border: Light inner, Dark outer for "pop" on white */
+  border: 1px solid var(--glass-border);
+  outline: 1px solid var(--glass-border-dark); 
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  margin: 0 5px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.vjs-control-bar .vjs-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 20px rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.vjs-control-bar .vjs-icon-placeholder:before {
+  font-size: 20px;
+  line-height: 42px;
+}
+
+/* --- Progress Bar (The Track) --- */
+.vjs-progress-control .vjs-progress-holder {
+  height: 10px !important;
+  border-radius: 20px !important;
+  background: rgba(0, 0, 0, 0.2) !important; /* Dark track so it's visible on white */
+  overflow: visible;
+}
+
+/* The Glass Track Container */
+.vjs-progress-control .vjs-progress-holder::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 20px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  z-index: -1;
+}
+
+.vjs-play-progress {
+  background: var(--accent-gradient) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 0 15px rgba(255, 0, 69, 0.4);
+}
+
+/* Scrubber Knob */
+.vjs-progress-control .vjs-slider-handle {
+  width: 16px !important;
+  height: 16px !important;
+  background: #fff !important;
+  top: -4px !important;
+  box-shadow: 0 0 0 4px rgba(255, 0, 90, 0.3), 0 4px 10px rgba(0,0,0,0.5);
+}
+
+/* --- Time & Dividers --- */
+.vjs-current-time, .vjs-duration, .vjs-remaining-time, .vjs-time-divider {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* --- Volume Panel --- */
+.vjs-volume-level {
+  background: var(--accent-gradient) !important;
+}
+
+/* Responsive fixes */
+@media (max-width: 640px) {
+  .vjs-control-bar .vjs-button {
+    width: 36px;
+    height: 36px;
+    margin: 0 3px;
+  }
+  .vjs-control-bar .vjs-icon-placeholder:before {
+    line-height: 36px;
+  }
+}
+`;
 document.head.appendChild(customVideoJsUI);
 
 
