@@ -2688,13 +2688,18 @@ const drawPause = () => {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
-};
- 
- let isPlayPending = false;
+};let isPlayPending = false;
 
 const forcePlay = async () => {
   if (isPlayPending) return;
   isPlayPending = true;
+
+  // Grab the audio element dynamically by its ID
+  const AMaudio = document.getElementById('aud');
+  
+  // Make sure AMvideo actually exists too. If it has an ID, you might need:
+  // const AMvideo = document.getElementById('your_video_id_here');
+  // I am assuming AMvideo is already correctly defined in your broader script.
 
   const maxTries = 3;
   let attempt = 0;
@@ -2727,17 +2732,17 @@ const forcePlay = async () => {
       console.warn(`Play attempt ${attempt} failed:`, error.name, error.message);
       
       if (attempt >= maxTries) {
-        // THE NEW FALLBACK: If raw HTML5 play fails 3 times, click the Video.js button
         console.log("Native play failed. Triggering the Video.js UI button...");
         
-        // Target the specific paused button
-        const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused');
+        // Target the specific paused button OR the big center play button
+        const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
+                              document.querySelector('.vjs-big-play-button');
         
         if (vjsPlayButton) {
           vjsPlayButton.click();
-          success = true; // Assume the click worked so we can exit the loop gracefully
+          success = true;
         } else {
-          console.error("Could not find the paused Video.js button to click.");
+          console.error("Could not find any Video.js play button to click.");
         }
       } else {
         // Wait 200ms before trying native play again
@@ -2746,11 +2751,10 @@ const forcePlay = async () => {
     }
   }
 
-  // EXTRA SAFETY NET: 
-  // Sometimes native play says "success" but Video.js immediately pauses it anyway.
-  // If we supposedly succeeded but the video is still paused, click the button.
+  // EXTRA SAFETY NET
   if (success && AMvideo.paused) {
-    const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused');
+    const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
+                          document.querySelector('.vjs-big-play-button');
     if (vjsPlayButton) {
         vjsPlayButton.click();
     }
@@ -2758,7 +2762,9 @@ const forcePlay = async () => {
 
   // Release the lock
   isPlayPending = false; 
-}; 
+};
+
+
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
   canvases.forEach(c => c.style.display = isFullscreen ? 'none' : 'block');
