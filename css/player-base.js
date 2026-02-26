@@ -17,7 +17,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
-    autoplay: false,
+    autoplay: true,
     preload: "auto",
     errorDisplay: false
   });
