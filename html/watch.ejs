@@ -2690,14 +2690,13 @@ const drawPause = () => {
   }
 };
  
- const AMaudio = document.getElementById("aud");
-let isPlayPending = false;
+ let isPlayPending = false;
 
 const forcePlay = async () => {
   if (isPlayPending) return;
   isPlayPending = true;
 
-  const maxTries = 6;
+  const maxTries = 3;
   let attempt = 0;
   let success = false;
 
@@ -2709,7 +2708,7 @@ const forcePlay = async () => {
       AMvideo.currentTime = 0;
       if (AMaudio) AMaudio.currentTime = 0;
 
-      // 2. Fire the play requests
+      // 2. Fire the native play requests
       const playPromises = [AMvideo.play()];
       if (AMaudio) {
         playPromises.push(AMaudio.play());
@@ -2717,8 +2716,6 @@ const forcePlay = async () => {
 
       // 3. Wait for them to resolve
       await Promise.all(playPromises);
-
-      // If we made it to this line, the promises resolved successfully!
       success = true;
 
       // 4. Graceful drift correction
@@ -2730,21 +2727,38 @@ const forcePlay = async () => {
       console.warn(`Play attempt ${attempt} failed:`, error.name, error.message);
       
       if (attempt >= maxTries) {
-        // Only log the final hard failure if it's not a standard interrupt
-        if (error.name !== "AbortError" && error.name !== "NotAllowedError") {
-          console.error("Play failed completely after 3 tries:", error.name, error.message);
+        // THE NEW FALLBACK: If raw HTML5 play fails 3 times, click the Video.js button
+        console.log("Native play failed. Triggering the Video.js UI button...");
+        
+        // Target the specific paused button
+        const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused');
+        
+        if (vjsPlayButton) {
+          vjsPlayButton.click();
+          success = true; // Assume the click worked so we can exit the loop gracefully
+        } else {
+          console.error("Could not find the paused Video.js button to click.");
         }
       } else {
-        // Wait 200ms before trying again to let the browser catch its breath
+        // Wait 200ms before trying native play again
         await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
   }
 
-  // Release the lock whether we succeeded or failed 3 times
-  isPlayPending = false; 
-};
+  // EXTRA SAFETY NET: 
+  // Sometimes native play says "success" but Video.js immediately pauses it anyway.
+  // If we supposedly succeeded but the video is still paused, click the button.
+  if (success && AMvideo.paused) {
+    const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused');
+    if (vjsPlayButton) {
+        vjsPlayButton.click();
+    }
+  }
 
+  // Release the lock
+  isPlayPending = false; 
+}; 
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
   canvases.forEach(c => c.style.display = isFullscreen ? 'none' : 'block');
