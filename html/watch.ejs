@@ -2711,39 +2711,59 @@ AMvideo.pause = function() {
     return originalAudioPause.apply(this, arguments);
   };
 }
+let isPlayPending = false;
 
 const forcePlay = async () => {
-  if (isPlayPending) {
-    return; 
-  }
-
-  isPlayPending = true; 
-  
-  AMvideo.currentTime = 0;
-  if (AMaudio) AMaudio.currentTime = 0;
+  if (isPlayPending) return;
+  isPlayPending = true;
 
   try {
-    // Fire both play requests at the exact same time
+    // 1. Helper to ensure media has enough buffered data before we do anything
+    const prepareMedia = (media) => {
+      return new Promise((resolve) => {
+        if (!media) return resolve();
+        
+        // readyState >= 3 means HAVE_FUTURE_DATA (it can play securely right now)
+        if (media.readyState >= 3) {
+          resolve();
+        } else {
+          // Kickstart the loading process in case the browser suspended it
+          media.load(); 
+          media.addEventListener("canplay", resolve, { once: true });
+        }
+      });
+    };
+
+    // Wait for both elements to actually be ready to play
+    await Promise.all([
+      prepareMedia(AMvideo),
+      prepareMedia(AMaudio)
+    ]);
+
+    // 2. Safely reset times ONLY once we know the media data is present
+    AMvideo.currentTime = 0;
+    if (AMaudio) AMaudio.currentTime = 0;
+
+    // 3. Trigger simultaneous playback
     const playPromises = [AMvideo.play()];
-    if (AMaudio) {
-      playPromises.push(AMaudio.play());
-    }
-    
-    // Wait for both to successfully start
+    if (AMaudio) playPromises.push(AMaudio.play());
+
     await Promise.all(playPromises);
-    
-    if (AMvideo.currentTime > 0.5) {
-      AMvideo.currentTime = 0;
-      if (AMaudio) AMaudio.currentTime = 0;
+
+    // 4. Graceful drift correction
+    // Instead of resetting everything back to 0 (which causes a glitchy restart), 
+    // we just snap the audio to match the video exactly if they drift.
+    if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
+      AMaudio.currentTime = AMvideo.currentTime;
     }
+
   } catch (error) {
-    if (error.name !== "AbortError") {
-       console.error("Play failed for another reason:", error.name, error.message);
+    if (error.name !== "AbortError" && error.name !== "NotAllowedError") {
+      console.error("Play failed for another reason:", error.name, error.message);
     }
   } finally {
-    setTimeout(() => {
-      isPlayPending = false; 
-    }, 50); 
+    // Removed the 50ms timeout - unlocking immediately is safer and prevents state desyncs
+    isPlayPending = false; 
   }
 };
 
