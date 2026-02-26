@@ -2689,7 +2689,6 @@ const drawPause = () => {
     animationFrameId = null;
   }
 }; 
-
 let isPlayPending = false;
 
 const forcePlay = async () => {
@@ -2697,70 +2696,55 @@ const forcePlay = async () => {
   isPlayPending = true;
 
   const AMaudio = document.getElementById('aud');
-  let success = false;
-  let masterAttempts = 0;
+  let playInterval;
 
-  while (!success && masterAttempts < 10) {
-    masterAttempts++;
-
+  const triggerPlay = async () => {
     try {
-      AMvideo.currentTime = 0;
-      if (AMaudio) AMaudio.currentTime = 0;
+      if (AMvideo.paused) AMvideo.currentTime = 0;
+      if (AMaudio && AMaudio.paused) AMaudio.currentTime = 0;
 
-      const playPromises = [AMvideo.play()];
-      if (AMaudio) {
-        playPromises.push(AMaudio.play());
-      }
-
-      await Promise.all(playPromises);
+      const promises = [AMvideo.play()];
+      if (AMaudio) promises.push(AMaudio.play());
+      
+      await Promise.all(promises);
 
       if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
         AMaudio.currentTime = AMvideo.currentTime;
       }
-
-      success = !AMvideo.paused;
-
-    } catch (error) {
-      success = false;
-    }
-
-    if (!success) {
-      for (let i = 0; i < 3; i++) {
-        if (!AMvideo.paused) {
-          success = true;
-          break;
-        }
-
-        const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
-                              document.querySelector('.vjs-big-play-button');
-
-        if (vjsPlayButton) {
-          vjsPlayButton.click();
-
-          const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window });
-          const mouseup = new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window });
-          vjsPlayButton.dispatchEvent(mousedown);
-          vjsPlayButton.dispatchEvent(mouseup);
-        }
-
-        const videoContainer = document.querySelector('.video-js');
-        if (videoContainer && i === 2) {
-            videoContainer.click();
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 400));
+    } catch (err) {
+      const vjsBtn = document.querySelector('.vjs-play-control.vjs-paused') || 
+                     document.querySelector('.vjs-big-play-button');
+                     
+      if (vjsBtn) {
+        vjsBtn.dispatchEvent(new MouseEvent('click', { 
+          bubbles: true, 
+          cancelable: true, 
+          view: window 
+        }));
       }
     }
 
-    success = !AMvideo.paused;
-
-    if (!success) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+    if (!AMvideo.paused && (!AMaudio || !AMaudio.paused)) {
+      clearInterval(playInterval);
+      isPlayPending = false;
     }
-  }
+  };
 
-  isPlayPending = false; 
-}; 
+  playInterval = setInterval(triggerPlay, 250);
+
+  const interactionTrap = () => {
+    if (AMvideo.paused) triggerPlay();
+    ['mousemove', 'touchstart', 'keydown', 'scroll', 'click'].forEach(evt => {
+      document.removeEventListener(evt, interactionTrap);
+    });
+  };
+
+  ['mousemove', 'touchstart', 'keydown', 'scroll', 'click'].forEach(evt => {
+    document.addEventListener(evt, interactionTrap, { once: true, passive: true });
+  });
+
+  triggerPlay();
+};
 
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
