@@ -2352,6 +2352,10 @@ document.addEventListener("DOMContentLoaded", () => {
           softUnmuteAudio(140);
         }
       }
+
+      if (startupAutoplayPending() && !vPaused && !aPaused) {
+        startupAutoplayKickDone = true;
+      }
     }, SYNC_INTERVAL_MS);
 
     if (useRVFC) startFrameSyncLoop();
@@ -2406,11 +2410,40 @@ document.addEventListener("DOMContentLoaded", () => {
     return false;
   }
 
+  const startupAutoplayWanted = wantsStartupAutoplay();
+
+  function startupAutoplayPending() {
+    return !!startupAutoplayWanted && !startupAutoplayKickDone;
+  }
+
+  function disarmNativeAutoplay() {
+    if (!startupAutoplayWanted) return;
+
+    try {
+      videoEl.autoplay = false;
+    } catch {}
+    try {
+      videoEl.removeAttribute?.("autoplay");
+    } catch {}
+    try {
+      if (typeof video.autoplay === "function") video.autoplay(false);
+    } catch {}
+    try {
+      const v = getPlayableVideoEl();
+      if (v) {
+        try { v.autoplay = false; } catch {}
+        try { v.removeAttribute?.("autoplay"); } catch {}
+      }
+    } catch {}
+  }
+
+  disarmNativeAutoplay();
+
   function scheduleStartupAutoplayKick() {
     if (!hasExternalAudio || qua === "medium") return;
     if (startupAutoplayKickDone || startupAutoplayKickInFlight) return;
     if (!startupBufferPrimed) return;
-    if (!wantsStartupAutoplay() && !intendedPlaying) return;
+    if (!startupAutoplayWanted && !intendedPlaying) return;
     if (mediaSessionForcedPauseActive()) return;
 
     startupAutoplayKickInFlight = true;
@@ -2423,31 +2456,25 @@ document.addEventListener("DOMContentLoaded", () => {
         intendedPlaying = true;
         strictBufferHold = false;
         strictBufferHoldReason = "";
+        clearJointMismatch();
         updateMediaSessionPlaybackState();
 
         setPauseEventGuard(1400);
         setMediaPlayTxn(2200);
         setBgControllerPlayGuard(1600);
         markExplicitPlay(15000);
-        setResumeWarm(1600);
-        setSmoothNoHold(1100);
-        setJointStartGrace(1200);
+        setResumeWarm(1800);
+        setSmoothNoHold(1200);
+        setJointStartGrace(1800);
         if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(260);
 
         const vt = Number(video.currentTime()) || 0;
         safeSetCT(audio, vt);
 
-        try {
-          const vp = execProgrammaticVideoPlay();
-          if (vp && vp.then) await vp;
-        } catch {}
-
-        if (isVideoPaused()) return;
-
-        queuePlayRetryBurst();
         await playTogether().catch(() => {});
+        queuePlayRetryBurst();
 
-        if (!isVideoPaused()) {
+        if (!isVideoPaused() && !audio.paused) {
           startupAutoplayKickDone = true;
         }
       } finally {
@@ -2537,7 +2564,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             await Promise.race([
               Promise.resolve(p).catch(() => false),
-              new Promise(r => setTimeout(() => r(false), 380))
+              new Promise(r => setTimeout(() => r(false), 700))
             ]);
 
             audioStartedFirst = !audio.paused;
@@ -3327,7 +3354,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     videoEl.addEventListener("playing", () => {
       if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
-        if (wantsStartupAutoplay() || (performance.now() - startupPrimeStartedAt) < STARTUP_GRACE_MS) {
+        if (startupAutoplayPending() || (performance.now() - startupPrimeStartedAt) < STARTUP_GRACE_MS) {
           clearMediaSessionForcedPause();
           intendedPlaying = true;
           markMediaAction("play");
@@ -3358,7 +3385,7 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on("play", () => {
       if (restarting || isProgrammaticPlay) return;
 
-      if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !startupAutoplayKickInFlight && !wantsStartupAutoplay()) {
+      if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !startupAutoplayKickInFlight && !startupAutoplayPending()) {
         execProgrammaticVideoPause();
         return;
       }
@@ -3450,7 +3477,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     video.on("playing", () => {
       if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
-        if (wantsStartupAutoplay() || jointStartGraceActive() || (performance.now() - startupPrimeStartedAt) < STARTUP_GRACE_MS) {
+        if (startupAutoplayPending() || jointStartGraceActive() || (performance.now() - startupPrimeStartedAt) < STARTUP_GRACE_MS) {
           clearMediaSessionForcedPause();
           intendedPlaying = true;
           markMediaAction("play");
@@ -3745,7 +3772,7 @@ document.addEventListener("DOMContentLoaded", () => {
       video.on("timeupdate", () => {});
       if ("mediaSession" in navigator) {
         video.on("play", () => {
-          if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !wantsStartupAutoplay()) {
+          if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !startupAutoplayPending()) {
             execProgrammaticVideoPause();
             return;
           }
@@ -3767,6 +3794,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMediaSession();
   }
 });
+
 
 
 document.addEventListener('keydown', function(event) {
