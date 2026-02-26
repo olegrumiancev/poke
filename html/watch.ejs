@@ -2696,59 +2696,80 @@ const forcePlay = async () => {
   isPlayPending = true;
 
   const AMaudio = document.getElementById('aud');
-  let playInterval;
 
-  const trigger = () => {
-    try {
-      if (typeof videojs !== 'undefined') {
-        const players = videojs.getPlayers();
-        Object.values(players).forEach(player => {
-          if (player && player.paused()) player.play();
-        });
-      }
-
-      if (AMvideo && AMvideo.paused) AMvideo.play().catch(() => {});
-      if (AMaudio && AMaudio.paused) AMaudio.play().catch(() => {});
-
-      if (AMvideo && AMaudio && !AMvideo.paused && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
-        AMaudio.currentTime = AMvideo.currentTime;
-      }
-    } catch (e) {}
-
-    const btn = document.querySelector('.vjs-play-control.vjs-paused') || 
-                document.querySelector('.vjs-big-play-button');
-                
-    if (btn) {
-      btn.click();
-      btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-      btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-      btn.dispatchEvent(new TouchEvent('touchstart', { bubbles: true }));
-      btn.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
-    }
-
-    if (AMvideo && !AMvideo.paused) {
-      clearInterval(playInterval);
-      isPlayPending = false;
-    }
-  };
-
-  playInterval = setInterval(trigger, 150);
-
-  const trap = () => {
-    if (AMvideo && AMvideo.paused) trigger();
-    if (AMvideo && !AMvideo.paused) {
-      ['click', 'touchstart', 'mousemove', 'keydown', 'scroll', 'pointerdown'].forEach(e => {
-        document.removeEventListener(e, trap, true);
-      });
-    }
-  };
-
-  ['click', 'touchstart', 'mousemove', 'keydown', 'scroll', 'pointerdown'].forEach(e => {
-    document.addEventListener(e, trap, { capture: true, passive: true });
+  const waitForData = (media) => new Promise(resolve => {
+    if (!media || media.readyState >= 2) return resolve();
+    const done = () => {
+      media.removeEventListener('loadeddata', done);
+      resolve();
+    };
+    media.addEventListener('loadeddata', done);
   });
 
-  trigger();
+  await Promise.all([waitForData(AMvideo), waitForData(AMaudio)]);
+
+  const executePlay = async () => {
+    try {
+      if (AMvideo.currentTime > 0.1) AMvideo.currentTime = 0;
+      if (AMaudio && AMaudio.currentTime > 0.1) AMaudio.currentTime = 0;
+
+      let vjsNode = AMvideo.closest('.video-js');
+      let playerAPI = vjsNode && vjsNode.player ? vjsNode.player : null;
+      
+      if (!playerAPI && window.videojs && AMvideo.id) {
+        playerAPI = window.videojs.getPlayer(AMvideo.id);
+      }
+
+      if (playerAPI && typeof playerAPI.play === 'function') {
+        let p = playerAPI.play();
+        if (p && p.catch) p.catch(() => {}); 
+      } else {
+        await AMvideo.play();
+      }
+
+      if (AMaudio) await AMaudio.play();
+
+      if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
+        AMaudio.currentTime = AMvideo.currentTime;
+      }
+      return !AMvideo.paused;
+    } catch (e) {
+      const btn = document.querySelector('.vjs-big-play-button') || 
+                  document.querySelector('.vjs-play-control.vjs-paused');
+      if (btn) btn.click();
+      return !AMvideo.paused;
+    }
+  };
+
+  let success = await executePlay();
+
+  if (!success) {
+    let attempts = 0;
+    const tick = setInterval(async () => {
+      attempts++;
+      success = await executePlay();
+      if (success || attempts > 15) {
+        clearInterval(tick);
+        isPlayPending = false;
+      }
+    }, 600);
+
+    const trap = async () => {
+      if (AMvideo.paused) {
+        success = await executePlay();
+        if (success) clearInterval(tick);
+      }
+      ['pointerdown', 'keydown', 'touchstart', 'click', 'mousemove'].forEach(evt => 
+        document.removeEventListener(evt, trap, true)
+      );
+    };
+
+    ['pointerdown', 'keydown', 'touchstart', 'click', 'mousemove'].forEach(evt => 
+      document.addEventListener(evt, trap, { once: true, capture: true, passive: true })
+    );
+  } else {
+    isPlayPending = false;
+  }
 }; 
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
