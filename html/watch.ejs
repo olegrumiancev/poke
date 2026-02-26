@@ -2696,81 +2696,56 @@ const forcePlay = async () => {
   isPlayPending = true;
 
   const AMaudio = document.getElementById('aud');
+  let playerAPI = null;
 
-  const waitForData = (media) => new Promise(resolve => {
-    if (!media || media.readyState >= 2) return resolve();
-    const done = () => {
-      media.removeEventListener('loadeddata', done);
-      resolve();
-    };
-    media.addEventListener('loadeddata', done);
-  });
+  if (window.videojs && AMvideo) {
+    const vjsNode = AMvideo.closest('.video-js');
+    playerAPI = (vjsNode && vjsNode.player) ? vjsNode.player : window.videojs.getPlayer(AMvideo.id);
+  }
 
-  await Promise.all([waitForData(AMvideo), waitForData(AMaudio)]);
+  const syncAndPlay = async () => {
+    AMvideo.currentTime = 0;
+    if (AMaudio) AMaudio.currentTime = 0;
 
-  const executePlay = async () => {
     try {
-      if (AMvideo.currentTime > 0.1) AMvideo.currentTime = 0;
-      if (AMaudio && AMaudio.currentTime > 0.1) AMaudio.currentTime = 0;
-
-      let vjsNode = AMvideo.closest('.video-js');
-      let playerAPI = vjsNode && vjsNode.player ? vjsNode.player : null;
-      
-      if (!playerAPI && window.videojs && AMvideo.id) {
-        playerAPI = window.videojs.getPlayer(AMvideo.id);
-      }
-
       if (playerAPI && typeof playerAPI.play === 'function') {
-        let p = playerAPI.play();
-        if (p && p.catch) p.catch(() => {}); 
+        const playPromise = playerAPI.play();
+        if (playPromise !== undefined) {
+          await playPromise;
+        }
       } else {
         await AMvideo.play();
       }
-
+      
       if (AMaudio) await AMaudio.play();
 
       if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
         AMaudio.currentTime = AMvideo.currentTime;
       }
-      return !AMvideo.paused;
+      return true;
     } catch (e) {
-      const btn = document.querySelector('.vjs-big-play-button') || 
-                  document.querySelector('.vjs-play-control.vjs-paused');
-      if (btn) btn.click();
-      return !AMvideo.paused;
+      return false;
     }
   };
 
-  let success = await executePlay();
+  const success = await syncAndPlay();
 
   if (!success) {
-    let attempts = 0;
-    const tick = setInterval(async () => {
-      attempts++;
-      success = await executePlay();
-      if (success || attempts > 15) {
-        clearInterval(tick);
-        isPlayPending = false;
-      }
-    }, 600);
-
-    const trap = async () => {
-      if (AMvideo.paused) {
-        success = await executePlay();
-        if (success) clearInterval(tick);
-      }
-      ['pointerdown', 'keydown', 'touchstart', 'click', 'mousemove'].forEach(evt => 
-        document.removeEventListener(evt, trap, true)
+    const unlockMedia = async () => {
+      ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach(e => 
+        document.removeEventListener(e, unlockMedia, true)
       );
+      await syncAndPlay();
     };
 
-    ['pointerdown', 'keydown', 'touchstart', 'click', 'mousemove'].forEach(evt => 
-      document.addEventListener(evt, trap, { once: true, capture: true, passive: true })
+    ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach(e => 
+      document.addEventListener(e, unlockMedia, { once: true, capture: true, passive: true })
     );
-  } else {
-    isPlayPending = false;
   }
-}; 
+
+  isPlayPending = false;
+};
+
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
   canvases.forEach(c => c.style.display = isFullscreen ? 'none' : 'block');
