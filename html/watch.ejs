@@ -2689,81 +2689,51 @@ const drawPause = () => {
     animationFrameId = null;
   }
 };let isPlayPending = false;
+let isPlayPending = false;
 
 const forcePlay = async () => {
   if (isPlayPending) return;
   isPlayPending = true;
 
-  // Grab the audio element dynamically by its ID
   const AMaudio = document.getElementById('aud');
-  
-  // Make sure AMvideo actually exists too. If it has an ID, you might need:
-  // const AMvideo = document.getElementById('your_video_id_here');
-  // I am assuming AMvideo is already correctly defined in your broader script.
-
-  const maxTries = 3;
-  let attempt = 0;
   let success = false;
 
-  while (attempt < maxTries && !success) {
-    attempt++;
-    
+  while (!success) {
     try {
-      // 1. Reset times BEFORE calling play()
       AMvideo.currentTime = 0;
       if (AMaudio) AMaudio.currentTime = 0;
 
-      // 2. Fire the native play requests
       const playPromises = [AMvideo.play()];
       if (AMaudio) {
         playPromises.push(AMaudio.play());
       }
 
-      // 3. Wait for them to resolve
       await Promise.all(playPromises);
-      success = true;
 
-      // 4. Graceful drift correction
       if (AMaudio && Math.abs(AMvideo.currentTime - AMaudio.currentTime) > 0.05) {
         AMaudio.currentTime = AMvideo.currentTime;
       }
 
+      success = !AMvideo.paused;
+
     } catch (error) {
-      console.warn(`Play attempt ${attempt} failed:`, error.name, error.message);
+      const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
+                            document.querySelector('.vjs-big-play-button');
       
-      if (attempt >= maxTries) {
-        console.log("Native play failed. Triggering the Video.js UI button...");
-        
-        // Target the specific paused button OR the big center play button
-        const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
-                              document.querySelector('.vjs-big-play-button');
-        
-        if (vjsPlayButton) {
-          vjsPlayButton.click();
-          success = true;
-        } else {
-          console.error("Could not find any Video.js play button to click.");
-        }
-      } else {
-        // Wait 200ms before trying native play again
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
-  }
-
-  // EXTRA SAFETY NET
-  if (success && AMvideo.paused) {
-    const vjsPlayButton = document.querySelector('.vjs-play-control.vjs-paused') || 
-                          document.querySelector('.vjs-big-play-button');
-    if (vjsPlayButton) {
+      if (vjsPlayButton) {
         vjsPlayButton.click();
+      }
+
+      success = !AMvideo.paused;
+    }
+
+    if (!success) {
+      await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
 
-  // Release the lock
   isPlayPending = false; 
 };
-
 
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
