@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: false,
@@ -297,6 +297,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!hasExternalAudio || qua === "medium") return;
       if (!intendedPlaying || restarting || seekingActive || syncing) return;
       if (mediaSessionForcedPauseActive()) return;
+
+      if (startupAutoplayAudioCatchupActive() && /^audio-/.test(String(reason || ""))) {
+        setStartupAudioHold(700);
+        queuePlayRetryBurst();
+        if (isChromiumOnlyBrowser()) queueChromiumToggleAudioRepair("startup-audio-catchup");
+        return;
+      }
 
       const now = performance.now();
       if (now < jointMismatchCooldownUntil) return;
@@ -2410,6 +2417,10 @@ document.addEventListener("DOMContentLoaded", () => {
     return wantsStartupAutoplay() && !firstPlayCommitted && (performance.now() - startupPrimeStartedAt) < STARTUP_AUTOPLAY_PAUSE_GRACE_MS;
   }
 
+  function startupAutoplayAudioCatchupActive() {
+    return startupAutoplayPauseGraceActive() && !audioEverStarted;
+  }
+
   function scheduleStartupAutoplayKick() {
     if (!hasExternalAudio || qua === "medium") return;
     if (startupAutoplayKickDone || startupAutoplayKickInFlight) return;
@@ -3782,7 +3793,29 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
     setupMediaSession();
   }
-}); 
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
