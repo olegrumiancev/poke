@@ -961,9 +961,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /**
-   * Silent background catch-up: instead of pausing/resuming audio (which causes
-   * a noticeable glitch), we simply snap the audio currentTime to match video
-   * if they've drifted, while keeping both playing. No audible interruption.
+   * Silent background catch-up: resync video+audio after returning from a
+   * background tab without any audible pause/resume glitch.
+   *
+   * Key insight: on Chromium, the VIDEO gets throttled in the background and
+   * its currentTime freezes at where you left. The AUDIO element often keeps
+   * playing forward. So audio.currentTime is the source of truth for "where
+   * we actually are" — we must snap VIDEO to match it, not the other way around.
    */
   async function silentBgCatchUp() {
     if (!coupledMode) return;
@@ -974,15 +978,43 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
+      const vPaused = getVideoPaused();
+      const aPaused = !!audio.paused;
+      const dur = Number(video.duration()) || 0;
 
-      if (!isFinite(vt)) return;
+      // Clamp a time to valid playback range
+      const clampTime = t => (dur > 0 ? Math.min(t, Math.max(0, dur - 0.1)) : Math.max(0, t));
 
-      const drift = isFinite(at) ? Math.abs(vt - at) : Infinity;
+      // ── Case 1: Audio is running (the reliable source of truth) ──────────
+      // Audio kept playing in the background while video was throttled/frozen.
+      // Snap VIDEO to audio's position so playback resumes from the right spot.
+      if (!aPaused && isFinite(at)) {
+        const target = clampTime(at);
 
-      // If audio is paused but video is playing, start it silently
-      if (!getVideoPaused() && audio.paused) {
+        if (vPaused) {
+          // Video got paused by browser throttling — seek it to audio pos and restart
+          squelchAudioEvents(400);
+          safeSetVideoTime(target);
+          try {
+            const p = execProgrammaticVideoPlay();
+            if (p && p.then) await p;
+          } catch {}
+          updateAudioGainImmediate();
+        } else if (isFinite(vt) && Math.abs(at - vt) > BG_SILENT_SNAP_THRESHOLD) {
+          // Both playing but video time is stale/behind — silently seek video forward
+          squelchAudioEvents(200);
+          safeSetVideoTime(target);
+        }
+        // else: both playing and in sync — nothing to do
+        return;
+      }
+
+      // ── Case 2: Audio is paused, video is playing ─────────────────────────
+      // Video kept running; sync audio to video position and restart it.
+      if (!vPaused && isFinite(vt) && aPaused) {
+        const target = clampTime(vt);
         squelchAudioEvents(600);
-        safeSetCT(audio, vt);
+        safeSetCT(audio, target);
         try {
           await execProgrammaticAudioPlay({ squelchMs: 500, force: true, minGapMs: 0 });
         } catch {}
@@ -990,19 +1022,19 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // If video is paused but should be playing, restart it silently
-      if (getVideoPaused() && !audio.paused) {
-        try {
-          const p = execProgrammaticVideoPlay();
-          if (p && p.then) await p;
-        } catch {}
-        return;
-      }
+      // ── Case 3: Both paused — use elapsed-time estimate to find position ──
+      // Neither kept running. Use stored bg-entry snapshot + elapsed wall time
+      // to estimate where we should be, then restart both from there.
+      if (vPaused && aPaused) {
+        let target = estimateExpectedTimeFromBg(now());
+        if (!isFinite(target) || target < 0) {
+          target = isFinite(at) ? at : (isFinite(vt) ? vt : 0);
+        }
+        target = clampTime(target);
 
-      // If both paused but should be playing, restart together
-      if (getVideoPaused() && audio.paused) {
         squelchAudioEvents(600);
-        safeSetCT(audio, vt);
+        safeSetVideoTime(target);
+        safeSetCT(audio, target);
         try {
           const p = execProgrammaticVideoPlay();
           if (p && p.then) await p;
@@ -1015,14 +1047,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return;
       }
-
-      // Both playing — just snap audio time if drifted, no audible pause
-      if (isFinite(at) && drift > BG_SILENT_SNAP_THRESHOLD) {
-        squelchAudioEvents(200);
-        safeSetCT(audio, vt);
-      }
     } finally {
       state.silentBgSync = false;
+      state.bgHiddenWasPlaying = false;
+      state.resumeOnVisible = false;
     }
   }
 
@@ -2302,7 +2330,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
