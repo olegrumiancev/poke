@@ -123,27 +123,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       })();
 
-      // Mobile: prefer the structured UA-Client-Hints API (can't be spoofed
-      // without also affecting the hints), fall back to touch heuristic.
-      const mobile = (() => {
+       const mobile = (() => {
         try {
           if (typeof navigator.userAgentData?.mobile === "boolean") {
             return navigator.userAgentData.mobile;
           }
         } catch {}
-        // Coarse heuristic: touch screen with limited pointer precision
-        try {
+         try {
           return navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
         } catch {}
         return false;
       })();
 
-      // For our purposes:
-      //   chromiumOnlyBrowser  = needs Chromium-specific play/pause guards
-      //   problemMobileBrowser = mobile browsers with aggressive bg throttling
-      //   useBgControllerRetry = needs the background resume controller
-      //
-      // Firefox handles bg audio natively → never gets retry logic.
+ 
       const chromiumOnlyBrowser = isChromium;
       const problemMobileBrowser = (isChromium && mobile) || isIosWebKit;
       const useBgControllerRetry = !isFirefox && (isChromium || isIosWebKit);
@@ -2330,17 +2322,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
         return;
     }
 
-     const videoElement = document.querySelector('.video-js');
+    // DON’T run shortcuts if any modifier key is pressed
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
+        return;
+    }
+
+    const videoElement = document.querySelector('.video-js');
     if (!videoElement) return;
     const player = videojs(videoElement);
 
-    // Handle the shortcuts
     switch (event.key.toLowerCase()) {
         case 'f': // Fullscreen
             if (!player.isFullscreen()) {
@@ -2352,7 +2349,7 @@ document.addEventListener('keydown', function(event) {
 
         case ' ': // Spacebar
         case 'k': 
-            event.preventDefault(); // Stops the page from scrolling down
+            event.preventDefault(); // Stops page scroll
             if (player.paused()) {
                 player.play();
             } else {
@@ -2375,19 +2372,16 @@ document.addEventListener('keydown', function(event) {
             break;
 
         case 'arrowup': 
-            event.preventDefault(); // Stops the page from scrolling up
-            // Increase volume by 0.1 (max 1.0)
+            event.preventDefault(); // Stops scroll up
             player.volume(Math.min(1, player.volume() + 0.1)); 
             break;
 
         case 'arrowdown': 
-            event.preventDefault(); // Stops the page from scrolling down
-            // Decrease volume by 0.1 (min 0)
+            event.preventDefault(); // Stops scroll down
             player.volume(Math.max(0, player.volume() - 0.1)); 
             break;
     }
 });
-
 
  // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
