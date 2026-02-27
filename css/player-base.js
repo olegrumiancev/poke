@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -32,6 +32,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   try {
     videoEl.setAttribute("playsinline", "");
     videoEl.setAttribute("webkit-playsinline", "");
+  } catch {}
+
+  try {
+    videoEl.preload = "auto";
+    videoEl.load?.();
+  } catch {}
+
+  try {
+    if (audio) {
+      audio.preload = "auto";
+      audio.load?.();
+    }
   } catch {}
 
   let cachedInnerVideoEl = null;
@@ -355,13 +367,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (isChromiumOnlyBrowser()) {
       chromiumPauseToggleGuardUntil = 0;
       chromiumBgSettlingUntil = 0;
-      chromiumAudioStartLockUntil = Math.min(chromiumAudioStartLockUntil, performance.now() + 120);
+      chromiumAudioStartLockUntil = Math.min(chromiumAudioStartLockUntil, performance.now() + 80);
     }
   }
 
   function clearPendingPlayResumesForPause() {
     cancelChromiumToggleAudioRepair();
     cancelHiddenTransientResume();
+    clearHiddenAudioWatchdogTimer();
     clearHiddenMediaSessionPlay();
     clearAndroidResumeRepairTimer();
     clearBgResumeRetryTimer();
@@ -423,6 +436,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   let hiddenMediaSessionPlayUntil = 0;
   let hiddenTransitionAt = 0;
   let hiddenTransientResumeSerial = 0;
+
+  let hiddenAudioWatchdogTimer = null;
+  let playBurstSerial = 0;
+  let autoplayRecoveryInFlight = false;
+  let autoplayRecoveryDone = false;
+  let autoplayMutedBootstrap = false;
+  let autoplayMutedBootstrapEver = false;
+  let autoplayGestureUnlockBound = false;
+  let lastVisibleAt = performance.now();
 
   function markExplicitPlay(ms = 15000) {
     explicitPlayUntil = Math.max(explicitPlayUntil, performance.now() + ms);
@@ -500,57 +522,248 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     return document.visibilityState === "hidden" && (performance.now() - hiddenTransitionAt) < Math.max(0, Number(ms) || 0);
   }
 
-  function cancelHiddenTransientResume() {
-    hiddenTransientResumeSerial += 1;
+  function visibleRecently(ms = 1400) {
+    return document.visibilityState === "visible" && (performance.now() - lastVisibleAt) < Math.max(0, Number(ms) || 0);
   }
 
-  function queueHiddenTransientResume(reason = "") {
+  function clearHiddenAudioWatchdogTimer() {
+    if (hiddenAudioWatchdogTimer) {
+      clearTimeout(hiddenAudioWatchdogTimer);
+      hiddenAudioWatchdogTimer = null;
+    }
+  }
+
+  function cancelHiddenTransientResume() {
+    hiddenTransientResumeSerial += 1;
+    clearHiddenAudioWatchdogTimer();
+  }
+
+  function safeGetAutoplayPolicy(target) {
+    try {
+      if (!navigator || typeof navigator.getAutoplayPolicy !== "function") return "";
+      return String(navigator.getAutoplayPolicy(target) || "");
+    } catch {}
+    return "";
+  }
+
+  function autoplayMutedBootstrapActive() {
+    return !!autoplayMutedBootstrap;
+  }
+
+  function releaseAutoplayMutedBootstrap() {
+    autoplayMutedBootstrap = false;
+
+    try {
+      if (!userMutedVideo) setVideoMutedState(false);
+    } catch {}
+
+    try {
+      if (audio && !userMutedAudio) audio.muted = false;
+    } catch {}
+
+    if (intendedPlaying) {
+      forceUnmuteForPlaybackIfAllowed();
+      updateAudioGainImmediate();
+      queueImmediatePlayBurst("autoplay-unlock");
+    }
+  }
+
+  function bindAutoplayGestureUnlock() {
+    if (autoplayGestureUnlockBound) return;
+    autoplayGestureUnlockBound = true;
+
+    const cleanup = () => {
+      try { document.removeEventListener("pointerdown", unlock, true); } catch {}
+      try { document.removeEventListener("keydown", unlock, true); } catch {}
+      try { document.removeEventListener("touchstart", unlock, true); } catch {}
+      try { document.removeEventListener("mousedown", unlock, true); } catch {}
+    };
+
+    const unlock = () => {
+      if (autoplayMutedBootstrapActive()) {
+        releaseAutoplayMutedBootstrap();
+      } else if (intendedPlaying) {
+        queueImmediatePlayBurst("gesture-rekick");
+      }
+      cleanup();
+    };
+
+    try { document.addEventListener("pointerdown", unlock, true); } catch {}
+    try { document.addEventListener("keydown", unlock, true); } catch {}
+    try { document.addEventListener("touchstart", unlock, true); } catch {}
+    try { document.addEventListener("mousedown", unlock, true); } catch {}
+  }
+
+  function queueImmediatePlayBurst(reason = "") {
+    const serial = ++playBurstSerial;
+    const delays = [0, 50, 120, 220, 360];
+
+    for (const delay of delays) {
+      setTimeout(() => {
+        if (serial !== playBurstSerial) return;
+        if (!intendedPlaying || restarting || seekingActive || syncing) return;
+        if (mediaSessionForcedPauseActive() || userPauseLockActive() || hardPauseLatchActive()) return;
+
+        if (document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
+          queueHiddenTransientResume(reason || "play-burst-hidden");
+          return;
+        }
+
+        clearPlayStartFriction();
+
+        const vt = Number(video.currentTime()) || 0;
+        safeSetCT(audio, vt);
+
+        try { execProgrammaticVideoPlay(); } catch {}
+
+        if (!strictBufferHold && !shouldBlockNewAudioStart()) {
+          execProgrammaticAudioPlay({
+            squelchMs: 180,
+            minGapMs: 0,
+            force: true
+          }).catch(() => false);
+        }
+
+        updateAudioGainImmediate();
+      }, delay);
+    }
+  }
+
+  async function recoverAutoplayIfNeeded(reason = "") {
+    if (autoplayRecoveryInFlight || autoplayRecoveryDone) return false;
+    if (!wantsStartupAutoplay()) return false;
+    if (mediaSessionForcedPauseActive()) return false;
+    if (userPauseLockActive() || hardPauseLatchActive()) return false;
+
+    autoplayRecoveryInFlight = true;
+
+    try {
+      bindAutoplayGestureUnlock();
+
+      const policy =
+        safeGetAutoplayPolicy(videoEl) ||
+        safeGetAutoplayPolicy("mediaelement");
+
+      clearMediaSessionForcedPause();
+      intendedPlaying = true;
+      clearPlayStartFriction();
+      updateMediaSessionPlaybackState();
+      setPauseEventGuard(1400);
+      setMediaPlayTxn(2200);
+      setResumeWarm(1600);
+      setSmoothNoHold(1200);
+      setJointStartGrace(1200);
+
+      const vt = Number(video.currentTime()) || 0;
+      safeSetCT(audio, vt);
+
+      if (policy === "allowed-muted" || policy === "disallowed" || !policy) {
+        autoplayMutedBootstrap = true;
+        autoplayMutedBootstrapEver = true;
+
+        try {
+          if (!userMutedVideo) setVideoMutedState(true);
+        } catch {}
+
+        try {
+          if (audio && !userMutedAudio) audio.muted = true;
+        } catch {}
+
+        updateAudioGainImmediate();
+      }
+
+      try {
+        const p = execProgrammaticVideoPlay();
+        if (p && p.then) await settlePlaybackKick(p, 140);
+      } catch {}
+
+      if (!shouldBlockNewAudioStart()) {
+        try {
+          await execProgrammaticAudioPlay({
+            squelchMs: 180,
+            minGapMs: 0,
+            force: true
+          });
+        } catch {}
+      }
+
+      queueImmediatePlayBurst(`autoplay-recovery:${reason || "generic"}`);
+
+      const ok = !isVideoPaused() || (hasExternalAudio && !audio.paused);
+      if (ok) autoplayRecoveryDone = true;
+
+      return ok;
+    } finally {
+      autoplayRecoveryInFlight = false;
+    }
+  }
+
+  function scheduleHiddenAudioWatchdog(reason = "") {
     if (!shouldUseBgControllerRetry()) return;
     if (!hasExternalAudio || qua === "medium") return;
     if (document.visibilityState !== "hidden") return;
     if (!intendedPlaying || restarting || seekingActive || syncing) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive() || hardPauseLatchActive()) return;
+    if (hiddenAudioWatchdogTimer) return;
 
-    const serial = ++hiddenTransientResumeSerial;
+    hiddenAudioWatchdogTimer = setTimeout(async () => {
+      hiddenAudioWatchdogTimer = null;
 
-    armHiddenMediaSessionPlay(2400);
-    setPauseEventGuard(900);
-    setMediaPlayTxn(1200);
-    setBgControllerPlayGuard(2400);
-    setResumeWarm(1400);
-    setSmoothNoHold(900);
-    if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+      if (document.visibilityState !== "hidden") return;
+      if (!intendedPlaying || restarting || seekingActive || syncing) return;
+      if (mediaSessionForcedPauseActive() || userPauseLockActive() || hardPauseLatchActive()) return;
 
-    const delays = [0, 90, 220];
+      resumeOnVisible = true;
+      bgHiddenWasPlaying = true;
 
-    for (const delay of delays) {
-      setTimeout(() => {
-        if (serial !== hiddenTransientResumeSerial) return;
-        if (document.visibilityState !== "hidden") return;
-        if (!intendedPlaying || restarting || seekingActive || syncing) return;
-        if (mediaSessionForcedPauseActive() || userPauseLockActive() || hardPauseLatchActive()) return;
+      const vt = Number(video.currentTime());
+      const at = Number(audio.currentTime);
 
+      if (isFinite(vt) && (!isFinite(at) || Math.abs(at - vt) > 0.20)) {
+        squelchAudioEvents(160);
+        safeSetCT(audio, vt);
+      }
+
+      if (!audio.paused) {
+        bgAudioMasterMode = true;
+        updateAudioGainImmediate();
+        return;
+      }
+
+      armHiddenMediaSessionPlay(2600);
+      clearPlayStartFriction();
+
+      try {
+        audioPauseInFlightUntil = 0;
+        audioPlayAttemptUntil = 0;
+        startupAudioHoldUntil = 0;
+      } catch {}
+
+      if (!shouldBlockNewAudioStart()) {
         try {
-          const vt = Number(video.currentTime());
-          const at = Number(audio.currentTime);
-          if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.22) {
-            squelchAudioEvents(220);
-            safeSetCT(audio, vt);
-          }
-        } catch {}
-
-        try { execProgrammaticVideoPlay(); } catch {}
-
-        if (!shouldBlockNewAudioStart()) {
-          execProgrammaticAudioPlay({
-            squelchMs: 220,
+          await execProgrammaticAudioPlay({
+            squelchMs: 160,
             minGapMs: 0,
             force: true
-          }).catch(() => false);
-          updateAudioGainImmediate();
-        }
-      }, delay);
-    }
+          });
+        } catch {}
+      }
+
+      if (!audio.paused) {
+        audioEverStarted = true;
+        bgAudioMasterMode = true;
+        updateAudioGainImmediate();
+        return;
+      }
+
+      setTimeout(() => {
+        scheduleHiddenAudioWatchdog(reason || "hidden-watchdog-retry");
+      }, 180);
+    }, 45);
+  }
+
+  function queueHiddenTransientResume(reason = "") {
+    scheduleHiddenAudioWatchdog(reason || "hidden-transient");
   }
 
   function cancelChromiumToggleAudioRepair() {
@@ -585,7 +798,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         const vt = Number(video.currentTime());
         const at = Number(audio.currentTime);
         if (isFinite(vt) && (!isFinite(at) || Math.abs(at - vt) > 0.18)) {
-          squelchAudioEvents(260);
+          squelchAudioEvents(220);
           safeSetCT(audio, vt);
         }
 
@@ -593,7 +806,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         updateAudioGainImmediate();
 
         const started = await execProgrammaticAudioPlay({
-          squelchMs: 280,
+          squelchMs: 220,
           minGapMs: 0,
           force: true
         }).catch(() => false);
@@ -668,6 +881,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     clearPlayStartFriction();
     cancelHiddenTransientResume();
 
+    if (autoplayMutedBootstrapActive()) {
+      releaseAutoplayMutedBootstrap();
+    }
+
     clearMediaSessionForcedPause();
     intendedPlaying = true;
     markMediaAction("play");
@@ -680,11 +897,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (isChromiumOnlyBrowser()) {
       setChromiumPauseToggleGuard(0);
       setChromiumBgSettling(0);
-      setChromiumAudioStartLock(120);
+      setChromiumAudioStartLock(80);
       audioPauseInFlightUntil = 0;
       audioPlayAttemptUntil = 0;
       startupAudioHoldUntil = 0;
     }
+
+    queueImmediatePlayBurst("user-play-intent");
   }
 
   function clearUserIntents() {
@@ -820,6 +1039,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   function forceUnmuteForPlaybackIfAllowed() {
     if (!intendedPlaying) return;
+    if (autoplayMutedBootstrapActive()) return;
 
     try {
       if (!userMutedVideo && getVideoMutedState()) {
@@ -879,6 +1099,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (!intendedPlaying || restarting || seekingActive || syncing || mediaSessionForcedPauseActive()) return;
         if (userPauseLockActive() || hardPauseLatchActive()) return;
         if (document.visibilityState === "hidden" && bgAutoResumeSuppressed && !explicitPlayActive() && !bgControllerPlayGuardActive() && !mediaActionRecently("play", 900)) return;
+
+        if (document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
+          queueHiddenTransientResume("play-retry-hidden");
+          return;
+        }
+
         playTogether().catch(() => {});
       }, delay);
     }
@@ -911,9 +1137,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     if (!isHidden) {
       if (resumeWarmActive()) return true;
+      if (visibleRecently(1400)) return true;
+      if ((now - lastPlayKickTs) < 900) return true;
       if (now < audioPlayInFlightUntil) return true;
       if (isProgrammaticPlay) return true;
-      if (mediaActionRecently("play", 260)) return true;
+      if (mediaActionRecently("play", 900)) return true;
       return false;
     }
 
@@ -922,7 +1150,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (resumeWarmActive()) return true;
     if (now < audioPlayInFlightUntil) return true;
     if (mediaActionRecently("play", 2400)) return true;
-    if (hiddenRecently(1400)) return true;
+    if (hiddenRecently(2000)) return true;
     if (shouldIgnorePauseEvents() && androidResumeGuardActive()) return true;
     return false;
   }
@@ -992,7 +1220,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     const now = performance.now();
     if (now < bgResumeRetryCooldownUntil) return;
-    bgResumeRetryCooldownUntil = now + 650;
+    bgResumeRetryCooldownUntil = now + 420;
 
     clearBgResumeRetryTimer();
     bgResumeRetryTimer = setTimeout(() => {
@@ -1042,23 +1270,23 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }
   }
 
-  function execProgrammaticAudioPause(ms = 220) {
+  function execProgrammaticAudioPause(ms = 180) {
     const now = performance.now();
-    audioPauseInFlightUntil = Math.max(audioPauseInFlightUntil, now + Math.max(180, Number(ms) || 0));
-    audioPlayAttemptUntil = Math.max(audioPlayAttemptUntil, now + 120);
+    audioPauseInFlightUntil = Math.max(audioPauseInFlightUntil, now + Math.max(140, Number(ms) || 0));
+    audioPlayAttemptUntil = Math.max(audioPlayAttemptUntil, now + 90);
 
     isProgrammaticAudioPause = true;
     try { squelchAudioEvents(ms); } catch {}
     try {
       if (!audio.paused) audio.pause();
     } catch {}
-    setTimeout(() => { isProgrammaticAudioPause = false; }, 420);
+    setTimeout(() => { isProgrammaticAudioPause = false; }, 320);
   }
 
   async function execProgrammaticAudioPlay(opts = {}) {
     const {
-      squelchMs = 320,
-      minGapMs = 140,
+      squelchMs = 220,
+      minGapMs = 0,
       force = false
     } = opts || {};
 
@@ -1081,12 +1309,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       squelchAudioEvents(squelchMs);
       const p = audio.play();
-      audioPlayInFlightUntil = performance.now() + Math.max(260, Number(squelchMs) || 0);
+      audioPlayInFlightUntil = performance.now() + Math.max(220, Number(squelchMs) || 0);
       audioPlayInFlightPromise = Promise.resolve(p);
       await audioPlayInFlightPromise;
 
       if (shouldBlockNewAudioStart()) {
-        try { squelchAudioEvents(260); } catch {}
+        try { squelchAudioEvents(180); } catch {}
         try { audio.pause(); } catch {}
         return false;
       }
@@ -1095,11 +1323,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       return !audio.paused;
     } finally {
       audioPlayInFlightPromise = null;
-      setTimeout(() => { isProgrammaticAudioPlay = false; }, 420);
+      setTimeout(() => { isProgrammaticAudioPlay = false; }, 320);
     }
   }
 
-  async function settlePlaybackKick(promiseLike, timeoutMs = 160) {
+  async function settlePlaybackKick(promiseLike, timeoutMs = 120) {
     if (!promiseLike || typeof promiseLike.then !== "function") return;
     await Promise.race([
       Promise.resolve(promiseLike).catch(() => {}),
@@ -1140,7 +1368,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   const STARTUP_BUFFER_AHEAD_SEC = 0.9;
   const MICRO_DRIFT = 0.08;
   const BIG_DRIFT = 1.5;
-  const SYNC_INTERVAL_MS = 300;
+  const SYNC_INTERVAL_MS = 220;
 
   const pickAudioSrc = () => {
     const s = audio?.getAttribute?.("src");
@@ -1181,7 +1409,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (postSeekSmoothActive()) {
       if (!restarting && !seekingActive && !syncing && intendedPlaying && !mediaSessionForcedPauseActive()) {
         if (!isVideoPaused() && audio.paused && !strictBufferHold && !shouldBlockNewAudioStart()) {
-          execProgrammaticAudioPlay({ squelchMs: 260, minGapMs: 60, force: true }).catch(() => false);
+          execProgrammaticAudioPlay({ squelchMs: 220, minGapMs: 0, force: true }).catch(() => false);
         }
       }
       return;
@@ -1190,7 +1418,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     const token = ++seekRecoveryToken;
     clearSeekRecoveryTimers();
 
-    const steps = [0, 80, 180, 360, 650, 950];
+    const steps = [0, 60, 140, 260, 480, 760];
 
     for (const delay of steps) {
       const tid = setTimeout(async () => {
@@ -1208,21 +1436,21 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           (document.visibilityState === "hidden" && shouldUseBgControllerRetry() && isVideoPaused()) ||
           shouldBlockNewAudioStart();
 
-        if (!isFinite(at) || Math.abs(at - vt) > 0.18) {
-          squelchAudioEvents(220);
+        if (!isFinite(at) || Math.abs(at - vt) > 0.16) {
+          squelchAudioEvents(180);
           safeSetCT(audio, vt);
         }
 
         if (!holdAudio && audio.paused) {
           try {
-            await execProgrammaticAudioPlay({ squelchMs: 260, minGapMs: 80 });
+            await execProgrammaticAudioPlay({ squelchMs: 180, minGapMs: 0 });
           } catch {}
         }
 
         const vt2 = Number(video.currentTime());
         const at2 = Number(audio.currentTime);
-        if (isFinite(vt2) && (!isFinite(at2) || Math.abs(at2 - vt2) > 0.18)) {
-          squelchAudioEvents(220);
+        if (isFinite(vt2) && (!isFinite(at2) || Math.abs(at2 - vt2) > 0.16)) {
+          squelchAudioEvents(180);
           safeSetCT(audio, vt2);
         }
 
@@ -1239,13 +1467,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (postSeekSmoothActive()) {
       if (!restarting && !seekingActive && !syncing && intendedPlaying && !mediaSessionForcedPauseActive()) {
         if (!isVideoPaused() && audio.paused && !strictBufferHold && !shouldBlockNewAudioStart()) {
-          execProgrammaticAudioPlay({ squelchMs: 260, minGapMs: 60, force: true }).catch(() => false);
+          execProgrammaticAudioPlay({ squelchMs: 220, minGapMs: 0, force: true }).catch(() => false);
         }
       }
       return;
     }
 
-    const steps = [0, 70, 160, 320, 520, 820];
+    const steps = [0, 60, 140, 260, 420, 680];
     const token = ++seekRecoveryToken;
 
     for (const delay of steps) {
@@ -1263,10 +1491,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           shouldBlockNewAudioStart();
 
         const vt = Number(video.currentTime());
-        if (isFinite(vt) && Math.abs(Number(audio.currentTime) - vt) > 0.18) safeSetCT(audio, vt);
+        if (isFinite(vt) && Math.abs(Number(audio.currentTime) - vt) > 0.16) safeSetCT(audio, vt);
 
         if (!holdAudio) {
-          await execProgrammaticAudioPlay({ squelchMs: 360, minGapMs: 60 }).catch(() => false);
+          await execProgrammaticAudioPlay({ squelchMs: 220, minGapMs: 0 }).catch(() => false);
           updateAudioGainImmediate();
         }
 
@@ -1284,6 +1512,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }
 
   function targetVolFromVideo() {
+    if (autoplayMutedBootstrapActive()) return 0;
     const vVol = clamp01(typeof video.volume === "function" ? video.volume() : (videoEl.volume ?? 1));
     const vMuted = !!(typeof video.muted === "function" ? video.muted() : videoEl.muted);
     const hardMuted = vMuted || userMutedVideo;
@@ -1441,7 +1670,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }
   }
 
-  function scheduleResumeSyncRestart(delay = 180) {
+  function scheduleResumeSyncRestart(delay = 120) {
     clearResumeSyncRestartTimer();
     resumeSyncRestartTimer = setTimeout(() => {
       resumeSyncRestartTimer = null;
@@ -1538,6 +1767,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     explicitPlayUntil = 0;
     chromiumBgSettlingUntil = 0;
     hiddenTransitionAt = 0;
+    clearHiddenAudioWatchdogTimer();
     cancelHiddenTransientResume();
     clearBgResumeRetryTimer();
     clearResumeSyncRestartTimer();
@@ -1654,11 +1884,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     try {
       if (isChromiumOnlyBrowser()) {
-        setChromiumBgSettling(900);
-        setChromiumAudioStartLock(520);
+        setChromiumBgSettling(700);
+        setChromiumAudioStartLock(160);
       }
 
-      squelchAudioEvents(900);
+      squelchAudioEvents(700);
 
       safeFastSeek(videoEl, target);
       try {
@@ -1670,8 +1900,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       safeSetCT(audio, target);
 
       await Promise.allSettled([
-        waitForSeekSettle(v, 180),
-        waitForSeekSettle(audio, 180)
+        waitForSeekSettle(v, 160),
+        waitForSeekSettle(audio, 160)
       ]);
 
       if (typeof token === "number" && token !== bgCatchUpToken) return false;
@@ -1698,7 +1928,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       try {
         if (audio.paused && !shouldBlockNewAudioStart()) {
           ap = execProgrammaticAudioPlay({
-            squelchMs: 320,
+            squelchMs: 180,
             minGapMs: 0,
             force: true
           });
@@ -1716,7 +1946,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       forceUnmuteForPlaybackIfAllowed();
       updateAudioGainImmediate();
-      scheduleResumeSyncRestart(120);
+      scheduleResumeSyncRestart(80);
 
       return !isVideoPaused();
     } catch {
@@ -1735,13 +1965,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (userPauseLockActive()) return;
 
       if (isChromiumOnlyBrowser()) {
-        setChromiumBgSettling(700);
-        setChromiumAudioStartLock(220);
+        setChromiumBgSettling(480);
+        setChromiumAudioStartLock(90);
       }
 
       const now = performance.now();
       if (now < bgCatchUpCooldownUntil) return;
-      bgCatchUpCooldownUntil = now + 180;
+      bgCatchUpCooldownUntil = now + 140;
 
       const token = ++bgCatchUpToken;
       bgCatchUpInFlight = true;
@@ -1760,18 +1990,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         let target = atNow;
         if (dur > 0) target = Math.min(target, Math.max(0, dur - 0.25));
 
-        if (!isFinite(vtNow) || Math.abs(target - vtNow) > 0.16 || vPausedNow) {
+        if (!isFinite(vtNow) || Math.abs(target - vtNow) > 0.12 || vPausedNow) {
           safeFastSeek(videoEl, target);
           safeSetVideoTime(target);
         }
 
         markExplicitPlay(15000);
-        setResumeWarm(2000);
-        setSmoothNoHold(1600);
-        setPauseEventGuard(1200);
-        setMediaPlayTxn(1800);
-        setBgControllerPlayGuard(2200);
-        setAndroidResumeGuard(1800);
+        setResumeWarm(1800);
+        setSmoothNoHold(1400);
+        setPauseEventGuard(900);
+        setMediaPlayTxn(1400);
+        setBgControllerPlayGuard(1800);
+        setAndroidResumeGuard(1400);
         clearPlayStartFriction();
 
         strictBufferHold = false;
@@ -1783,11 +2013,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         updateAudioGainImmediate();
 
         if (vPausedNow && !inMediaTxnWindow()) {
-          try { await settlePlaybackKick(execProgrammaticVideoPlay(), 120); } catch {}
+          try { await settlePlaybackKick(execProgrammaticVideoPlay(), 90); } catch {}
         }
 
         armBgRateBoost(target);
-        scheduleResumeSyncRestart(100);
+        queueImmediatePlayBurst("visible-catchup-audio-master");
+        scheduleResumeSyncRestart(60);
 
         bgHiddenWasPlaying = false;
         bgHiddenSince = 0;
@@ -1803,31 +2034,31 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const dur2 = Number(video.duration()) || 0;
       if (dur2 > 0) expected = Math.min(expected, Math.max(0, dur2 - 0.25));
 
-      const needsIntervention = vPausedNow || aPausedNow || driftNow > 0.24 || resumeOnVisible || bgHiddenWasPlaying;
+      const needsIntervention = vPausedNow || aPausedNow || driftNow > 0.18 || resumeOnVisible || bgHiddenWasPlaying;
       if (!needsIntervention) {
         bgHiddenWasPlaying = false;
         bgHiddenSince = 0;
         resumeOnVisible = false;
         bgAudioMasterMode = false;
         bgHiddenStoppedSyncLoop = false;
-        scheduleResumeSyncRestart(100);
+        scheduleResumeSyncRestart(60);
         return;
       }
 
       const volTarget = clamp01(targetVolFromVideo());
-      const doFadeIn = (document.visibilityState === "visible") && volTarget > 0.001 && !userMutedAudio;
+      const doFadeIn = (document.visibilityState === "visible") && volTarget > 0.001 && !userMutedAudio && !autoplayMutedBootstrapActive();
 
       if (doFadeIn) {
-        try { await rampVolumeTo(0, 18); } catch {}
+        try { await rampVolumeTo(0, 12); } catch {}
       }
 
       markExplicitPlay(15000);
-      setResumeWarm(2000);
-      setSmoothNoHold(1500);
-      setPauseEventGuard(1600);
-      setMediaPlayTxn(2200);
-      setBgControllerPlayGuard(2400);
-      setAndroidResumeGuard(1800);
+      setResumeWarm(1800);
+      setSmoothNoHold(1400);
+      setPauseEventGuard(1100);
+      setMediaPlayTxn(1800);
+      setBgControllerPlayGuard(2200);
+      setAndroidResumeGuard(1600);
       clearPlayStartFriction();
 
       strictBufferHold = false;
@@ -1844,14 +2075,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (userPauseLockActive()) return;
 
       armBgRateBoost(expected);
+      queueImmediatePlayBurst("visible-catchup");
 
       if (doFadeIn) {
         setTimeout(() => {
           if (token !== bgCatchUpToken) return;
           if (!intendedPlaying) return;
           if (userPauseLockActive()) return;
-          rampVolumeTo(volTarget, 70).catch(() => {});
-        }, 8);
+          rampVolumeTo(volTarget, 55).catch(() => {});
+        }, 6);
       } else {
         updateAudioGainImmediate();
       }
@@ -1968,7 +2200,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (isFinite(vt0)) {
           try {
             if (!isFinite(at0) || Math.abs(at0 - vt0) > 0.03) {
-              squelchAudioEvents(520);
+              squelchAudioEvents(420);
               safeSetCT(audio, vt0);
             }
           } catch {}
@@ -2014,7 +2246,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (isFinite(vt)) safeSetCT(audio, vt);
 
       if (!isVideoPaused()) execProgrammaticVideoPause();
-      if (!audio.paused) execProgrammaticAudioPause(300);
+      if (!audio.paused) execProgrammaticAudioPause(220);
 
       const vReady = await waitForReadyStateOrCanPlay(v, 3, 3200);
       const aReady = await waitForReadyStateOrCanPlay(audio, 3, 3200);
@@ -2041,7 +2273,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       if (!seekSyncWantedPlaying || !intendedPlaying || mediaSessionForcedPauseActive()) {
         execProgrammaticVideoPause();
-        execProgrammaticAudioPause(300);
+        execProgrammaticAudioPause(220);
         return;
       }
 
@@ -2059,7 +2291,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       setPostSeekSmooth(1100);
       setSmoothNoHold(1100);
 
-      squelchAudioEvents(520);
+      squelchAudioEvents(420);
       await ensureUnmutedIfNotUserMuted().catch(() => {});
       const vt2 = Number(video.currentTime());
       if (isFinite(vt2)) safeSetCT(audio, vt2);
@@ -2125,7 +2357,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       strictBufferHoldMinUntil = Math.max(strictBufferHoldMinUntil, now + 520);
 
       if (!isVideoPaused()) execProgrammaticVideoPause();
-      if (!audio.paused) execProgrammaticAudioPause(300);
+      if (!audio.paused) execProgrammaticAudioPause(220);
 
       safeSetCT(audio, vt);
 
@@ -2214,7 +2446,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           const vt = Number(video.currentTime()) || t;
           safeSetCT(audio, vt);
           if (!shouldBlockNewAudioStart()) {
-            await execProgrammaticAudioPlay({ squelchMs: 700, force: true, minGapMs: 0 }).catch(() => false);
+            await execProgrammaticAudioPlay({ squelchMs: 220, force: true, minGapMs: 0 }).catch(() => false);
           }
           updateAudioGainImmediate();
         } catch {}
@@ -2284,8 +2516,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           try { noteBackgroundEntry("sync-hidden"); } catch {}
         }
 
-        if (!audio.paused && isVideoPaused()) {
+        if (!audio.paused) {
           bgAudioMasterMode = true;
+        } else {
+          scheduleHiddenAudioWatchdog("sync-hidden");
         }
 
         return;
@@ -2337,7 +2571,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             jointStartGraceActive() ||
             resumeWarmActive() ||
             explicitPlayActive() ||
-            (now - lastPlayKickTs) < 520;
+            (now - lastPlayKickTs) < 700;
 
           if (mustHoldAudio) {
             if (!warm && coupledMismatchTooLong(420)) {
@@ -2346,12 +2580,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           } else if (now >= audioPauseInFlightUntil) {
             if (canKickFirstAudio || !startupAudioHoldActive()) {
               execProgrammaticAudioPlay({
-                squelchMs: canKickFirstAudio ? 260 : 320,
-                minGapMs: canKickFirstAudio ? 0 : 140,
-                force: !!canKickFirstAudio
+                squelchMs: canKickFirstAudio ? 180 : 220,
+                minGapMs: 0,
+                force: true
               }).catch(() => false);
               updateAudioGainImmediate();
-              if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
+              if (Math.abs(at - vt) > 0.6) safeSetCT(audio, vt);
             } else if (!warm && coupledMismatchTooLong(520)) {
               holdCoupledPlayback("audio-delayed");
             }
@@ -2359,26 +2593,29 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             holdCoupledPlayback("audio-inflight");
           }
         } else if (vPaused && !aPaused) {
-          execProgrammaticAudioPause();
-          if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
+          if (isHidden && bgRetryBrowser) {
+            resumeOnVisible = true;
+            bgAudioMasterMode = true;
+          } else {
+            execProgrammaticAudioPause();
+            if (Math.abs(at - vt) > 0.8) safeSetCT(audio, vt);
 
-          if (intendedPlaying && !vWaiting && !strictBufferHold) {
-            if (!(bgRetryBrowser && isHidden)) {
-              if (!inMediaTxnWindow() && !userPauseLockActive() && !chromiumPauseToggleGuardActive()) playTogether().catch(() => {});
-            } else {
-              queueHiddenTransientResume("sync-loop-video-paused-hidden");
+            if (intendedPlaying && !vWaiting && !strictBufferHold) {
+              if (!inMediaTxnWindow() && !userPauseLockActive() && !chromiumPauseToggleGuardActive()) {
+                queueImmediatePlayBurst("video-paused-visible");
+              }
             }
           }
         } else if (vPaused && aPaused) {
           if (!vWaiting && !strictBufferHold && !userPauseLockActive() && !chromiumPauseToggleGuardActive()) {
             if (!(bgRetryBrowser && isHidden)) {
-              if (!inMediaTxnWindow()) playTogether().catch(() => {});
+              if (!inMediaTxnWindow()) queueImmediatePlayBurst("both-paused-visible");
             } else {
               queueHiddenTransientResume("sync-loop-both-paused-hidden");
             }
           }
         } else {
-          if (Math.abs(at - vt) > 1.2) safeSetCT(audio, vt);
+          if (Math.abs(at - vt) > 1.0) safeSetCT(audio, vt);
         }
       } else if (!intendedPlaying && !restarting && !seekingActive && !syncing) {
         if (!vPaused) execProgrammaticVideoPause();
@@ -2421,7 +2658,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             !shouldBlockNewAudioStart();
 
           if (canKickAudio && (now - audioLastProgressTs) > 2200) {
-            audioKickCooldownUntil = now + 2500;
+            audioKickCooldownUntil = now + 2000;
             kickAudio().catch(() => {});
             audioLastProgressTs = now;
             lastATts = now;
@@ -2449,7 +2686,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         lastVTts = now;
       }
 
-      if (intendedPlaying && !audio.paused && !userMutedVideo && !userMutedAudio) {
+      if (intendedPlaying && !audio.paused && !userMutedVideo && !userMutedAudio && !autoplayMutedBootstrapActive()) {
         if (audio.muted) {
           try { audio.muted = false; } catch {}
         }
@@ -2468,13 +2705,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const at = Number(audio.currentTime);
       const target = isFinite(vt) ? vt : (isFinite(at) ? at : 0);
 
-      execProgrammaticAudioPause(300);
+      execProgrammaticAudioPause(220);
       safeSetCT(audio, target);
 
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise(r => setTimeout(r, 20));
 
       if (intendedPlaying && !isVideoPaused() && !userPauseLockActive() && !shouldBlockNewAudioStart()) {
-        await execProgrammaticAudioPlay({ squelchMs: 320, force: true, minGapMs: 0 }).catch(() => false);
+        await execProgrammaticAudioPlay({ squelchMs: 220, force: true, minGapMs: 0 }).catch(() => false);
         updateAudioGainImmediate();
       }
     } catch {}
@@ -2529,6 +2766,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     startupAutoplayKickInFlight = true;
     hardPauseVerifySerial += 1;
 
+    bindAutoplayGestureUnlock();
+
     setTimeout(async () => {
       try {
         if (!startupBufferPrimed || mediaSessionForcedPauseActive()) return;
@@ -2545,22 +2784,27 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setResumeWarm(1600);
         setSmoothNoHold(1100);
         setJointStartGrace(1200);
-        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(80);
 
         const vt = Number(video.currentTime()) || 0;
         safeSetCT(audio, vt);
 
         try {
           const vp = execProgrammaticVideoPlay();
-          if (vp && vp.then) await settlePlaybackKick(vp, 160);
+          if (vp && vp.then) await settlePlaybackKick(vp, 120);
         } catch {}
 
-        if (isVideoPaused()) return;
-
-        queuePlayRetryBurst();
-        await playTogether().catch(() => {});
+        queueImmediatePlayBurst("startup-autoplay-kick");
 
         if (!isVideoPaused()) {
+          await playTogether().catch(() => {});
+        }
+
+        if (isVideoPaused() || audio.paused) {
+          await recoverAutoplayIfNeeded("startup-kick");
+        }
+
+        if (!isVideoPaused() || !audio.paused) {
           startupAutoplayKickDone = true;
         }
       } finally {
@@ -2611,7 +2855,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           strictBufferHoldReason = "strict-play-gate";
           strictBufferHoldMinUntil = Math.max(strictBufferHoldMinUntil, performance.now() + 520);
           if (!isVideoPaused()) execProgrammaticVideoPause();
-          if (!audio.paused) execProgrammaticAudioPause(300);
+          if (!audio.paused) execProgrammaticAudioPause(220);
           safeSetCT(audio, tStrict);
           armResumeAfterBuffer(8000);
           return;
@@ -2629,7 +2873,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const bgRetryBrowser = shouldUseBgControllerRetry();
       const vWaiting = getVideoReadyState() < 3 || video.hasClass("vjs-waiting");
 
-      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
+      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.35) {
         if (!(isHidden && !audio.paused && at > vt)) safeSetCT(audio, vt);
       }
 
@@ -2643,18 +2887,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
         try {
           if (audio.paused && !shouldBlockNewAudioStart()) {
-            squelchAudioEvents(260);
+            squelchAudioEvents(180);
             safeSetCT(audio, t0);
 
             const p = execProgrammaticAudioPlay({
-              squelchMs: 260,
+              squelchMs: 180,
               minGapMs: 0,
               force: true
             });
 
             await Promise.race([
               Promise.resolve(p).catch(() => false),
-              new Promise(r => setTimeout(() => r(false), 180))
+              new Promise(r => setTimeout(() => r(false), 120))
             ]);
 
             audioStartedFirst = !audio.paused;
@@ -2678,7 +2922,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (isVideoPaused()) {
         try {
           const p = execProgrammaticVideoPlay();
-          if (p && p.then) await settlePlaybackKick(p, isHidden ? 90 : 180);
+          if (p && p.then) await settlePlaybackKick(p, isHidden ? 70 : 120);
           vOk = !isVideoPaused() || (isHidden && hiddenMediaSessionPlayActive());
         } catch (err) {
           if (err.name !== "AbortError") vOk = false;
@@ -2689,7 +2933,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       if (vOk && intendedPlaying) {
         setSmoothNoHold(900);
-        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(80);
         if (isChromiumOnlyBrowser() && audio.paused) queueChromiumToggleAudioRepair("play-together-video-ok");
       }
 
@@ -2711,18 +2955,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             !canKickFirstAudio &&
             startupPhase &&
             vOk &&
-            (vWaiting || (performance.now() - lastPlayKickTs) < 260);
+            (vWaiting || (performance.now() - lastPlayKickTs) < 220);
 
           if (shouldHoldAudio) {
             aOk = true;
             if (intendedPlaying && vWaiting) armResumeAfterBuffer(8000);
           } else if (deferStartupAudio) {
-            setStartupAudioHold(520);
+            setStartupAudioHold(360);
             aOk = true;
             if (intendedPlaying && vWaiting) armResumeAfterBuffer(8000);
           } else {
             aOk = await execProgrammaticAudioPlay({
-              squelchMs: canKickFirstAudio ? 220 : 260,
+              squelchMs: canKickFirstAudio ? 160 : 180,
               minGapMs: 0,
               force: true
             });
@@ -2737,7 +2981,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         try {
           if (!shouldBlockNewAudioStart() && canStartAudioAt(Number(video.currentTime())) && !vWaiting) {
             safeSetCT(audio, Number(video.currentTime()));
-            aOk = await execProgrammaticAudioPlay({ squelchMs: 260, force: true, minGapMs: 0 });
+            aOk = await execProgrammaticAudioPlay({ squelchMs: 180, force: true, minGapMs: 0 });
           } else if (vWaiting) {
             armResumeAfterBuffer(8000);
           }
@@ -2762,7 +3006,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         }
       } else if (!vOk && aOk) {
         if (!isHidden) {
-          execProgrammaticAudioPause(220);
+          execProgrammaticAudioPause(180);
           aOk = false;
         }
       }
@@ -2774,7 +3018,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           jointStartGraceActive() ||
           resumeWarmActive() ||
           explicitPlayActive() ||
-          (performance.now() - lastPlayKickTs) < 520;
+          (performance.now() - lastPlayKickTs) < 700;
 
         if (!vPausedNow2 && aPausedNow2 && !warm && !strictBufferHold) {
           holdCoupledPlayback("audio-not-playing");
@@ -2782,7 +3026,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         }
 
         if (vPausedNow2 && !aPausedNow2) {
-          execProgrammaticAudioPause(300);
+          if (document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
+            bgAudioMasterMode = true;
+            resumeOnVisible = true;
+          } else {
+            execProgrammaticAudioPause(220);
+          }
         }
       }
 
@@ -2811,7 +3060,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (!userPauseLockActive() && !hardPauseLatchActive() && !strictBufferHold && !mediaSessionForcedPauseActive() && !(androidResumeGuardActive() && isVideoPaused()) && performance.now() >= audioPauseInFlightUntil && !shouldBlockNewAudioStart()) {
           if (canKickFirstAudio || !startupAudioHoldActive()) {
             execProgrammaticAudioPlay({
-              squelchMs: canKickFirstAudio ? 220 : 260,
+              squelchMs: canKickFirstAudio ? 160 : 180,
               minGapMs: 0,
               force: true
             }).catch(() => false);
@@ -2821,14 +3070,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       } else if (intendedPlaying && isVideoPaused() && !audio.paused) {
         if (isHidden && shouldUseBgControllerRetry()) {
           resumeOnVisible = true;
+          bgAudioMasterMode = true;
           queueHiddenTransientResume("play-together-finally-hidden");
         } else if (!userPauseLockActive() && !hardPauseLatchActive()) {
-          execProgrammaticAudioPause(220);
-
           if (!isHidden && isProblemMobileBrowser() && !videoRepairing) {
             kickVideo().catch(() => {});
           } else if (!isHidden && !chromiumPauseToggleGuardActive()) {
-            playTogether().catch(() => {});
+            queueImmediatePlayBurst("play-together-finally");
           }
         }
       }
@@ -2838,6 +3086,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function pauseHard(audioPauseMs = 700) {
     cancelChromiumToggleAudioRepair();
     cancelHiddenTransientResume();
+    clearHiddenAudioWatchdogTimer();
     clearHiddenMediaSessionPlay();
     strictBufferHold = false;
     strictBufferHoldReason = "";
@@ -2861,6 +3110,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function pauseTogether() {
     cancelChromiumToggleAudioRepair();
     cancelHiddenTransientResume();
+    clearHiddenAudioWatchdogTimer();
     clearHiddenMediaSessionPlay();
     intendedPlaying = false;
     strictBufferHold = false;
@@ -3037,6 +3287,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         clearBgResumeRetryTimer();
         clearResumeSyncRestartTimer();
         cancelHiddenTransientResume();
+        clearHiddenAudioWatchdogTimer();
 
         setPauseEventGuard(2200);
         setMediaPauseTxn(2200);
@@ -3061,6 +3312,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         clearMediaSessionForcedPause();
         clearPlayStartFriction();
         cancelHiddenTransientResume();
+        clearHiddenAudioWatchdogTimer();
 
         if (document.visibilityState === "hidden") {
           armHiddenMediaSessionPlay(5000);
@@ -3086,9 +3338,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setMediaPlayTxn(2600);
         setBgControllerPlayGuard(document.visibilityState === "hidden" ? 20000 : 2800);
         setStartupAudioHold(0);
-        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(80);
 
         queuePlayRetryBurst();
+        queueImmediatePlayBurst("media-session-play");
 
         forceUnmuteForPlaybackIfAllowed();
         updateAudioGainImmediate();
@@ -3105,7 +3358,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             const vt = Number(video.currentTime()) || 0;
             safeSetCT(audio, vt);
             audioBootstrapPromise = execProgrammaticAudioPlay({
-              squelchMs: 260,
+              squelchMs: 180,
               minGapMs: 0,
               force: true
             });
@@ -3120,8 +3373,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
         (async () => {
           await Promise.allSettled([
-            settlePlaybackKick(playPromise, document.visibilityState === "hidden" ? 90 : 180),
-            settlePlaybackKick(audioBootstrapPromise, 120)
+            settlePlaybackKick(playPromise, document.visibilityState === "hidden" ? 70 : 120),
+            settlePlaybackKick(audioBootstrapPromise, 80)
           ]);
 
           if (!mediaSessionActionIsCurrent(actionSerial)) return;
@@ -3135,6 +3388,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (!mediaSessionActionIsCurrent(actionSerial)) return;
 
           queuePlayRetryBurst();
+          queueImmediatePlayBurst("media-session-play-confirmed");
 
           if (isAndroidChromium()) {
             clearAndroidResumeRepairTimer();
@@ -3145,19 +3399,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
               if (isVideoPaused()) {
                 try {
-                  execProgrammaticAudioPause(300);
+                  await settlePlaybackKick(execProgrammaticVideoPlay(), 80);
                 } catch {}
-
-                try { await settlePlaybackKick(execProgrammaticVideoPlay(), 120); } catch {}
 
                 await playTogether().catch(() => {});
               }
-
-              if (intendedPlaying && isVideoPaused() && !audio.paused) {
-                execProgrammaticAudioPause(300);
-                safeSetCT(audio, Number(video.currentTime()) || 0);
-              }
-            }, 220);
+            }, 160);
           } else if (shouldUseBgControllerRetry()) {
             if (!mediaSessionActionIsCurrent(actionSerial)) return;
 
@@ -3167,11 +3414,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             }
 
             if (document.visibilityState === "visible" && !userPauseLockActive()) {
-              if (intendedPlaying && isVideoPaused() && !audio.paused) {
-                safeSetCT(audio, Number(video.currentTime()) || 0);
-                scheduleBgResumeRetry(100);
-              } else if (intendedPlaying && (isVideoPaused() || audio.paused)) {
-                scheduleBgResumeRetry(100);
+              if (intendedPlaying && (isVideoPaused() || audio.paused)) {
+                scheduleBgResumeRetry(60);
               }
             }
           }
@@ -3227,7 +3471,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (isFinite(vt)) safeSetCT(audio, vt);
 
       execProgrammaticVideoPause();
-      execProgrammaticAudioPause(300);
+      execProgrammaticAudioPause(220);
 
       armResumeAfterBuffer(8000);
     };
@@ -3250,7 +3494,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (!(shouldUseBgControllerRetry() && document.visibilityState === "hidden")) {
           if (!inMediaTxnWindow()) playTogether().catch(() => {});
         } else if (document.visibilityState === "visible") {
-          scheduleBgResumeRetry(100);
+          scheduleBgResumeRetry(60);
         }
       }
     };
@@ -3279,6 +3523,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       audio.preload = "auto";
       audio.load();
+    } catch {}
+
+    try {
+      videoEl.preload = "auto";
+      videoEl.load?.();
     } catch {}
 
     const queueStartupReadyPoll = () => {
@@ -3314,7 +3563,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           canPlayAt(getPlayableVideoEl() || videoEl, t0) &&
           canStartAudioAt(t0);
 
-        if (!(looseReady && primeWait > 1400)) {
+        if (!(looseReady && primeWait > 1000)) {
           strictBufferHold = true;
           strictBufferHoldReason = "startup-buffer";
           strictBufferHoldMinUntil = Math.max(strictBufferHoldMinUntil, performance.now() + 520);
@@ -3334,9 +3583,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         safeSetCT(audio, t);
       }
 
+      bindAutoplayGestureUnlock();
       setupMediaSession();
       updateAudioGainImmediate();
       scheduleStartupAutoplayKick();
+
+      setTimeout(() => {
+        if (wantsStartupAutoplay() && !firstPlayCommitted && (isVideoPaused() || audio.paused)) {
+          recoverAutoplayIfNeeded("startup-timeout").catch(() => {});
+        }
+      }, 550);
+
       setTimeout(() => { if (!firstPlayCommitted) startupPhase = false; }, 2500);
     };
 
@@ -3382,7 +3639,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (restarting) return;
       if (!seekingActive) return;
       execProgrammaticVideoPause();
-      execProgrammaticAudioPause(300);
+      execProgrammaticAudioPause(220);
     });
 
     audio.addEventListener("seeked", () => {
@@ -3397,7 +3654,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (performance.now() < audioPlayInFlightUntil || performance.now() < audioPauseInFlightUntil) return;
 
       if ((!intendedPlaying || userPauseLockActive() || hardPauseLatchActive() || mediaSessionForcedPauseActive() || shouldBlockNewAudioStart()) && !userPlayIntentActive()) {
-        try { squelchAudioEvents(220); } catch {}
+        try { squelchAudioEvents(180); } catch {}
         try { audio.pause(); } catch {}
         return;
       }
@@ -3412,6 +3669,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       setSmoothNoHold(1100);
       clearPlayStartFriction();
       forceUnmuteForPlaybackIfAllowed();
+      updateMediaGainImmediate?.();
       updateAudioGainImmediate();
       updateMediaSessionPlaybackState();
       if (!startupBufferPrimed) {
@@ -3420,8 +3678,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       }
       if (!syncing && !seekingActive && isVideoPaused()) {
         if (isChromiumOnlyBrowser()) {
-          execProgrammaticAudioPause(220);
+          execProgrammaticAudioPause(180);
         }
+        queueImmediatePlayBurst("audio-play-event");
         playTogether().catch(() => {});
       }
     });
@@ -3490,7 +3749,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (video.hasClass("vjs-waiting")) video.removeClass("vjs-waiting");
       if (isChromiumOnlyBrowser()) {
         chromiumAudioStartLockUntil = 0;
-        setChromiumBgSettling(220);
+        setChromiumBgSettling(140);
         queueChromiumToggleAudioRepair("native-video-playing");
       }
     });
@@ -3516,7 +3775,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       setSmoothNoHold(1100);
       setJointStartGrace(1200);
       clearPlayStartFriction();
-      if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+      if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(80);
       forceUnmuteForPlaybackIfAllowed();
       updateAudioGainImmediate();
       ensureUnmutedIfNotUserMuted().catch(() => {});
@@ -3526,6 +3785,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         queueStartupReadyPoll();
         return;
       }
+      queueImmediatePlayBurst("video-play-event");
       if (!syncing && !seekingActive) playTogether().catch(() => {});
     });
 
@@ -3548,6 +3808,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (intendedPlaying && document.visibilityState === "hidden" && shouldUseBgControllerRetry()) {
           resumeOnVisible = true;
           queueHiddenTransientResume("ignore-video-pause-hidden");
+        } else if (intendedPlaying && document.visibilityState === "visible") {
+          scheduleBgResumeRetry(0);
         }
         return;
       }
@@ -3569,6 +3831,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       if (performance.now() < pauseGuard && intendedPlaying && !shouldTreatVisiblePauseAsUserPause()) {
         execProgrammaticVideoPlay();
+        return;
+      }
+
+      if (intendedPlaying && !audio.paused && document.visibilityState === "visible" && !userPauseLockActive() && !hardPauseLatchActive()) {
+        scheduleBgResumeRetry(0);
         return;
       }
 
@@ -3596,7 +3863,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         strictBufferHoldMinUntil = Math.max(strictBufferHoldMinUntil, performance.now() + 700);
         strictBufferCoolDownUntil = Math.max(strictBufferCoolDownUntil, performance.now() + 600);
         execProgrammaticVideoPause();
-        execProgrammaticAudioPause(300);
+        execProgrammaticAudioPause(220);
         armResumeAfterBuffer(8000);
       }
     });
@@ -3623,11 +3890,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (video.hasClass("vjs-waiting")) video.removeClass("vjs-waiting");
       if (isChromiumOnlyBrowser()) {
         chromiumAudioStartLockUntil = 0;
-        setChromiumBgSettling(220);
+        setChromiumBgSettling(140);
         queueChromiumToggleAudioRepair("videojs-playing");
       }
       if (intendedPlaying && !restarting && audio.paused && !seekingActive && !syncing && !strictBufferHold && !shouldBlockNewAudioStart()) {
         setSmoothNoHold(900);
+        queueImmediatePlayBurst("video-playing-event");
         playTogether().catch(() => {});
       }
     });
@@ -3660,11 +3928,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       strictBufferCoolDownUntil = Math.max(strictBufferCoolDownUntil, performance.now() + 900);
 
       execProgrammaticVideoPause();
-      execProgrammaticAudioPause(300);
+      execProgrammaticAudioPause(220);
 
       const at0 = Number(audio.currentTime);
       if (isFinite(seekStartTime)) {
-        squelchAudioEvents(520);
+        squelchAudioEvents(420);
         if (!isFinite(at0) || Math.abs(at0 - seekStartTime) > 0.03) safeSetCT(audio, seekStartTime);
       }
     });
@@ -3675,7 +3943,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const newTime = Number(video.currentTime());
       seekSyncVideoSeeked = true;
 
-      squelchAudioEvents(520);
+      squelchAudioEvents(420);
       safeSetCT(audio, newTime);
 
       scheduleSeekSyncFinalize(0);
@@ -3703,13 +3971,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setResumeWarm(1600);
         setSmoothNoHold(1100);
         clearPlayStartFriction();
-        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(120);
+        if (isChromiumOnlyBrowser()) setChromiumAudioStartLock(80);
         forceUnmuteForPlaybackIfAllowed();
         updateAudioGainImmediate();
         updateMediaSessionPlaybackState();
         await ensureUnmutedIfNotUserMuted();
 
         await new Promise(r => requestAnimationFrame(r));
+        queueImmediatePlayBurst("loop-restart");
         await playTogether();
       } finally {
         restarting = false;
@@ -3747,9 +4016,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (bothPlayableAt(t) || (!audioEverStarted && canStartAudioAt(t))) {
         await ensureUnmutedIfNotUserMuted();
         if (!(shouldUseBgControllerRetry() && document.visibilityState === "hidden")) {
-          if (!inMediaTxnWindow()) playTogether().catch(() => {});
+          if (!inMediaTxnWindow()) {
+            queueImmediatePlayBurst("auto-resume");
+            playTogether().catch(() => {});
+          }
         } else if (document.visibilityState === "visible") {
-          scheduleBgResumeRetry(100);
+          scheduleBgResumeRetry(60);
         }
       }
     };
@@ -3764,8 +4036,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (intendedPlaying) {
             try { noteBackgroundEntry("freeze"); } catch {}
             resumeOnVisible = true;
-            try { clearSyncLoop(); } catch {}
             bgHiddenStoppedSyncLoop = true;
+            queueHiddenTransientResume("freeze");
           }
         }, { passive: true, capture: true });
 
@@ -3775,7 +4047,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             seamlessBgCatchUp("resume")
               .catch(() => {})
               .finally(() => {
-                scheduleResumeSyncRestart(120);
+                scheduleResumeSyncRestart(80);
               });
           }
         }, { passive: true, capture: true });
@@ -3788,7 +4060,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             seamlessBgCatchUp("pageshow-bfcache")
               .catch(() => {})
               .finally(() => {
-                scheduleResumeSyncRestart(120);
+                scheduleResumeSyncRestart(80);
               });
           }
         }, { passive: true, capture: true });
@@ -3796,23 +4068,25 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
       window.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
+          lastVisibleAt = performance.now();
           hiddenTransitionAt = 0;
           cancelHiddenTransientResume();
+          clearHiddenAudioWatchdogTimer();
           clearHiddenMediaSessionPlay();
           bgAutoResumeSuppressed = false;
 
-          strictBufferCoolDownUntil = Math.max(strictBufferCoolDownUntil, performance.now() + 900);
+          strictBufferCoolDownUntil = Math.max(strictBufferCoolDownUntil, performance.now() + 700);
           setResumeWarm(1800);
           setSmoothNoHold(1100);
 
           startupAudioHoldUntil = 0;
           pauseGuard = isChromiumOnlyBrowser() ? 0 : performance.now() + 800;
           if (isChromiumOnlyBrowser()) {
-            setChromiumBgSettling(700);
-            setChromiumAudioStartLock(180);
+            setChromiumBgSettling(480);
+            setChromiumAudioStartLock(90);
           }
-          setPauseEventGuard(900);
-          setMediaActionLock(320);
+          setPauseEventGuard(1200);
+          setMediaActionLock(220);
           clearBgResumeRetryTimer();
 
           if (intendedPlaying) {
@@ -3826,14 +4100,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
                 bgHiddenWasPlaying ||
                 isVideoPaused() ||
                 !!audio.paused ||
-                (isFinite(vt1) && isFinite(at1) && Math.abs(at1 - vt1) > 0.22);
+                (isFinite(vt1) && isFinite(at1) && Math.abs(at1 - vt1) > 0.18);
 
               if (needCatch) {
                 clearResumeSyncRestartTimer();
                 seamlessBgCatchUp("visibility-visible")
                   .catch(() => {})
                   .finally(() => {
-                    scheduleResumeSyncRestart(100);
+                    queueImmediatePlayBurst("visible-catchup");
+                    scheduleResumeSyncRestart(60);
                   });
               } else {
                 if (!syncInterval) startSyncLoop();
@@ -3868,11 +4143,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             if (intendedPlaying) {
               clearResumeSyncRestartTimer();
               bgHiddenStoppedSyncLoop = false;
-              armHiddenMediaSessionPlay(explicitPlayActive() ? 5000 : 2400);
+              armHiddenMediaSessionPlay(explicitPlayActive() ? 5000 : 2800);
               queueHiddenTransientResume("visibility-hidden");
             }
 
-            setMediaActionLock(220);
+            setMediaActionLock(180);
             if (intendedPlaying && !mediaSessionForcedPauseActive()) {
               setPauseEventGuard(1200);
               setBgControllerPlayGuard(explicitPlayActive() ? 20000 : 2200);
@@ -3891,6 +4166,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       window.addEventListener("beforeunload", () => {
         if (startupReadyPollTimer) clearTimeout(startupReadyPollTimer);
         cancelHiddenTransientResume();
+        clearHiddenAudioWatchdogTimer();
         clearBgResumeRetryTimer();
         clearSeekRecoveryTimers();
         clearSeekSyncFinishTimer();
@@ -3913,6 +4189,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (userPlayIntentActive()) clearUserIntents();
           intendedPlaying = true;
           updateMediaSessionPlaybackState();
+          queueImmediatePlayBurst("video-only-play");
         });
         video.on("pause", () => {
           if (startupAutoplayPauseGraceActive()) return;
@@ -3929,6 +4206,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     setupMediaSession();
   }
 });
+
 
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
