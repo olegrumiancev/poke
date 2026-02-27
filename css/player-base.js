@@ -2780,12 +2780,7 @@ try {
 // custom video.js ui for POKE PLAYER 
  const customVideoJsUI = document.createElement("style");
 customVideoJsUI.innerHTML = `
-/* ---------------------------------------------
-   PokeTube Video.js UI — improved for bright/white scenes
-   - Uses adaptive “glass” surfaces that stay readable on light frames
-   - Adds subtle borders + shadows + text outlines
-   - Keeps your gradient brand progress color
----------------------------------------------- */
+ 
 
 :root{
   /* Brand */
@@ -2793,15 +2788,13 @@ customVideoJsUI.innerHTML = `
   --poke-accent-2: #ff0e55;
   --poke-accent-3: #ff1d79;
 
-  /* Adaptive glass (works on bright scenes too) */
-  --glass-bg: rgba(20, 20, 20, 0.38);
+   --glass-bg: rgba(20, 20, 20, 0.38);
   --glass-bg-hover: rgba(20, 20, 20, 0.46);
   --glass-border: rgba(255, 255, 255, 0.22);
   --glass-border-strong: rgba(255, 255, 255, 0.30);
   --glass-shadow: 0 10px 30px rgba(0,0,0,0.32), inset 0 0 0 1px rgba(255,255,255,0.10);
 
-  /* “Light scene rescue” layer (a tiny dark wash that helps on whites) */
-  --scene-contrast-wash: rgba(0,0,0,0.10);
+   --scene-contrast-wash: rgba(0,0,0,0.10);
 
   /* Text */
   --ui-text: rgba(255,255,255,0.96);
