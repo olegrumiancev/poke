@@ -66,8 +66,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const platform = (() => {
     try {
       // -------------------------------------------------------------------
-      // Feature-based detection — no UA sniffing, not affected by spoofing.
-      //
       // Firefox:  Only Firefox supports the -moz-orient CSS property and
       //           exposes InstallTrigger. CSS.supports is unforgeable at
       //           runtime (it reflects the actual rendering engine).
@@ -123,19 +121,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       })();
 
-       const mobile = (() => {
+      // Mobile: prefer the structured UA-Client-Hints API (can't be spoofed
+      // without also affecting the hints), fall back to touch heuristic.
+      const mobile = (() => {
         try {
           if (typeof navigator.userAgentData?.mobile === "boolean") {
             return navigator.userAgentData.mobile;
           }
         } catch {}
-         try {
+        // Coarse heuristic: touch screen with limited pointer precision
+        try {
           return navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches;
         } catch {}
         return false;
       })();
 
- 
+       //   chromiumOnlyBrowser  = needs Chromium-specific play/pause guards
+      //   problemMobileBrowser = mobile browsers with aggressive bg throttling
+      //   useBgControllerRetry = needs the background resume controller
       const chromiumOnlyBrowser = isChromium;
       const problemMobileBrowser = (isChromium && mobile) || isIosWebKit;
       const useBgControllerRetry = !isFirefox && (isChromium || isIosWebKit);
@@ -960,6 +963,14 @@ document.addEventListener("DOMContentLoaded", () => {
    * its currentTime freezes at where you left. The AUDIO element often keeps
    * playing forward. So audio.currentTime is the source of truth for "where
    * we actually are" — we must snap VIDEO to match it, not the other way around.
+   *
+   * Improvements over naïve approach:
+   *  - Case 1: if video won't restart after seeking to audio pos (e.g. not
+   *    buffered there), we fall back to snapping audio back to video's frozen
+   *    position so they stay lock-stepped instead of diverging silently.
+   *  - Case 3: if video play fails but audio can start, we start audio only
+   *    and let the sync loop bring video back up — better than total silence.
+   *  - Always fires a fast sync afterward so runSync picks up promptly.
    */
   async function silentBgCatchUp() {
     if (!coupledMode) return;
@@ -974,8 +985,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const aPaused = !!audio.paused;
       const dur = Number(video.duration()) || 0;
 
-      // Clamp a time to valid playback range
-      const clampTime = t => (dur > 0 ? Math.min(t, Math.max(0, dur - 0.1)) : Math.max(0, t));
+      // Clamp to valid playback range (0 … dur-0.25 to avoid end-of-file issues)
+      const clampTime = t => (dur > 0 ? Math.min(t, Math.max(0, dur - 0.25)) : Math.max(0, t));
 
       // ── Case 1: Audio is running (the reliable source of truth) ──────────
       // Audio kept playing in the background while video was throttled/frozen.
@@ -991,7 +1002,15 @@ document.addEventListener("DOMContentLoaded", () => {
             const p = execProgrammaticVideoPlay();
             if (p && p.then) await p;
           } catch {}
-          updateAudioGainImmediate();
+          if (getVideoPaused()) {
+            // Video refused to start at that position (not buffered there yet).
+            // Fall back: snap audio to video's last known position so they stay
+            // lock-stepped rather than diverging silently.
+            squelchAudioEvents(300);
+            safeSetCT(audio, isFinite(vt) ? clampTime(vt) : target);
+          } else {
+            updateAudioGainImmediate();
+          }
         } else if (isFinite(vt) && Math.abs(at - vt) > BG_SILENT_SNAP_THRESHOLD) {
           // Both playing but video time is stale/behind — silently seek video forward
           squelchAudioEvents(200);
@@ -1020,6 +1039,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (vPaused && aPaused) {
         let target = estimateExpectedTimeFromBg(now());
         if (!isFinite(target) || target < 0) {
+          // Prefer audio time (more likely to be accurate), then video, then 0
           target = isFinite(at) ? at : (isFinite(vt) ? vt : 0);
         }
         target = clampTime(target);
@@ -1032,10 +1052,22 @@ document.addEventListener("DOMContentLoaded", () => {
           if (p && p.then) await p;
         } catch {}
         if (!getVideoPaused()) {
+          // Video started — now start audio in sync
           try {
             await execProgrammaticAudioPlay({ squelchMs: 500, force: true, minGapMs: 0 });
           } catch {}
           updateAudioGainImmediate();
+        } else {
+          // Video didn't start (buffering or policy block).
+          // Try starting audio alone so there is at least sound while video catches up.
+          try {
+            await execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 });
+          } catch {}
+          updateAudioGainImmediate();
+          // Mark buffer hold so the sync loop will re-arm playTogether
+          state.strictBufferHold = true;
+          state.strictBufferReason = "bg-resume-buffer";
+          armResumeAfterBuffer(7000);
         }
         return;
       }
@@ -1043,6 +1075,9 @@ document.addEventListener("DOMContentLoaded", () => {
       state.silentBgSync = false;
       state.bgHiddenWasPlaying = false;
       state.resumeOnVisible = false;
+      // Always fire a fast sync so runSync picks up the new state promptly
+      setFastSync(1200);
+      scheduleSync(0);
     }
   }
 
@@ -1167,24 +1202,21 @@ document.addEventListener("DOMContentLoaded", () => {
     clearResumeAfterBufferTimer();
     const v = getVideoNode();
     let cleaned = false;
+    let pollTimer = null;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
-      try {
-        v.removeEventListener("canplay", onReady);
-      } catch {}
-      try {
-        v.removeEventListener("playing", onReady);
-      } catch {}
-      try {
-        audio.removeEventListener("canplay", onReady);
-      } catch {}
-      try {
-        audio.removeEventListener("playing", onReady);
-      } catch {}
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      try { v.removeEventListener("canplay", onReady); } catch {}
+      try { v.removeEventListener("playing", onReady); } catch {}
+      try { audio.removeEventListener("canplay", onReady); } catch {}
+      try { audio.removeEventListener("playing", onReady); } catch {}
     };
     const tryKick = () => {
-      if (!state.intendedPlaying || state.restarting || state.seeking || state.syncing) return;
+      if (!state.intendedPlaying || state.restarting || state.seeking || state.syncing) {
+        cleanup();
+        return;
+      }
       if (mediaSessionForcedPauseActive() || userPauseLockActive()) {
         cleanup();
         return;
@@ -1199,24 +1231,31 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!inMediaTxnWindow()) playTogether().catch(() => {});
       else scheduleSync(160);
     };
-    const onReady = () => {
-      requestAnimationFrame(tryKick);
+    const onReady = () => { requestAnimationFrame(tryKick); };
+    try { v.addEventListener("canplay", onReady, { passive: true }); } catch {}
+    try { v.addEventListener("playing", onReady, { passive: true }); } catch {}
+    try { audio.addEventListener("canplay", onReady, { passive: true }); } catch {}
+    try { audio.addEventListener("playing", onReady, { passive: true }); } catch {}
+    // Redundant poll: event-based alone is unreliable if canplay already fired
+    // before we attached. Poll every 250ms as a safety net.
+    const poll = () => {
+      if (cleaned) return;
+      tryKick();
+      if (!cleaned) pollTimer = setTimeout(poll, 250);
     };
-    try {
-      v.addEventListener("canplay", onReady, { passive: true });
-    } catch {}
-    try {
-      v.addEventListener("playing", onReady, { passive: true });
-    } catch {}
-    try {
-      audio.addEventListener("canplay", onReady, { passive: true });
-    } catch {}
-    try {
-      audio.addEventListener("playing", onReady, { passive: true });
-    } catch {}
+    pollTimer = setTimeout(poll, 100);
     state.resumeAfterBufferTimer = setTimeout(() => {
       cleanup();
       state.resumeAfterBufferTimer = null;
+      // Last-chance kick on timeout — data may be ready even though events were missed
+      if (state.intendedPlaying && !state.restarting && !state.seeking && !userPauseLockActive()) {
+        const vt = Number(video.currentTime());
+        if (isFinite(vt) && bothPlayableAt(vt)) {
+          state.strictBufferHold = false;
+          state.strictBufferReason = "";
+          playTogether().catch(() => {});
+        }
+      }
     }, Math.max(1200, Number(timeoutMs) || 0));
   }
   function clearPendingPlayResumesForPause() {
@@ -1380,9 +1419,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const cur = Number(video.currentTime()) || 0;
         if (!shouldBlockNewAudioStart() && canStartAudioAt(cur)) {
           safeSetCT(audio, cur);
-          await execProgrammaticAudioPlay({ squelchMs: 280, force: true, minGapMs: 0 }).catch(() => false);
+          const audioStarted = await execProgrammaticAudioPlay({ squelchMs: 280, force: true, minGapMs: 0 }).catch(() => false);
+          // If audio still won't start, pause video too — they must stay lock-stepped
+          if (!audioStarted && !state.strictBufferHold && !state.videoWaiting && !shouldBlockNewAudioStart()) {
+            execProgrammaticVideoPause();
+          }
+        } else if (!shouldBlockNewAudioStart()) {
+          // Audio can't start yet (buffer not ready) — pause video to stay in sync
+          execProgrammaticVideoPause();
+          armResumeAfterBuffer(8000);
         }
       }
+      // If video is paused but audio is playing, stop audio — always lock-step
       if (vp && !ap) {
         execProgrammaticAudioPause(420);
       }
@@ -1428,10 +1476,19 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     if (!(vReady && aReady)) {
-      state.strictBufferHold = true;
-      state.strictBufferReason = "seek-buffer";
-      armResumeAfterBuffer(8000);
-      return;
+      // Not buffered yet — check synchronously in case we already have data
+      // (events may have fired before listeners were attached above)
+      const vtCheck = Number(video.currentTime());
+      const alreadyReady = isFinite(vtCheck) && bothPlayableAt(vtCheck);
+      if (alreadyReady) {
+        // Fall through — both ready now
+      } else {
+        state.strictBufferHold = true;
+        state.strictBufferReason = "seek-buffer";
+        // state.seeking is already false here so armResumeAfterBuffer guard passes
+        armResumeAfterBuffer(8000);
+        return;
+      }
     }
     state.strictBufferHold = false;
     state.strictBufferReason = "";
@@ -2322,7 +2379,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
     // Ignore key presses if typing in an input or textarea
     if (event.target.tagName.toLowerCase() === 'input' || event.target.tagName.toLowerCase() === 'textarea') {
