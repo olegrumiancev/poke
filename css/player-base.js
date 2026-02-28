@@ -2380,15 +2380,28 @@ document.addEventListener("DOMContentLoaded", () => {
   scheduleSync(0);
 });
 
+const videoElement = document.querySelector('.video-js');
+const player = videojs(videoElement);
+
+document.querySelector('.search-bar').addEventListener('focusin', function() {
+    player.hotkeys({ enableFullscreen: false, enableNumbers: false, enableVolumeScroll: false });
+    player.el().setAttribute('tabindex', '-1');  
+});
+
+document.querySelector('.search-bar').addEventListener('focusout', function() {
+    player.el().setAttribute('tabindex', '0');
+});
+
 document.addEventListener('keydown', function(event) {
     const active = document.activeElement;
 
-     if (active && (
+    if (active && (
         active.tagName.toLowerCase() === 'input' ||
         active.tagName.toLowerCase() === 'textarea' ||
         active.isContentEditable ||
-        active.closest('.search-bar')  
+        active.closest('.search-bar')
     )) {
+        event.stopImmediatePropagation(); 
         return;
     }
 
@@ -2396,9 +2409,7 @@ document.addEventListener('keydown', function(event) {
         return;
     }
 
-    const videoElement = document.querySelector('.video-js');
     if (!videoElement) return;
-    const player = videojs(videoElement);
 
     switch (event.key.toLowerCase()) {
         case 'f':
@@ -2437,8 +2448,7 @@ document.addEventListener('keydown', function(event) {
             player.volume(Math.max(0, player.volume() - 0.1));
             break;
     }
-});
-
+}, true); 
  // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
 
