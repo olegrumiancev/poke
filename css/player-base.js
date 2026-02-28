@@ -2379,64 +2379,54 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   scheduleSync(0);
 });
-document.addEventListener("keydown", function(event) {
-    const active = document.activeElement;
 
-    // Skip shortcuts if the focused element is inside .search-bar
-    if (active instanceof Element && active.closest(".search-bar")) {
+ document.addEventListener('keydown', function(event) {
+     const active = document.activeElement;
+    if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
         return;
     }
 
-    // Skip if modifier keys are down
     if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
         return;
     }
 
-    const videoElement = document.querySelector(".video-js");
+    const videoElement = document.querySelector('.video-js');
     if (!videoElement) return;
-
     const player = videojs(videoElement);
-    if (!player) return;
 
-    const key = event.key?.toLowerCase();
-
-    switch (key) {
-        case "f":
-            event.preventDefault();
-            if (!player.isFullscreen()) player.requestFullscreen();
-            else player.exitFullscreen();
+    switch (event.key.toLowerCase()) {
+        case 'f':
+            if (!player.isFullscreen()) {
+                player.requestFullscreen();
+            } else {
+                player.exitFullscreen();
+            }
             break;
-
-        case " ":
-        case "k":
+        case ' ':
+        case 'k':
             event.preventDefault();
-            if (player.paused()) player.play();
-            else player.pause();
+            if (player.paused()) {
+                player.play();
+            } else {
+                player.pause();
+            }
             break;
-
-        case "m":
-            event.preventDefault();
+        case 'm':
             player.muted(!player.muted());
             break;
-
-        case "arrowright":
-        case "l":
-            event.preventDefault();
+        case 'arrowright':
+        case 'l':
             player.currentTime(player.currentTime() + 10);
             break;
-
-        case "arrowleft":
-        case "j":
-            event.preventDefault();
+        case 'arrowleft':
+        case 'j':
             player.currentTime(player.currentTime() - 10);
             break;
-
-        case "arrowup":
+        case 'arrowup':
             event.preventDefault();
             player.volume(Math.min(1, player.volume() + 0.1));
             break;
-
-        case "arrowdown":
+        case 'arrowdown':
             event.preventDefault();
             player.volume(Math.max(0, player.volume() - 0.1));
             break;
