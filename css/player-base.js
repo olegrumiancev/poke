@@ -279,6 +279,8 @@ document.addEventListener("DOMContentLoaded", () => {
     lastDriftCorrectionTs: 0,
     lastDriftSample: 0,
     consecutiveDriftCount: 0,
+    // Set true during a drift micro-seek so audio seeking/seeked/pause events are ignored
+    isDriftCorrection: false,
   };
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -1053,6 +1055,20 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           await execProgrammaticAudioPlay({ squelchMs: 500, force: true, minGapMs: 0 });
         } catch {}
+        // On Chromium, the browser may throttle and pause video shortly after
+        // we read vPaused=false. If video gets paused while audio is playing,
+        // we'd have audio-only playback. Detect and correct after a short delay.
+        if (platform.chromiumOnlyBrowser) {
+          setTimeout(() => {
+            if (!state.intendedPlaying || mediaSessionForcedPauseActive() || userPauseLockActive()) return;
+            if (document.visibilityState !== "hidden") return;
+            if (getVideoPaused() && !audio.paused) {
+              // Video was throttled — pause audio to avoid audio-only playback
+              execProgrammaticAudioPause(400);
+              state.resumeOnVisible = true;
+            }
+          }, 350);
+        }
         updateAudioGainImmediate();
         return;
       }
@@ -1209,8 +1225,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function armResumeAfterBuffer(timeoutMs = 7000) {
     if (!coupledMode) return;
-    // Firefox never has audio paused by buffer holds — nothing to re-arm
-    if (platform.isFirefox) return;
     if (!state.intendedPlaying || state.restarting || state.seeking || state.syncing) return;
     if (mediaSessionForcedPauseActive()) return;
     clearResumeAfterBufferTimer();
@@ -1348,13 +1362,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if ((state.startupPrimed || state.audioEverStarted) && !bothPlayableAt(vtStart)) {
         state.strictBufferHold = true;
         state.strictBufferReason = "strict-play-gate";
-        // Firefox handles buffering natively — never pause audio here
-        if (!platform.isFirefox) {
-          execProgrammaticVideoPause();
-          execProgrammaticAudioPause(420);
-          safeSetCT(audio, vtStart);
-          armResumeAfterBuffer(8000);
-        }
+        execProgrammaticVideoPause();
+        execProgrammaticAudioPause(420);
+        safeSetCT(audio, vtStart);
+        armResumeAfterBuffer(8000);
         return;
       }
       state.strictBufferHold = false;
@@ -1728,24 +1739,16 @@ document.addEventListener("DOMContentLoaded", () => {
         state.strictBufferHold = false;
         state.strictBufferReason = "";
       } else if (vNeedsBuffer || aNeedsBuffer) {
-        // Firefox handles buffer stalls natively — never pause/restart audio on it.
-        // Doing so causes audible glitches. Just flag the hold and let Firefox recover.
-        if (platform.isFirefox) {
-          state.strictBufferHold = true;
-          state.strictBufferReason = vNeedsBuffer ? "video" : "audio";
-          // Don't pause audio or call armResumeAfterBuffer — Firefox doesn't need it
-        } else {
-          state.strictBufferHold = true;
-          state.strictBufferReason = vNeedsBuffer ? "video" : "audio";
-          if (!getVideoPaused()) execProgrammaticVideoPause();
-          if (!audio.paused) execProgrammaticAudioPause(420);
-          safeSetCT(audio, vt);
-          armResumeAfterBuffer(8000);
-        }
+        state.strictBufferHold = true;
+        state.strictBufferReason = vNeedsBuffer ? "video" : "audio";
+        if (!getVideoPaused()) execProgrammaticVideoPause();
+        if (!audio.paused) execProgrammaticAudioPause(420);
+        safeSetCT(audio, vt);
+        armResumeAfterBuffer(8000);
       } else if (state.strictBufferHold) {
         state.strictBufferHold = false;
         state.strictBufferReason = "";
-        resetAudioPlaybackRate(); // rate may be dirty from before the buffer stall
+        resetAudioPlaybackRate();
         resetDriftState();
         setFastSync(900);
       }
@@ -1755,14 +1758,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const vWaiting = getVideoReadyState() < 3 || state.videoWaiting;
     if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing) {
       if (state.strictBufferHold) {
-        if (!vPaused && !platform.isFirefox) execProgrammaticVideoPause();
-        if (!aPaused && !platform.isFirefox) {
+        if (!vPaused) execProgrammaticVideoPause();
+        if (!aPaused) {
           execProgrammaticAudioPause(300);
           safeSetCT(audio, vt);
         }
       } else if (vWaiting && (state.audioEverStarted || !canStartAudioAt(vt))) {
-        // Firefox: never pause audio on video waiting — it recovers on its own
-        if (!aPaused && !platform.isFirefox) {
+        if (!aPaused) {
           execProgrammaticAudioPause(260);
           safeSetCT(audio, vt);
         }
@@ -1826,9 +1828,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const targetAT = at + nudge;
             if (isFinite(targetAT) && targetAT >= 0 && timeInBuffered(audio, targetAT)) {
               try {
+                state.isDriftCorrection = true;
                 audio.currentTime = targetAT;
                 state.lastDriftCorrectionTs = now();
-              } catch {}
+              } catch {
+              } finally {
+                setTimeout(() => { state.isDriftCorrection = false; }, 150);
+              }
             } else {
               // Target not buffered — hard snap instead
               resetAudioPlaybackRate();
@@ -2115,8 +2121,25 @@ document.addEventListener("DOMContentLoaded", () => {
           setTimeout(() => {
             if (serial !== state.mediaSessionActionSerial) return;
             if (!state.intendedPlaying || userPauseLockActive()) return;
+
+            // On Chromium, video.play() may silently fail while hidden (browser
+            // throttles the video element). If audio started but video didn't,
+            // pause audio too so we never have audio-only playback. We'll resume
+            // properly via seamlessBgCatchUp when the tab becomes visible.
+            if (coupledMode && platform.chromiumOnlyBrowser && document.visibilityState === "hidden") {
+              const vGoing = !getVideoPaused();
+              const aGoing = !audio.paused;
+              if (!vGoing && aGoing) {
+                execProgrammaticAudioPause(400);
+                state.resumeOnVisible = true;
+                return;
+              }
+              // Video is going — all good, just let seamlessBgCatchUp handle sync on return
+              return;
+            }
+
             playTogether().catch(() => {});
-          }, 0);
+          }, 300); // 300ms gives Chromium time to settle its throttle decision
         });
       });
       navigator.mediaSession.setActionHandler("pause", handlePauseLike);
@@ -2207,15 +2230,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.resumeOnVisible = true;
         return;
       }
-      // Firefox handles buffering natively — pausing/restarting audio here causes
-      // audible glitches with no benefit. Let Firefox recover on its own.
-      if (platform.isFirefox) {
-        state.strictBufferHold = true;
-        state.strictBufferReason = "video-waiting";
-        // Don't touch audio — just wait for the "playing" event
-        scheduleSync(0);
-        return;
-      }
       state.strictBufferHold = true;
       state.strictBufferReason = "video-waiting";
       execProgrammaticVideoPause();
@@ -2260,6 +2274,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     if (!coupledMode) return;
     const onAudioPlay = () => {
+      if (state.isDriftCorrection) return;
       if (audioEventsSquelched() || state.restarting || state.isProgrammaticAudioPlay || state.isProgrammaticVideoPlay) return;
       if (now() < state.audioPlayUntil || now() < state.audioPauseUntil) return;
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive() || shouldBlockNewAudioStart()) && !userPlayIntentActive()) {
@@ -2291,6 +2306,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
     const onAudioPause = () => {
+      if (state.isDriftCorrection) return;
       if (audioEventsSquelched() || state.restarting || state.isProgrammaticAudioPause || state.isProgrammaticVideoPause) return;
       if (now() < state.audioPauseUntil || now() < state.audioPlayUntil) return;
       if (state.seeking) return;
@@ -2554,7 +2570,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
