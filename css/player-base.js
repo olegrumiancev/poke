@@ -2383,25 +2383,15 @@ document.addEventListener("keydown", function(event) {
     const target = event.target;
     const active = document.activeElement;
 
-    function isEditableElement(el) {
-        if (!el || el.nodeType !== 1) return false;
+    const isInSearchBar =
+        (target instanceof Element && target.closest(".search-bar")) ||
+        (active instanceof Element && active.closest(".search-bar"));
 
-        if (el.isContentEditable) return true;
-
-        if (el.matches("input, textarea, select")) return true;
-
-        if (el.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only'], [contenteditable='']")) {
-            return true;
-        }
-
-        return false;
-    }
-
-     if (isEditableElement(target) || isEditableElement(active)) {
+    if (isInSearchBar) {
         return;
     }
 
-     if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
         return;
     }
 
@@ -2461,6 +2451,7 @@ document.addEventListener("keydown", function(event) {
             break;
     }
 });
+
  // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
 
