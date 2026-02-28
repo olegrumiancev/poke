@@ -720,7 +720,34 @@ height: 100%;
 <a
   href="/avatars/<%= cinv.authorThumbnails[5].url.replace('https://yt3.googleusercontent.com/', '') %>"
   class="avatar"
-  onclick="event.preventDefault();(function(src){var old=document.getElementById('avatar-lightbox');if(old) old.remove();var overlay=document.createElement('div');overlay.id='avatar-lightbox';overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.82);display:flex;align-items:center;justify-content:center;z-index:999999;padding:24px;cursor:pointer;';overlay.onclick=function(){overlay.remove();};var img=document.createElement('img');img.src=src;img.alt='Channel Avatar';img.style.cssText='display:block;max-width:min(90vw,900px);max-height:90vh;width:auto;height:auto;object-fit:contain;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,0.45);cursor:pointer;';img.onclick=function(){overlay.remove();};overlay.appendChild(img);document.body.appendChild(overlay);})(this.href);return false;"
+  onclick="event.preventDefault();(function(src){
+    var old=document.getElementById('avatar-lightbox');
+    if(old) old.remove();
+
+    var overlay=document.createElement('div');
+    overlay.id='avatar-lightbox';
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:999999;padding:24px;cursor:pointer;flex-direction:column;gap:16px;';
+    overlay.onclick=function(){overlay.remove();};
+
+    var img=document.createElement('img');
+    img.src=src;
+    img.alt='Channel Avatar';
+    img.style.cssText='display:block;max-width:min(90vw,900px);max-height:80vh;width:auto;height:auto;object-fit:contain;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,0.45);cursor:pointer;';
+    img.onclick=function(e){e.stopPropagation();overlay.remove();};
+
+    var btn=document.createElement('a');
+    btn.href=src;
+    btn.target='_blank';
+    btn.textContent='View full image';
+    btn.style.cssText='display:inline-block;height:36px;line-height:36px;padding:0 16px;background-color:#f1f1f1;color:#0f0f0f;text-decoration:none;border-radius:18px;font-family:\'Roboto\', Arial, sans-serif;font-weight:500;font-size:14px;transition:background-color 0.2s cubic-bezier(0.05, 0, 0, 1);';
+    btn.onmouseenter=function(){this.style.backgroundColor='#d9d9d9';};
+    btn.onmouseleave=function(){this.style.backgroundColor='#f1f1f1';};
+    btn.onclick=function(e){e.stopPropagation();};
+
+    overlay.appendChild(img);
+    overlay.appendChild(btn);
+    document.body.appendChild(overlay);
+  })(this.href);return false;"
 >
   <img
     src="/avatars/<%= cinv.authorThumbnails[5].url.replace('https://yt3.googleusercontent.com/', '') %>"
@@ -728,6 +755,7 @@ height: 100%;
     style="border: 1px solid gray; border-radius: 50%;"
   >
 </a>
+
 
 <!-- yeah i know very funny name lol -->      
     <% 
