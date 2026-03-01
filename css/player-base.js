@@ -73,9 +73,9 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const t = audioCtx.currentTime;
       gainNode.gain.cancelScheduledValues(t);
-      gainNode.gain.setTargetAtTime(clamped, t, Math.max(0.001, durationSec / 3));
+      gainNode.gain.setTargetAtTime(clamped, t, Math.max(0.002, durationSec / 4));
       actualGainTarget = clamped;
-      gainNode.gain.value = clamped;
+      // NEVER set gain.value directly here; it causes snapping/clicking!
     } catch {
       if (audio) try { audio.volume = clamped; } catch {}
     }
@@ -501,9 +501,8 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const t = audioCtx.currentTime;
       gainNode.gain.cancelScheduledValues(t);
-      gainNode.gain.setTargetAtTime(0, t, Math.max(0.001, (ms / 1000) / 3));
+      gainNode.gain.setTargetAtTime(0, t, Math.max(0.002, (ms / 1000) / 4));
       actualGainTarget = 0;
-      gainNode.gain.value = 0;
     } catch {}
     await new Promise(r => setTimeout(r, ms + 5));
   }
@@ -518,9 +517,8 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const t = audioCtx.currentTime;
       gainNode.gain.cancelScheduledValues(t);
-      gainNode.gain.setTargetAtTime(clamped, t, Math.max(0.001, (ms / 1000) / 3));
+      gainNode.gain.setTargetAtTime(clamped, t, Math.max(0.002, (ms / 1000) / 4));
       actualGainTarget = clamped;
-      gainNode.gain.value = clamped;
     } catch {}
     await new Promise(r => setTimeout(r, ms + 5));
   }
@@ -784,9 +782,8 @@ document.addEventListener("DOMContentLoaded", () => {
         resumeAudioContext();
         const ct = audioCtx.currentTime;
         gainNode.gain.cancelScheduledValues(ct);
-        gainNode.gain.setValueAtTime(0, ct);
+        gainNode.gain.setTargetAtTime(0, ct, 0.001);
         actualGainTarget = 0;
-        gainNode.gain.value = 0;
       } catch {}
     } else {
       try { audio.volume = 0; } catch {}
@@ -1979,13 +1976,17 @@ document.addEventListener("DOMContentLoaded", () => {
         const newTime = Math.min((video.currentTime() || 0) + inc, Number(video.duration()) || 0);
         video.currentTime(newTime);
         // Also seek audio for Android seekbar support
-        if (coupledMode) safeSetCT(audio, newTime);
+        if (coupledMode) {
+            fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
+        }
       });
       navigator.mediaSession.setActionHandler("seekbackward", d => {
         const dec = Number(d?.seekOffset) || 10;
         const newTime = Math.max((video.currentTime() || 0) - dec, 0);
         video.currentTime(newTime);
-        if (coupledMode) safeSetCT(audio, newTime);
+        if (coupledMode) {
+            fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
+        }
       });
       navigator.mediaSession.setActionHandler("seekto", d => {
         if (!d || typeof d.seekTime !== "number") return;
@@ -1994,7 +1995,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Critical for Android Chrome seekbar: also seek audio element
         if (coupledMode) {
           squelchAudioEvents(400);
-          safeSetCT(audio, newTime);
+          fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
         }
       });
     } catch {}
@@ -2213,24 +2214,24 @@ document.addEventListener("DOMContentLoaded", () => {
       state.seekWantedPlaying = state.intendedPlaying;
       clearSeekSyncFinalizeTimer();
 
-      // INSTANTLY force audio down to prevent popping before the time shift happens
-      if (gainNode && audioCtx) {
-          try {
-              gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
-              gainNode.gain.value = 0;
-              actualGainTarget = 0;
-          } catch {}
-      } else if (audio) {
-          try { audio.volume = 0; } catch {}
-      }
-
       const seekTime = Number(video.currentTime());
       execProgrammaticVideoPause();
-      execProgrammaticAudioPause(320, 0); // Already faded instantly, no delay needed
-      if (isFinite(seekTime)) {
-        squelchAudioEvents(420);
-        safeSetCT(audio, seekTime);
-      }
+      
+      // Smooth fade out completely BEFORE shifting audio to prevent the pop/clicking
+      fadeOutAudio(25).then(() => {
+          execProgrammaticAudioPause(300, 0); // Already faded out
+          if (isFinite(seekTime)) {
+            squelchAudioEvents(420);
+            safeSetCT(audio, seekTime);
+          }
+      }).catch(() => {
+          execProgrammaticAudioPause(300, 0);
+          if (isFinite(seekTime)) {
+            squelchAudioEvents(420);
+            safeSetCT(audio, seekTime);
+          }
+      });
+
       ensureAudioPlaybackRate();
       resetDriftTracking();
       setFastSync(2200);
@@ -2241,10 +2242,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.restarting) return;
       const newTime = Number(video.currentTime());
       squelchAudioEvents(420);
-      safeSetCT(audio, newTime);
-      ensureAudioPlaybackRate();
-      resetDriftTracking();
-      scheduleSeekFinalize(0);
+      
+      // Ensure completely faded down before snapping time if `seeked` fired extremely fast
+      fadeOutAudio(20).then(() => {
+          safeSetCT(audio, newTime);
+          ensureAudioPlaybackRate();
+          resetDriftTracking();
+          scheduleSeekFinalize(0);
+      });
     });
 
     video.on("ended", () => {
@@ -2446,7 +2451,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
