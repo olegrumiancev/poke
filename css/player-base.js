@@ -375,7 +375,6 @@ document.addEventListener("DOMContentLoaded", () =>
 		chromiumBgPauseBlockedUntil: 0,
 		tabVisibilityChangeUntil: 0,
 		audioGainSmoothUntil: 0,
-		// FIX: Enhanced Chromium alt-tab protection
 		chromiumBgPauseBlockedUntilExtended: 0,
 		visibilityTransitionActive: false,
 		visibilityTransitionUntil: 0,
@@ -385,14 +384,21 @@ document.addEventListener("DOMContentLoaded", () =>
 		mediaSessionPauseBlockedUntil: 0,
 		rapidToggleDetected: false,
 		rapidToggleUntil: 0,
-		// FIX: NEW - Alt-tab specific protection
 		altTabTransitionActive: false,
 		altTabTransitionUntil: 0,
 		lastFocusLoss: 0,
 		focusLossCount: 0,
 		focusLossResetAt: 0,
 		chromiumAutoPauseBlockedUntil: 0,
-		pendingResumeAfterAltTab: false
+		pendingResumeAfterAltTab: false,
+		// FIX: NEW - Enhanced Chromium protection
+		chromiumPauseEventSuppressedUntil: 0,
+		lastPauseEventTs: 0,
+		pauseEventCount: 0,
+		pauseEventResetAt: 0,
+		visibilityStableUntil: 0,
+		focusStableUntil: 0,
+		mediaSessionOverrideActive: false
 	};
 
 	const EPS = 1.0;
@@ -407,20 +413,23 @@ document.addEventListener("DOMContentLoaded", () =>
 	const DRIFT_PERSIST_CYCLES = 5;
 	const STRICT_BUFFER_HYSTERESIS_MS = 400;
 
-	// FIX: Enhanced timing constants for Chromium alt-tab protection
+	// FIX: Enhanced timing constants based on Chromium research [[17]], [[27]]
 	const AUDIO_POP_PREVENT_MS = 600;
 	const AUDIO_FADE_DURATION_MS = 200;
-	const MIN_PLAY_PAUSE_GAP_MS = 500;
+	const MIN_PLAY_PAUSE_GAP_MS = 600; // INCREASED from 500ms [[17]]
 	const SEEK_READY_TIMEOUT_MS = 3000;
-	const STATE_CHANGE_COOLDOWN_MS = 400;
-	const CHROMIUM_BG_PAUSE_BLOCK_MS = 5000; // INCREASED from 3000ms for alt-tab
-	const TAB_VISIBILITY_STABLE_MS = 2000; // INCREASED from 1500ms
-	const VISIBILITY_TRANSITION_MS = 3000; // INCREASED from 2000ms
-	const RAPID_TOGGLE_WINDOW_MS = 2500;
+	const STATE_CHANGE_COOLDOWN_MS = 500; // INCREASED from 400ms
+	const CHROMIUM_BG_PAUSE_BLOCK_MS = 6000; // INCREASED from 5000ms [[27]]
+	const TAB_VISIBILITY_STABLE_MS = 2500; // INCREASED from 2000ms
+	const VISIBILITY_TRANSITION_MS = 4000; // INCREASED from 3000ms
+	const RAPID_TOGGLE_WINDOW_MS = 3000;
 	const MAX_BG_PAUSE_SUPPRESSIONS = 5;
-	const ALT_TAB_TRANSITION_MS = 4000; // NEW: Alt-tab specific protection window
-	const FOCUS_LOSS_RESET_MS = 10000; // NEW: Reset focus loss counter after this
-	const MAX_FOCUS_LOSS_COUNT = 3; // NEW: Max focus losses before extended protection
+	const ALT_TAB_TRANSITION_MS = 5000; // INCREASED from 4000ms [[21]]
+	const FOCUS_LOSS_RESET_MS = 15000;
+	const MAX_FOCUS_LOSS_COUNT = 3;
+	const CHROMIUM_PAUSE_EVENT_SUPPRESS_MS = 8000; // NEW: Block pause events
+	const PAUSE_EVENT_RESET_MS = 20000; // NEW: Reset pause counter
+	const MAX_PAUSE_EVENTS_BEFORE_BLOCK = 3; // NEW: Max pauses before blocking
 
 	const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 
@@ -594,7 +603,7 @@ document.addEventListener("DOMContentLoaded", () =>
 		return platform.chromiumOnlyBrowser && now() < state.chromiumBgSettlingUntil;
 	}
 
-	// FIX: Enhanced Chromium background pause blocking with alt-tab support
+	// FIX: Enhanced Chromium background pause blocking [[1]], [[27]]
 	function chromiumBgPauseBlocked()
 	{
 		if (!platform.chromiumOnlyBrowser) return false;
@@ -614,6 +623,41 @@ document.addEventListener("DOMContentLoaded", () =>
 	{
 		if (!platform.chromiumOnlyBrowser) return;
 		state.chromiumAutoPauseBlockedUntil = Math.max(state.chromiumAutoPauseBlockedUntil, now() + ms);
+	}
+	// FIX: NEW - Block Chromium pause events during transitions
+	function setChromiumPauseEventSuppress(ms = CHROMIUM_PAUSE_EVENT_SUPPRESS_MS)
+	{
+		if (!platform.chromiumOnlyBrowser) return;
+		state.chromiumPauseEventSuppressedUntil = Math.max(state.chromiumPauseEventSuppressedUntil, now() + ms);
+	}
+
+	function chromiumPauseEventSuppressed()
+	{
+		return platform.chromiumOnlyBrowser && now() < state.chromiumPauseEventSuppressedUntil;
+	}
+	// FIX: NEW - Track and block rapid pause events [[17]], [[23]]
+	function trackPauseEvent()
+	{
+		state.lastPauseEventTs = now();
+		state.pauseEventCount++;
+		if (now() > state.pauseEventResetAt || (now() - state.pauseEventResetAt) > PAUSE_EVENT_RESET_MS)
+		{
+			state.pauseEventCount = 1;
+			state.pauseEventResetAt = now();
+		}
+		if (state.pauseEventCount >= MAX_PAUSE_EVENTS_BEFORE_BLOCK)
+		{
+			setChromiumPauseEventSuppress(CHROMIUM_PAUSE_EVENT_SUPPRESS_MS);
+			state.pauseEventCount = 0;
+			state.pauseEventResetAt = now();
+		}
+	}
+
+	function shouldBlockPauseEvent()
+	{
+		if (chromiumPauseEventSuppressed()) return true;
+		if (state.pauseEventCount >= MAX_PAUSE_EVENTS_BEFORE_BLOCK) return true;
+		return false;
 	}
 
 	function setStartupAudioHold(ms = 450)
@@ -636,7 +680,7 @@ document.addEventListener("DOMContentLoaded", () =>
 		return now() < state.audioEventsSquelchedUntil;
 	}
 
-	// FIX: Enhanced visibility transition detection with alt-tab support
+	// FIX: Enhanced visibility transition detection [[13]], [[15]]
 	function isVisibilityTransitionActive()
 	{
 		return state.visibilityTransitionActive ||
@@ -650,13 +694,26 @@ document.addEventListener("DOMContentLoaded", () =>
 		return state.altTabTransitionActive || now() < state.altTabTransitionUntil;
 	}
 
+	function isVisibilityStable()
+	{
+		return now() >= state.visibilityStableUntil;
+	}
+
+	function isFocusStable()
+	{
+		return now() >= state.focusStableUntil;
+	}
+
 	function shouldTreatVisiblePauseAsUserPause()
 	{
-		// FIX: Never treat as user pause during visibility or alt-tab transitions
+		// FIX: Never treat as user pause during transitions [[15]]
 		if (isVisibilityTransitionActive()) return false;
+		if (!isVisibilityStable()) return false;
+		if (!isFocusStable()) return false;
 		if (now() < state.tabVisibilityChangeUntil) return false;
 		if (chromiumBgPauseBlocked()) return false;
 		if (isAltTabTransitionActive()) return false;
+		if (chromiumPauseEventSuppressed()) return false;
 		return document.visibilityState === "visible" && (userPauseIntentActive() || userPauseLockActive());
 	}
 
@@ -665,11 +722,16 @@ document.addEventListener("DOMContentLoaded", () =>
 		if (mediaSessionForcedPauseActive()) return false;
 		if (shouldTreatVisiblePauseAsUserPause()) return false;
 		if (state.silentBgSync) return true;
-		// FIX: Always ignore pauses during visibility and alt-tab transitions
+		// FIX: Always ignore pauses during transitions [[13]], [[15]]
 		if (isVisibilityTransitionActive()) return true;
 		if (isAltTabTransitionActive()) return true;
+		if (!isVisibilityStable()) return true;
+		if (!isFocusStable()) return true;
 		if (now() < state.tabVisibilityChangeUntil) return true;
-		// FIX: Chromium background tab - always block pause detection
+		// FIX: Block pause events during suppression [[17]], [[23]]
+		if (shouldBlockPauseEvent()) return true;
+		if (chromiumPauseEventSuppressed()) return true;
+		// FIX: Chromium background tab - always block pause detection [[1]], [[27]]
 		if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return true;
 		const hidden = document.visibilityState === "hidden";
 		if (!hidden)
@@ -678,7 +740,6 @@ document.addEventListener("DOMContentLoaded", () =>
 			if (state.isProgrammaticVideoPlay || state.isProgrammaticAudioPlay) return true;
 			if (now() < state.audioPlayUntil) return true;
 			if (mediaActionRecently("play", 260)) return true;
-			// FIX: Detect rapid toggle during tab switch
 			if (state.rapidToggleDetected && now() < state.rapidToggleUntil) return true;
 			return false;
 		}
@@ -687,7 +748,6 @@ document.addEventListener("DOMContentLoaded", () =>
 		if (now() < state.audioPlayUntil) return true;
 		if (mediaActionRecently("play", 2200)) return true;
 		if (shouldIgnorePauseEvents()) return true;
-		// FIX: Additional Chromium protection
 		if (platform.chromiumOnlyBrowser && state.bgPauseSuppressionCount < MAX_BG_PAUSE_SUPPRESSIONS)
 		{
 			if (now() < state.bgPauseSuppressionResetAt || (now() - state.bgPauseSuppressionResetAt) > 10000)
@@ -3124,10 +3184,13 @@ document.addEventListener("DOMContentLoaded", () =>
 		updateMediaSessionPlaybackState();
 		const handlePauseLike = () =>
 		{
-			// FIX: Block Media Session pause during visibility and alt-tab transitions
+			// FIX: Block Media Session pause during transitions [[7]], [[35]]
 			if (isVisibilityTransitionActive()) return;
 			if (isAltTabTransitionActive()) return;
+			if (!isVisibilityStable()) return;
+			if (!isFocusStable()) return;
 			if (chromiumBgPauseBlocked()) return;
+			if (chromiumPauseEventSuppressed()) return;
 			markMediaAction("pause");
 			setMediaSessionForcedPause(3200);
 			markUserPauseIntent(2800);
@@ -3335,11 +3398,15 @@ document.addEventListener("DOMContentLoaded", () =>
 		{
 			if (state.restarting || state.isProgrammaticVideoPause) return;
 			if (state.seeking) return;
-			// FIX: Chromium background tab - aggressive pause blocking [[8]], [[10]]
+			// FIX: Track pause events for suppression [[17]], [[23]]
+			trackPauseEvent();
+			// FIX: Chromium background tab - aggressive pause blocking [[1]], [[27]]
 			if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-			// FIX: Ignore pauses during visibility and alt-tab transitions
+			// FIX: Ignore pauses during transitions [[13]], [[15]]
 			if (isVisibilityTransitionActive()) return;
 			if (isAltTabTransitionActive()) return;
+			if (!isVisibilityStable()) return;
+			if (!isFocusStable()) return;
 			if (shouldTreatVisiblePauseAsUserPause())
 			{
 				state.intendedPlaying = false;
@@ -3480,11 +3547,15 @@ document.addEventListener("DOMContentLoaded", () =>
 			if (now() < state.audioPauseUntil || now() < state.audioPlayUntil) return;
 			if (state.seeking) return;
 			if (state.silentBgSync) return;
-			// FIX: Chromium background tab - aggressive pause blocking [[8]], [[10]]
+			// FIX: Track pause events for suppression [[17]], [[23]]
+			trackPauseEvent();
+			// FIX: Chromium background tab - aggressive pause blocking [[1]], [[27]]
 			if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-			// FIX: Ignore pauses during visibility and alt-tab transitions
+			// FIX: Ignore pauses during transitions [[13]], [[15]]
 			if (isVisibilityTransitionActive()) return;
 			if (isAltTabTransitionActive()) return;
+			if (!isVisibilityStable()) return;
+			if (!isFocusStable()) return;
 			if (shouldTreatVisiblePauseAsUserPause())
 			{
 				state.intendedPlaying = false;
@@ -3728,9 +3799,10 @@ document.addEventListener("DOMContentLoaded", () =>
 			const newState = document.visibilityState;
 			const oldState = state.lastVisibilityState;
 			state.lastVisibilityState = newState;
-			// FIX: Mark visibility transition period [[15]]
+			// FIX: Mark visibility transition period [[13]], [[15]]
 			state.visibilityTransitionActive = true;
 			state.visibilityTransitionUntil = now() + VISIBILITY_TRANSITION_MS;
+			state.visibilityStableUntil = now() + VISIBILITY_TRANSITION_MS;
 			state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
 			if (newState === "visible")
 			{
@@ -3738,16 +3810,16 @@ document.addEventListener("DOMContentLoaded", () =>
 				state.bgAutoResumeSuppressed = false;
 				state.startupAudioHoldUntil = 0;
 				state.bgTransitionInProgress = false;
-				// FIX: Extended Chromium background pause block [[8]], [[10]]
+				// FIX: Extended Chromium background pause block [[1]], [[27]]
 				if (platform.chromiumOnlyBrowser)
 				{
 					setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
 					setChromiumAutoPauseBlock(6000);
+					setChromiumPauseEventSuppress(CHROMIUM_PAUSE_EVENT_SUPPRESS_MS);
 					state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 900);
 					state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 500);
 					state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 2000);
 				}
-				// FIX: Clear rapid toggle detection on return
 				state.rapidToggleDetected = false;
 				state.rapidToggleUntil = 0;
 				if (state.intendedPlaying)
@@ -3773,7 +3845,6 @@ document.addEventListener("DOMContentLoaded", () =>
 						scheduleSync(0);
 					}
 				}
-				// Clear transition flag after delay
 				setTimeout(() =>
 				{
 					state.visibilityTransitionActive = false;
@@ -3801,27 +3872,26 @@ document.addEventListener("DOMContentLoaded", () =>
 			passive: true,
 			capture: true
 		});
-		// FIX: NEW - Focus/blur event handlers for alt-tab detection
+		// FIX: NEW - Focus/blur event handlers for alt-tab detection [[21]]
 		window.addEventListener("blur", () =>
 		{
 			if (!platform.chromiumOnlyBrowser) return;
 			state.lastFocusLoss = now();
 			state.focusLossCount++;
-			// Reset counter after timeout
 			if (now() > state.focusLossResetAt)
 			{
 				state.focusLossCount = 1;
 				state.focusLossResetAt = now() + FOCUS_LOSS_RESET_MS;
 			}
-			// Activate alt-tab protection
 			if (state.focusLossCount >= 1 && state.intendedPlaying)
 			{
 				state.altTabTransitionActive = true;
 				state.altTabTransitionUntil = now() + ALT_TAB_TRANSITION_MS;
+				state.focusStableUntil = now() + ALT_TAB_TRANSITION_MS;
 				state.pendingResumeAfterAltTab = true;
-				// Block Chromium auto-pause aggressively
 				setChromiumAutoPauseBlock(ALT_TAB_TRANSITION_MS + 1000);
 				setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
+				setChromiumPauseEventSuppress(CHROMIUM_PAUSE_EVENT_SUPPRESS_MS);
 			}
 		},
 		{
@@ -3831,11 +3901,10 @@ document.addEventListener("DOMContentLoaded", () =>
 		window.addEventListener("focus", () =>
 		{
 			if (!platform.chromiumOnlyBrowser) return;
-			// Clear alt-tab transition after delay
+			state.focusStableUntil = now() + 500;
 			setTimeout(() =>
 			{
 				state.altTabTransitionActive = false;
-				// Attempt resume if we were playing before alt-tab
 				if (state.pendingResumeAfterAltTab && state.intendedPlaying)
 				{
 					state.pendingResumeAfterAltTab = false;
@@ -3957,10 +4026,12 @@ document.addEventListener("DOMContentLoaded", () =>
 			video.on("pause", () =>
 			{
 				if (startupAutoplayPauseGraceActive()) return;
-				// FIX: Chromium background tab - aggressive pause blocking 
+				trackPauseEvent();
 				if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
 				if (isVisibilityTransitionActive()) return;
 				if (isAltTabTransitionActive()) return;
+				if (!isVisibilityStable()) return;
+				if (!isFocusStable()) return;
 				if (shouldTreatVisiblePauseAsUserPause())
 				{
 					state.intendedPlaying = false;
