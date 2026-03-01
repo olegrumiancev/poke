@@ -460,10 +460,10 @@ function yeast() {
         var speed = parseFloat(document.getElementById('ttsSpeed').value);
         var pitch = parseFloat(document.getElementById('ttsPitch').value);
         
-        /* Convert characters to words, prefixing uppercase with Big */
+        /* Convert characters to words, prefixing uppercase with Capital */
         var ttsChars = currentCaptchaText.split('').map(function(char) {
           if (char >= 'A' && char <= 'Z') {
-            return 'Big ' + char;
+            return 'Capital ' + char;
           }
           return char;
         });
