@@ -75,7 +75,6 @@ document.addEventListener("DOMContentLoaded", () => {
       gainNode.gain.cancelScheduledValues(t);
       gainNode.gain.setTargetAtTime(clamped, t, Math.max(0.002, durationSec / 4));
       actualGainTarget = clamped;
-      // NEVER set gain.value directly here; it causes snapping/clicking!
     } catch {
       if (audio) try { audio.volume = clamped; } catch {}
     }
@@ -816,6 +815,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function ensureUnmutedIfNotUserMuted() {
+    if (coupledMode && audio && !state.userMutedAudio) {
+      try { audio.muted = false; } catch {}
+    }
     if (state.startupPhase) {
       if (state.intendedPlaying) forceUnmuteForPlaybackIfAllowed();
       updateAudioGainImmediate();
@@ -1555,10 +1557,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.intendedPlaying && !getVideoPaused() && vt > 0.1) updateLastKnownGoodVT();
 
     const hidden = document.visibilityState === "hidden";
+    // Disables play/pause drift correction entirely when hidden to prevent Chromium background stuttering
+    const enableDriftCorrection = !hidden; 
 
-    // On Chromium/WebKit hidden tabs, don't issue pause commands —
-    // just mark for resume and wait until tab becomes visible.
-    // Exception: If the user explicitly requested play via media session in the background, allow it.
     if (hidden && platform.useBgControllerRetry && state.intendedPlaying && !mediaSessionForcedPauseActive()) {
       if (getVideoPaused() && !hiddenMediaSessionPlayActive()) {
         state.resumeOnVisible = true;
@@ -1648,10 +1649,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!inMediaTxnWindow() && !inLoopBreak()) playTogether().catch(() => {});
           } else { scheduleBgResumeRetry(320); }
         }
-      } else {
+      } else if (enableDriftCorrection) {
         // Both playing — DRIFT CORRECTION
-        // NEVER adjust audio.playbackRate. Only nudge audio.currentTime
-        // if drift is persistent and significant.
+        // ONLY execute when foregrounded.
         const drift = vt - at;
         const absDrift = Math.abs(drift);
 
@@ -1699,9 +1699,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
           if (state.driftStableFrames >= DRIFT_PERSIST_CYCLES + 2) {
             // Very persistently small drift — micro time nudge, very gently
-            // to avoid any audible artifact
             fadeOutAudio(12).then(() => {
-              // nudge audio time by only half the drift
               const newAt = Number(audio.currentTime);
               if (isFinite(newAt)) safeSetCT(audio, newAt + drift * 0.5);
               ensureAudioPlaybackRate();
@@ -1766,13 +1764,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Ensure audio isn't silently muted
     if (state.intendedPlaying && !aPaused && !state.userMutedVideo && !state.userMutedAudio) {
-      try { if (audio.muted) audio.muted = false; } catch {}
+      try { if (audio.muted && !state.seeking) audio.muted = false; } catch {}
       const targetVol = clamp01(targetVolFromVideo());
       if (!gainNode || !audioCtx) {
-        if (audio.volume <= 0.001) softUnmuteAudio(120).catch(() => {});
+        if (audio.volume <= 0.001 && !state.seeking) softUnmuteAudio(120).catch(() => {});
       } else {
         try {
-          if (actualGainTarget <= 0.001 && targetVol > 0.001) rampGain(targetVol, 0.1);
+          if (actualGainTarget <= 0.001 && targetVol > 0.001 && !state.seeking) rampGain(targetVol, 0.1);
         } catch {}
       }
     }
@@ -1881,8 +1879,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const handlePauseLike = () => {
       markMediaAction("pause");
-      setMediaSessionForcedPause(1200); // reduced from 3200 for faster un-locking
-      markUserPauseIntent(1200); // reduced from 2800 for faster un-locking
+      setMediaSessionForcedPause(1200); 
+      markUserPauseIntent(1200); 
       clearPendingPlayResumesForPause();
       setPauseEventGuard(1200);
       setMediaPauseTxn(1200);
@@ -1943,8 +1941,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         let playPromise = null, audioPromise = null;
         
-        // Android Chrome throws errors if we try to play video while tab is fully hidden.
-        // We bypass video playing and let it naturally resume when tab is reopened.
         if (!isHiddenMobile) {
             try { playPromise = execProgrammaticVideoPlay(); } catch {}
         } else {
@@ -1959,7 +1955,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         Promise.allSettled([playPromise, audioPromise]).finally(() => {
           if (serial !== state.mediaSessionActionSerial) return;
-          // Use requestAnimationFrame for immediate response, no artificial delay
           requestAnimationFrame(() => {
             if (serial !== state.mediaSessionActionSerial) return;
             if (!state.intendedPlaying || userPauseLockActive()) return;
@@ -1971,32 +1966,35 @@ document.addEventListener("DOMContentLoaded", () => {
       navigator.mediaSession.setActionHandler("pause", handlePauseLike);
       try { navigator.mediaSession.setActionHandler("stop", handlePauseLike); } catch {}
 
+      // Media Session Syncing Fixed: Mute and sync immediately without async delays
+      const applyMediaSessionSeek = (newTime) => {
+        if (coupledMode && audio) {
+          try { audio.muted = true; } catch {}
+          if (gainNode && audioCtx) {
+            try { gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.001); actualGainTarget = 0; } catch {}
+          }
+          squelchAudioEvents(400);
+          safeSetCT(audio, newTime);
+        }
+        video.currentTime(newTime);
+      };
+
       navigator.mediaSession.setActionHandler("seekforward", d => {
         const inc = Number(d?.seekOffset) || 10;
         const newTime = Math.min((video.currentTime() || 0) + inc, Number(video.duration()) || 0);
-        video.currentTime(newTime);
-        // Also seek audio for Android seekbar support
-        if (coupledMode) {
-            fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
-        }
+        applyMediaSessionSeek(newTime);
       });
+      
       navigator.mediaSession.setActionHandler("seekbackward", d => {
         const dec = Number(d?.seekOffset) || 10;
         const newTime = Math.max((video.currentTime() || 0) - dec, 0);
-        video.currentTime(newTime);
-        if (coupledMode) {
-            fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
-        }
+        applyMediaSessionSeek(newTime);
       });
+      
       navigator.mediaSession.setActionHandler("seekto", d => {
         if (!d || typeof d.seekTime !== "number") return;
         const newTime = Math.max(0, Math.min(Number(video.duration()) || 0, d.seekTime));
-        video.currentTime(newTime);
-        // Critical for Android Chrome seekbar: also seek audio element
-        if (coupledMode) {
-          squelchAudioEvents(400);
-          fadeOutAudio(20).then(() => { safeSetCT(audio, newTime); });
-        }
+        applyMediaSessionSeek(newTime);
       });
     } catch {}
   }
@@ -2006,8 +2004,6 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on("ratechange", () => {
       if (!coupledMode) return;
       try {
-        // Keep audio rate in sync with video rate — but this is the ONLY
-        // place we change audio.playbackRate. Never change it for drift correction.
         ensureAudioPlaybackRate();
         resetDriftTracking();
       } catch {}
@@ -2077,7 +2073,6 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
       }
-      // Don't immediately enter buffer hold — let evaluateBufferHoldNeed confirm it
       scheduleSync(0);
     });
 
@@ -2214,24 +2209,28 @@ document.addEventListener("DOMContentLoaded", () => {
       state.seekWantedPlaying = state.intendedPlaying;
       clearSeekSyncFinalizeTimer();
 
+      // MUTE INSTANTLY TO PREVENT AUDIO POP
+      if (coupledMode && audio) {
+          try { audio.muted = true; } catch {}
+          if (gainNode && audioCtx) {
+              try {
+                  gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+                  gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.001);
+                  actualGainTarget = 0;
+              } catch {}
+          }
+      }
+
       const seekTime = Number(video.currentTime());
       execProgrammaticVideoPause();
+      execProgrammaticAudioPause(300, 0); 
       
-      // Smooth fade out completely BEFORE shifting audio to prevent the pop/clicking
-      fadeOutAudio(25).then(() => {
-          execProgrammaticAudioPause(300, 0); // Already faded out
-          if (isFinite(seekTime)) {
-            squelchAudioEvents(420);
-            safeSetCT(audio, seekTime);
-          }
-      }).catch(() => {
-          execProgrammaticAudioPause(300, 0);
-          if (isFinite(seekTime)) {
-            squelchAudioEvents(420);
-            safeSetCT(audio, seekTime);
-          }
-      });
-
+      // SYNC INSTANTLY without async delay for Android accuracy
+      if (isFinite(seekTime) && coupledMode) {
+        squelchAudioEvents(420);
+        safeSetCT(audio, seekTime);
+      }
+      
       ensureAudioPlaybackRate();
       resetDriftTracking();
       setFastSync(2200);
@@ -2241,15 +2240,13 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on("seeked", () => {
       if (state.restarting) return;
       const newTime = Number(video.currentTime());
-      squelchAudioEvents(420);
-      
-      // Ensure completely faded down before snapping time if `seeked` fired extremely fast
-      fadeOutAudio(20).then(() => {
-          safeSetCT(audio, newTime);
-          ensureAudioPlaybackRate();
-          resetDriftTracking();
-          scheduleSeekFinalize(0);
-      });
+      if (coupledMode) {
+        squelchAudioEvents(420);
+        safeSetCT(audio, newTime);
+      }
+      ensureAudioPlaybackRate();
+      resetDriftTracking();
+      scheduleSeekFinalize(0);
     });
 
     video.on("ended", () => {
@@ -2273,7 +2270,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (coupledMode) await softAlignAudioTo(startAt);
       ensureAudioPlaybackRate();
       resetDriftTracking();
-      state.startupAudioAligned = false; // will be re-aligned on next play
+      state.startupAudioAligned = false; 
       state.intendedPlaying = true;
       markMediaAction("play");
       setFastSync(2000);
@@ -2324,12 +2321,32 @@ document.addEventListener("DOMContentLoaded", () => {
           state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 300);
         }
 
-        // Resume AudioContext if suspended (required on some browsers)
         resumeAudioContext();
 
         if (state.intendedPlaying) {
           if (platform.useBgControllerRetry) {
-            seamlessBgCatchUp().catch(() => {});
+             // Invisible catch-up mechanism for desktop Chromium
+             let vtNow = Number(video.currentTime()) || 0;
+             let atNow = Number(audio.currentTime) || 0;
+             let vPausedNow = getVideoPaused();
+             let aPausedNow = !!audio.paused;
+
+             if (!vPausedNow && !aPausedNow) {
+                 if (Math.abs(vtNow - atNow) > 0.15) {
+                     if (gainNode && audioCtx) {
+                         try { gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.001); actualGainTarget = 0; } catch {}
+                     }
+                     safeSetCT(audio, vtNow);
+                     fadeInAudio(clamp01(targetVolFromVideo()), 60).catch(()=>{});
+                 }
+                 state.resumeOnVisible = false;
+                 state.bgHiddenWasPlaying = false;
+                 resetDriftTracking();
+                 setFastSync(1200);
+                 scheduleSync(0);
+             } else {
+                 seamlessBgCatchUp().catch(() => {});
+             }
           } else {
             state.resumeOnVisible = false;
             state.bgHiddenWasPlaying = false;
@@ -2345,7 +2362,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (platform.useBgControllerRetry) {
           noteBackgroundEntry();
           state.bgAutoResumeSuppressed = true;
-          // runSync will automatically set state.resumeOnVisible = true ONLY IF the browser naturally pauses the video
+          // Loop will not issue corrections because it reads the hidden state
         } else {
           state.bgAutoResumeSuppressed = false;
           state.resumeOnVisible = false;
@@ -2451,6 +2468,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
