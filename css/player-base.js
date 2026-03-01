@@ -173,7 +173,6 @@ document.addEventListener("fullscreenchange", onFullscreenChange, { passive: tru
 document.addEventListener("webkitfullscreenchange", onFullscreenChange, { passive: true });
 onFullscreenChange();
 });
-// ==================== ENHANCED STATE TRACKING ====================
 const state = {
 intendedPlaying: false,
 restarting: false,
@@ -312,7 +311,10 @@ rapidPlayPauseCount: 0,
 rapidPlayPauseResetAt: 0,
 audioPlayAttemptCount: 0,
 audioPlayAttemptResetAt: 0,
-backgroundAutoplayTriggered: false
+backgroundAutoplayTriggered: false,
+audioStartupPlayAttempted: false,
+audioStartupPlayRetries: 0,
+audioForcePlayTimer: null
 };
 const EPS = 1.0;
 const HAVE_FUTURE_DATA = 3;
@@ -346,6 +348,8 @@ const RAPID_PLAY_PAUSE_WINDOW_MS = 2000;
 const MAX_RAPID_PLAY_PAUSE = 3;
 const MAX_AUDIO_PLAY_ATTEMPTS = 5;
 const AUDIO_PLAY_ATTEMPT_RESET_MS = 5000;
+const AUDIO_STARTUP_PLAY_RETRY_MS = 300;
+const MAX_AUDIO_STARTUP_RETRIES = 8;
 const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 function now() { return performance.now(); }
 function markMediaAction(type) {
@@ -429,7 +433,6 @@ function chromiumAudioStartLocked() { return platform.chromiumOnlyBrowser && !st
 function chromiumBgSettlingActive() { return platform.chromiumOnlyBrowser && now() < state.chromiumBgSettlingUntil; }
 function chromiumBgPauseBlocked() {
 if (!platform.chromiumOnlyBrowser) return false;
-// FIX: Never block during startup phase - critical for background tab autoplay
 if (state.startupPhase && !state.firstPlayCommitted) return false;
 return now() < state.chromiumBgPauseBlockedUntil ||
 now() < state.chromiumBgPauseBlockedUntilExtended ||
@@ -544,7 +547,6 @@ const vVol = clamp01(typeof video.volume === "function" ? video.volume() : (vide
 const vMuted = !!(typeof video.muted === "function" ? video.muted() : videoEl.muted);
 return (vMuted || state.userMutedVideo) ? 0 : vVol;
 }
-// ==================== CRITICAL AUDIO POP PREVENTION ====================
 let activeVolumeFade = null;
 function cancelActiveFade() {
 if (activeVolumeFade) {
@@ -552,13 +554,11 @@ cancelAnimationFrame(activeVolumeFade);
 activeVolumeFade = null;
 }
 }
-// FIX: Instant duck to zero, slow fade in - prevents ALL pops
 async function doVolumeFade(targetVol, ms = AUDIO_SAFE_FADE_DURATION_MS, instantDuck = true) {
 if (!audio) return;
 cancelActiveFade();
 const from = clamp01(audio.volume);
 const target = clamp01(targetVol);
-// Always duck to zero instantly before any volume change
 if (instantDuck && from > 0.01) {
 try { audio.volume = 0; } catch {}
 await new Promise(r => setTimeout(r, 50));
@@ -612,7 +612,6 @@ function updateAudioGainImmediate() {
 if (!audio) return;
 try {
 cancelActiveFade();
-// FIX: Always set to 0 first, then target volume
 audio.volume = 0;
 setTimeout(() => {
 try { audio.volume = clamp01(targetVolFromVideo()); } catch {}
@@ -635,7 +634,6 @@ state.audioSafeMuteUntil = 0;
 function isAudioVolumeLocked() {
 return state.audioVolumeLocked || now() < state.audioSafeMuteUntil;
 }
-// FIX: Ensure audio is at zero before ANY time manipulation
 function ensureAudioZeroVolume() {
 if (!audio) return;
 try {
@@ -646,7 +644,6 @@ state.audioZeroVolumeConfirmed = true;
 }
 } catch {}
 }
-// FIX: Track rapid play/pause to prevent audio glitches
 function checkRapidPlayPause() {
 const nowTs = now();
 if (nowTs > state.rapidPlayPauseResetAt || (nowTs - state.rapidPlayPauseResetAt) > RAPID_PLAY_PAUSE_WINDOW_MS) {
@@ -661,7 +658,6 @@ return true;
 }
 return false;
 }
-// FIX: Track audio play attempts to prevent spam
 function checkAudioPlayAttempt() {
 const nowTs = now();
 if (nowTs > state.audioPlayAttemptResetAt || (nowTs - state.audioPlayAttemptResetAt) > AUDIO_PLAY_ATTEMPT_RESET_MS) {
@@ -674,29 +670,24 @@ return false;
 }
 return true;
 }
-// ==================== TIME AND SYNC HELPERS ====================
 function safeSetCT(media, t) {
 try {
 if (media && isFinite(t) && t >= 0) media.currentTime = t;
 } catch {}
 }
-// FIX: - Always duck to zero before time change, wait, then restore
 function safeSetAudioTime(t) {
 if (!audio) return;
 try {
 if (isFinite(t) && t >= 0) {
 const timeDiff = Math.abs((audio.currentTime || 0) - t);
-// FIX: ALWAYS duck to zero before any time manipulation
 ensureAudioZeroVolume();
 lockAudioVolume();
 cancelActiveFade();
 audio.volume = 0;
-// FIX: Wait for volume to actually reach zero
 setTimeout(() => {
 try {
 audio.currentTime = t;
 state.audioZeroVolumeConfirmed = true;
-// FIX: Only fade back in if intended playing and not locked
 if (state.intendedPlaying && !isAudioVolumeLocked()) {
 setTimeout(() => {
 if (!audio.paused && state.intendedPlaying && !isAudioVolumeLocked()) {
@@ -799,13 +790,10 @@ if (!coupledMode) return true;
 const v = getVideoNode();
 return canPlaySmoothAt(v, t, STARTUP_BUFFER_AHEAD_SEC) && canPlaySmoothAt(audio, t, STARTUP_BUFFER_AHEAD_SEC);
 }
-// FIX: - Allow background tab startup during startup phase
 function shouldBlockNewAudioStart() {
 if (!coupledMode) return false;
 if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return true;
-// FIX: Always allow during startup phase (critical for background tabs)
 if (state.startupPhase && !state.firstPlayCommitted) return false;
-// FIX: Allow if background playback is explicitly allowed
 if (state.bgPlaybackAllowed) return false;
 const allowHiddenBootstrap =
 (document.visibilityState === "hidden" && (hiddenMediaSessionPlayActive() || state.mediaSessionInitiatedPlay)) ||
@@ -893,7 +881,6 @@ state.isProgrammaticVideoPlay = false;
 throw e;
 }
 }
-// FIX: Enhanced audio pause with guaranteed zero volume
 function execProgrammaticAudioPause(ms = 500) {
 if (!coupledMode || !audio) return;
 const until = now() + Math.max(300, Number(ms) || 0);
@@ -903,7 +890,6 @@ state.isProgrammaticAudioPause = true;
 try { squelchAudioEvents(ms); } catch {}
 try { resetAudioPlaybackRate(); } catch {}
 try {
-// FIX: Ensure zero volume BEFORE pause
 ensureAudioZeroVolume();
 lockAudioVolume();
 cancelActiveFade();
@@ -915,15 +901,12 @@ unlockAudioVolume();
 } catch {}
 setTimeout(() => { state.isProgrammaticAudioPause = false; }, 400);
 }
-// FIX: Enhanced audio play with pop prevention and attempt tracking
 async function execProgrammaticAudioPlay(opts = {}) {
 const { squelchMs = 500, minGapMs = 300, force = false } = opts;
 if (!coupledMode || !audio || typeof audio.play !== "function") return false;
-// FIX: Check rapid play/pause to prevent glitches
 if (!force && checkRapidPlayPause()) {
 return !audio.paused;
 }
-// FIX: Check play attempt limit
 if (!force && !checkAudioPlayAttempt()) {
 return !audio.paused;
 }
@@ -950,7 +933,6 @@ resetAudioPlaybackRate();
 try {
 squelchAudioEvents(squelchMs);
 const wasPaused = audio.paused;
-// FIX: - Ensure zero volume before play
 ensureAudioZeroVolume();
 lockAudioVolume();
 if (wasPaused || !state.audioEverStarted) {
@@ -973,7 +955,6 @@ unlockAudioVolume();
 return false;
 }
 unlockAudioVolume();
-// FIX: Always fade in slowly after play starts
 if (wasPaused || !state.audioEverStarted || !state.audioFading) {
 fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
 }
@@ -1099,7 +1080,6 @@ softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(()=>{});
 state.videoRepairing = false;
 }
 }
-// FIX: - Background retry works regardless of visibility
 function scheduleBgResumeRetry(delay = 400) {
 if (!platform.useBgControllerRetry) return;
 if (mediaSessionForcedPauseActive()) return;
@@ -1710,7 +1690,6 @@ if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
 clearStartupAutoplayRetryTimer();
 const count = state.startupAutoplayRetryCount;
 if (count >= 10) return;
-// FIX: Shorter delays for background tabs
 const isHidden = document.visibilityState === "hidden";
 const delays = isHidden ?
 [200, 400, 700, 1000, 1500, 2000, 3000, 4000, 5000, 6000] :
@@ -1828,7 +1807,6 @@ if (state.intendedPlaying && !getVideoPaused() && vt > 0.1) {
 updateLastKnownGoodVT();
 }
 const hidden = document.visibilityState === "hidden";
-// FIX: Continue sync in background for proper state tracking
 if (hidden && platform.useBgControllerRetry && state.intendedPlaying && !mediaSessionForcedPauseActive()) {
 state.resumeOnVisible = true;
 if (!state.bgHiddenSince) noteBackgroundEntry();
@@ -2476,7 +2454,6 @@ if (!platform.useBgControllerRetry) return;
 if (e && e.persisted && state.intendedPlaying) {
 silentBgCatchUp().catch(() => {});
 }
-// FIX: Trigger startup on pageshow for background tab loads
 if (state.startupPhase && !state.startupPrimed) {
 maybePrimeStartup();
 scheduleStartupAutoplayKick();
@@ -2516,7 +2493,6 @@ setFastSync(800);
 scheduleSync(0);
 }
 }
-// FIX: Retry startup autoplay when tab becomes visible
 if (state.startupPhase && !state.startupKickDone && wantsStartupAutoplay()) {
 scheduleStartupAutoplayKick();
 }
@@ -2572,6 +2548,49 @@ clearStartupAutoplayRetryTimer();
 clearSyncLoop();
 });
 }
+function forceAudioStartupPlay() {
+if (!coupledMode || !audio || state.audioStartupPlayAttempted) return;
+if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
+if (state.startupPrimed && state.firstPlayCommitted) return;
+state.audioStartupPlayAttempted = true;
+const tryPlay = () => {
+if (state.audioStartupPlayRetries >= MAX_AUDIO_STARTUP_RETRIES) return;
+if (!audio || !state.intendedPlaying) return;
+if (!audio.paused) {
+state.audioEverStarted = true;
+return;
+}
+const rs = Number(audio.readyState || 0);
+if (rs < 2) {
+state.audioStartupPlayRetries++;
+state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
+return;
+}
+try {
+ensureAudioZeroVolume();
+const p = audio.play();
+if (p && p.then) {
+p.then(() => {
+state.audioEverStarted = true;
+state.audioStartupPlayRetries = 0;
+}).catch(() => {
+state.audioStartupPlayRetries++;
+state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
+});
+}
+} catch {
+state.audioStartupPlayRetries++;
+state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
+}
+};
+state.audioForcePlayTimer = setTimeout(tryPlay, 150);
+}
+function clearAudioForcePlayTimer() {
+if (state.audioForcePlayTimer) {
+clearTimeout(state.audioForcePlayTimer);
+state.audioForcePlayTimer = null;
+}
+}
 setupUserPauseIntentDetection();
 setupMediaSession();
 bindCommonMediaEvents();
@@ -2598,6 +2617,10 @@ try { el.addEventListener(type, fn, { passive: true }); } catch {}
 bindStartupOnce(audio, "loadeddata");
 bindStartupOnce(audio, "loadedmetadata");
 bindStartupOnce(audio, "canplay");
+bindStartupOnce(audio, "playing", () => {
+clearAudioForcePlayTimer();
+state.audioStartupPlayRetries = 0;
+});
 bindStartupOnce(videoEl, "loadeddata");
 bindStartupOnce(videoEl, "loadedmetadata");
 bindStartupOnce(videoEl, "canplay");
@@ -2650,15 +2673,15 @@ queueHardPauseVerification();
 }
 state.bgPlaybackAllowed = true;
 state.backgroundAutoplayTriggered = true;
- setTimeout(() => {
+setTimeout(() => {
 if (coupledMode && state.startupPhase && !state.startupPrimed) {
 maybePrimeStartup();
 scheduleStartupAutoplayKick();
+forceAudioStartupPlay();
 }
 }, 100);
 scheduleSync(0);
 });
-
 
 
 document.addEventListener('keydown', function(event) {
