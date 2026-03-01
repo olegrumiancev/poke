@@ -14,7 +14,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
     const video = videojs("video", {
         controls: true,
         autoplay: true,
@@ -205,7 +205,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         });
         onFullscreenChange();
     });
-    // FIX: Enhanced state tracking with better cooldown management
+
+    // ==================== ENHANCED STATE TRACKING ====================
     const state = {
         intendedPlaying: false,
         restarting: false,
@@ -303,12 +304,22 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         seekCompleted: false,
         audioVolumeBeforePause: 1,
         stateChangeCooldownUntil: 0,
-        // FIX: New fields for improved audio pop prevention
         audioFadeCompleteUntil: 0,
         chromiumBgPauseBlockedUntil: 0,
         tabVisibilityChangeUntil: 0,
-        audioGainSmoothUntil: 0
+        audioGainSmoothUntil: 0,
+        // FIX: Enhanced Chromium background tab protection
+        chromiumBgPauseBlockedUntilExtended: 0,
+        visibilityTransitionActive: false,
+        visibilityTransitionUntil: 0,
+        lastVisibilityState: "visible",
+        bgPauseSuppressionCount: 0,
+        bgPauseSuppressionResetAt: 0,
+        mediaSessionPauseBlockedUntil: 0,
+        rapidToggleDetected: false,
+        rapidToggleUntil: 0
     };
+
     const EPS = 1.0;
     const HAVE_FUTURE_DATA = 3;
     const HAVE_ENOUGH_DATA = 4;
@@ -320,14 +331,19 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     const MAX_RATE_NUDGE = 0.003;
     const DRIFT_PERSIST_CYCLES = 5;
     const STRICT_BUFFER_HYSTERESIS_MS = 400;
-    // FIX: Enhanced audio pop prevention constants (increased durations)
-    const AUDIO_POP_PREVENT_MS = 600; // Increased from 400ms
-    const AUDIO_FADE_DURATION_MS = 200; // Increased from 100ms for smoother transitions [[26]]
-    const MIN_PLAY_PAUSE_GAP_MS = 500; // Increased from 350ms
+
+    // FIX: Enhanced timing constants for Chromium background tab protection
+    const AUDIO_POP_PREVENT_MS = 600;
+    const AUDIO_FADE_DURATION_MS = 200;
+    const MIN_PLAY_PAUSE_GAP_MS = 500;
     const SEEK_READY_TIMEOUT_MS = 3000;
-    const STATE_CHANGE_COOLDOWN_MS = 400; // Increased from 200ms
-    const CHROMIUM_BG_PAUSE_BLOCK_MS = 1500; // NEW: Block background pause detection
-    const TAB_VISIBILITY_STABLE_MS = 800; // NEW: Wait for visibility to stabilize
+    const STATE_CHANGE_COOLDOWN_MS = 400;
+    const CHROMIUM_BG_PAUSE_BLOCK_MS = 3000; // INCREASED from 1500ms
+    const TAB_VISIBILITY_STABLE_MS = 1500; // INCREASED from 800ms
+    const VISIBILITY_TRANSITION_MS = 2000; // NEW: Extended transition protection
+    const RAPID_TOGGLE_WINDOW_MS = 2500; // NEW: Detect rapid play/pause toggles
+    const MAX_BG_PAUSE_SUPPRESSIONS = 5; // NEW: Limit suppression resets
+
     const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 
     function now() {
@@ -470,15 +486,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     function chromiumBgSettlingActive() {
         return platform.chromiumOnlyBrowser && now() < state.chromiumBgSettlingUntil;
     }
-    // FIX: NEW - Block Chromium background tab pause detection
+
+    // FIX: Enhanced Chromium background pause blocking
     function chromiumBgPauseBlocked() {
-        return platform.chromiumOnlyBrowser && now() < state.chromiumBgPauseBlockedUntil;
+        if (!platform.chromiumOnlyBrowser) return false;
+        return now() < state.chromiumBgPauseBlockedUntil || now() < state.chromiumBgPauseBlockedUntilExtended;
     }
 
     function setChromiumBgPauseBlock(ms = CHROMIUM_BG_PAUSE_BLOCK_MS) {
-        if (platform.chromiumOnlyBrowser) {
-            state.chromiumBgPauseBlockedUntil = Math.max(state.chromiumBgPauseBlockedUntil, now() + ms);
-        }
+        if (!platform.chromiumOnlyBrowser) return;
+        state.chromiumBgPauseBlockedUntil = Math.max(state.chromiumBgPauseBlockedUntil, now() + ms);
+        state.chromiumBgPauseBlockedUntilExtended = Math.max(state.chromiumBgPauseBlockedUntilExtended, now() + (ms * 1.5));
     }
 
     function setStartupAudioHold(ms = 450) {
@@ -497,9 +515,16 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return now() < state.audioEventsSquelchedUntil;
     }
 
+    // FIX: Enhanced visibility transition detection
+    function isVisibilityTransitionActive() {
+        return state.visibilityTransitionActive || now() < state.visibilityTransitionUntil;
+    }
+
     function shouldTreatVisiblePauseAsUserPause() {
-        // FIX: Don't treat as user pause during tab visibility changes
+        // FIX: Never treat as user pause during visibility transitions
+        if (isVisibilityTransitionActive()) return false;
         if (now() < state.tabVisibilityChangeUntil) return false;
+        if (chromiumBgPauseBlocked()) return false;
         return document.visibilityState === "visible" && (userPauseIntentActive() || userPauseLockActive());
     }
 
@@ -507,22 +532,35 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (mediaSessionForcedPauseActive()) return false;
         if (shouldTreatVisiblePauseAsUserPause()) return false;
         if (state.silentBgSync) return true;
-        // FIX: Ignore pauses during tab visibility transitions
+        // FIX: Always ignore pauses during visibility transitions
+        if (isVisibilityTransitionActive()) return true;
         if (now() < state.tabVisibilityChangeUntil) return true;
+        // FIX: Chromium background tab - always block pause detection
+        if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return true;
         const hidden = document.visibilityState === "hidden";
         if (!hidden) {
             if (fastSyncActive()) return true;
             if (state.isProgrammaticVideoPlay || state.isProgrammaticAudioPlay) return true;
             if (now() < state.audioPlayUntil) return true;
             if (mediaActionRecently("play", 260)) return true;
+            // FIX: Detect rapid toggle during tab switch
+            if (state.rapidToggleDetected && now() < state.rapidToggleUntil) return true;
             return false;
         }
-        // FIX: Chromium background tab - block automatic pause detection
-        if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return true;
+        // Background tab - aggressive pause suppression
         if (inMediaTxnWindow()) return true;
         if (now() < state.audioPlayUntil) return true;
         if (mediaActionRecently("play", 2200)) return true;
         if (shouldIgnorePauseEvents()) return true;
+        // FIX: Additional Chromium protection
+        if (platform.chromiumOnlyBrowser && state.bgPauseSuppressionCount < MAX_BG_PAUSE_SUPPRESSIONS) {
+            if (now() < state.bgPauseSuppressionResetAt || (now() - state.bgPauseSuppressionResetAt) > 10000) {
+                state.bgPauseSuppressionCount = 0;
+                state.bgPauseSuppressionResetAt = now();
+            }
+            state.bgPauseSuppressionCount++;
+            return true;
+        }
         return false;
     }
 
@@ -570,7 +608,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             if (audio && !state.userMutedAudio && audio.muted) audio.muted = false;
         } catch {}
     }
-    // FIX: Enhanced smooth audio fade to prevent pop sounds (longer duration) [[26]]
     async function softUnmuteAudio(ms = 80) {
         if (!audio) return;
         const target = clamp01(targetVolFromVideo());
@@ -598,7 +635,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             requestAnimationFrame(step);
         });
     }
-    // FIX: Enhanced audio fade out before pause to prevent pop (increased duration) [[26]]
     async function fadeAudioOut(ms = AUDIO_FADE_DURATION_MS) {
         if (!audio || state.audioFading) return;
         state.audioFading = true;
@@ -625,7 +661,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         state.audioFading = false;
         state.audioFadeCompleteUntil = now();
     }
-    // FIX: Enhanced audio fade in after play to prevent pop (increased duration) [[26]]
     async function fadeAudioIn(ms = AUDIO_FADE_DURATION_MS) {
         if (!audio || state.audioFading) return;
         state.audioFading = true;
@@ -898,16 +933,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         } = opts;
         if (!coupledMode || !audio || typeof audio.play !== "function") return false;
         if (!force && !audio.paused) return true;
-        // FIX: Prevent audio pop by enforcing minimum gap between play/pause [[26]]
         const timeSinceLastPlayPause = now() - state.audioLastPlayPauseTs;
         if (!force && timeSinceLastPlayPause < MIN_PLAY_PAUSE_GAP_MS) {
             return !audio.paused;
         }
-        // FIX: Check state change cooldown
         if (now() < state.stateChangeCooldownUntil && !force) {
             return !audio.paused;
         }
-        // FIX: Check audio fade completion before playing
         if (now() < state.audioFadeCompleteUntil && !force) {
             return !audio.paused;
         }
@@ -927,7 +959,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         resetAudioPlaybackRate();
         try {
             squelchAudioEvents(squelchMs);
-            // FIX: Start at low volume to prevent pop, then fade in [[26]]
             if (!state.audioEverStarted) {
                 audio.volume = 0.001;
             }
@@ -946,7 +977,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
                 } catch {}
                 return false;
             }
-            // FIX: Fade in audio after play starts to prevent pop [[26]]
             if (!state.audioEverStarted && !state.audioFading) {
                 await fadeAudioIn(AUDIO_FADE_DURATION_MS).catch(() => {});
             }
@@ -1702,7 +1732,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             state.syncing = false;
         }
     }
-    // FIX: Improved seek finalize to ensure playback resumes after seek
     async function finalizeSeekSync() {
         if (!coupledMode) {
             state.seeking = false;
@@ -1717,7 +1746,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         const v = getVideoNode();
         const vt = Number(video.currentTime());
         if (isFinite(vt)) safeSetCT(audio, vt);
-        // FIX: Don't pause if we want to play after seek
         if (!state.seekWantedPlaying || !state.intendedPlaying) {
             execProgrammaticVideoPause();
             execProgrammaticAudioPause(420);
@@ -1734,7 +1762,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         state.audioPauseUntil = 0;
         const seekTarget = state.pendingSeekTarget;
         state.pendingSeekTarget = null;
-        // FIX: Check if we should resume playback after seek
         if (!state.seekWantedPlaying || !state.intendedPlaying || mediaSessionForcedPauseActive()) {
             execProgrammaticVideoPause();
             execProgrammaticAudioPause(420);
@@ -1759,7 +1786,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         const vt2 = Number(video.currentTime());
         if (isFinite(vt2)) safeSetCT(audio, vt2);
         setFastSync(2200);
-        // FIX: Actually resume playback after seek completes
         if (state.playRequestedDuringSeek || state.seekWantedPlaying) {
             state.playRequestedDuringSeek = false;
             state.seekWantedPlaying = false;
@@ -1928,7 +1954,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         state.firstSeekDone = true;
         const t = Number(video.currentTime());
         const at = Number(audio.currentTime);
-        // FIX: Ensure both audio and video start at same position to prevent initial desync
         if (isFinite(t) && isFinite(at) && Math.abs(at - t) > 0.1) {
             safeSetCT(audio, t);
         }
@@ -2313,6 +2338,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         } catch {}
         updateMediaSessionPlaybackState();
         const handlePauseLike = () => {
+            // FIX: Block Media Session pause during visibility transitions
+            if (isVisibilityTransitionActive()) return;
+            if (chromiumBgPauseBlocked()) return;
             markMediaAction("pause");
             setMediaSessionForcedPause(3200);
             markUserPauseIntent(2800);
@@ -2474,8 +2502,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         video.on("pause", () => {
             if (state.restarting || state.isProgrammaticVideoPause) return;
             if (state.seeking) return;
-            // FIX: Chromium background tab - block automatic pause detection [[9]], [[11]]
+            // FIX: Chromium background tab - aggressive pause blocking [[8]], [[10]]
             if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
+            // FIX: Ignore pauses during visibility transitions
+            if (isVisibilityTransitionActive()) return;
             if (shouldTreatVisiblePauseAsUserPause()) {
                 state.intendedPlaying = false;
                 state.bufferHoldIntendedPlaying = false;
@@ -2585,8 +2615,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             if (now() < state.audioPauseUntil || now() < state.audioPlayUntil) return;
             if (state.seeking) return;
             if (state.silentBgSync) return;
-            // FIX: Chromium background tab - block automatic pause detection [[9]], [[11]]
+            // FIX: Chromium background tab - aggressive pause blocking [[8]], [[10]]
             if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
+            // FIX: Ignore pauses during visibility transitions
+            if (isVisibilityTransitionActive()) return;
             if (shouldTreatVisiblePauseAsUserPause()) {
                 state.intendedPlaying = false;
                 state.bufferHoldIntendedPlaying = false;
@@ -2685,7 +2717,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             clearSeekSyncFinalizeTimer();
             const seekTime = Number(video.currentTime());
             state.pendingSeekTarget = seekTime;
-            // FIX: Only pause if we weren't already playing
             if (!state.intendedPlaying) {
                 execProgrammaticVideoPause();
                 execProgrammaticAudioPause(320);
@@ -2775,19 +2806,28 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             });
         } catch {}
         window.addEventListener("visibilitychange", () => {
-            // FIX: Mark visibility change period to prevent false pause detection
+            const newState = document.visibilityState;
+            const oldState = state.lastVisibilityState;
+            state.lastVisibilityState = newState;
+            // FIX: Mark visibility transition period [[15]]
+            state.visibilityTransitionActive = true;
+            state.visibilityTransitionUntil = now() + VISIBILITY_TRANSITION_MS;
             state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
-            if (document.visibilityState === "visible") {
+            if (newState === "visible") {
                 clearHiddenMediaSessionPlay();
                 state.bgAutoResumeSuppressed = false;
                 state.startupAudioHoldUntil = 0;
                 state.bgTransitionInProgress = false;
-                // FIX: Block Chromium background pause detection when returning to tab [[11]], [[14]]
+                // FIX: Extended Chromium background pause block [[8]], [[10]]
                 if (platform.chromiumOnlyBrowser) {
                     setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
-                    state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 600);
-                    state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 300);
+                    state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 900);
+                    state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 500);
+                    state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 2000);
                 }
+                // FIX: Clear rapid toggle detection on return
+                state.rapidToggleDetected = false;
+                state.rapidToggleUntil = 0;
                 if (state.intendedPlaying) {
                     if (platform.useBgControllerRetry) {
                         if (state.bgHiddenWasPlaying || state.resumeOnVisible) {
@@ -2802,6 +2842,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
                         scheduleSync(0);
                     }
                 }
+                // Clear transition flag after delay
+                setTimeout(() => {
+                    state.visibilityTransitionActive = false;
+                }, VISIBILITY_TRANSITION_MS);
             } else {
                 updateLastKnownGoodVT();
                 state.bgTransitionInProgress = true;
@@ -2894,8 +2938,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             });
             video.on("pause", () => {
                 if (startupAutoplayPauseGraceActive()) return;
-                // FIX: Chromium background tab - block automatic pause detection [[9]], [[11]]
+                // FIX: Chromium background tab - aggressive pause blocking [[8]], [[10]]
                 if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
+                if (isVisibilityTransitionActive()) return;
                 if (shouldTreatVisiblePauseAsUserPause()) {
                     state.intendedPlaying = false;
                     state.bufferHoldIntendedPlaying = false;
@@ -2912,6 +2957,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }
     scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
