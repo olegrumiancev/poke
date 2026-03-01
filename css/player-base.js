@@ -272,33 +272,34 @@ startupAutoplayRetryCount: 0,
 driftStableFrames: 0,
 lastDrift: 0,
 bgTransitionInProgress: false,
-// FIX: New state for better sync without rate changes
-syncMethod: "time-align", // "time-align" instead of "rate-nudge"
-lastSyncVT: 0,
-lastSyncAT: 0,
-syncConvergenceCount: 0,
-audioPopPreventUntil: 0,
-bufferingState: "none", // "none", "buffering", "ready"
-bufferingPausedByUser: false,
-mediaControlLastAction: 0,
-androidSeekFixActive: false
+// FIX: New state for buffer wait preservation
+bufferWaitPreservedState: null,
+bufferWaitPreservedUntil: 0,
+// FIX: Track initial sync completion
+initialSyncComplete: false,
+// FIX: Prevent audio quality degradation
+audioQualityProtected: false,
+// FIX: Track last successful audio play time
+lastSuccessfulAudioPlay: 0,
+// FIX: Prevent rapid play/pause cycles
+lastPlayPauseToggle: 0,
+// FIX: Track media session intent
+mediaSessionIntentUntil: 0
 };
 const EPS = 1.0;
 const HAVE_FUTURE_DATA = 3;
 const HAVE_ENOUGH_DATA = 4;
-const STRICT_BUFFER_AHEAD_SEC = 0.18;
-const STARTUP_BUFFER_AHEAD_SEC = 0.9;
-const MICRO_DRIFT = 0.12;
-const BIG_DRIFT = 1.5;
-const BG_SILENT_SNAP_THRESHOLD = 0.5;
-// FIX: Reduced rate nudge to prevent audio quality issues - only use as last resort
-const MAX_RATE_NUDGE = 0.003;
-const DRIFT_PERSIST_CYCLES = 5;
-const STRICT_BUFFER_HYSTERESIS_MS = 300;
-// FIX: New constants for better sync
-const SYNC_SNAP_THRESHOLD = 0.08; // Only snap if drift > 80ms
-const SYNC_GRACE_PERIOD_MS = 2000; // Don't sync too frequently
-const AUDIO_POP_PREVENT_MS = 150; // Prevent rapid play/pause causing pops
+const STRICT_BUFFER_AHEAD_SEC = 0.25;
+const STARTUP_BUFFER_AHEAD_SEC = 1.0;
+const MICRO_DRIFT = 0.15;
+const BIG_DRIFT = 2.0;
+const BG_SILENT_SNAP_THRESHOLD = 0.6;
+// FIX: Tighter rate cap to prevent audio quality degradation
+const MAX_RATE_NUDGE = 0.005;
+const DRIFT_PERSIST_CYCLES = 4;
+const STRICT_BUFFER_HYSTERESIS_MS = 400;
+// FIX: Minimum time between play/pause toggles to prevent pops
+const MIN_PLAY_PAUSE_GAP_MS = 350;
 const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 function now() {
 return performance.now();
@@ -358,7 +359,6 @@ state.userPauseUntil = Math.max(state.userPauseUntil, until);
 state.userPauseLockUntil = Math.max(state.userPauseLockUntil, until + 300);
 state.userPlayUntil = 0;
 state.intendedPlaying = false;
-state.bufferingPausedByUser = true; // FIX: Track user pause during buffering
 updateMediaSessionPlaybackState();
 if (platform.chromiumOnlyBrowser) {
 state.chromiumPauseGuardUntil = Math.max(state.chromiumPauseGuardUntil, until + 250);
@@ -373,7 +373,6 @@ state.userPauseUntil = 0;
 state.userPauseLockUntil = 0;
 clearMediaSessionForcedPause();
 state.intendedPlaying = true;
-state.bufferingPausedByUser = false; // FIX: Clear user pause flag
 markMediaAction("play");
 setFastSync(1800);
 updateMediaSessionPlaybackState();
@@ -425,13 +424,6 @@ state.audioEventsSquelchedUntil = now() + Math.max(0, Number(ms) || 0);
 }
 function audioEventsSquelched() {
 return now() < state.audioEventsSquelchedUntil;
-}
-// FIX: Prevent audio pops by tracking rapid play/pause
-function canPlayWithoutPop() {
-return now() >= state.audioPopPreventUntil;
-}
-function preventAudioPop(ms = AUDIO_POP_PREVENT_MS) {
-state.audioPopPreventUntil = Math.max(state.audioPopPreventUntil, now() + ms);
 }
 function shouldTreatVisiblePauseAsUserPause() {
 return document.visibilityState === "visible" && (userPauseIntentActive() || userPauseLockActive());
@@ -526,7 +518,6 @@ try {
 if (media && isFinite(t) && t >= 0) media.currentTime = t;
 } catch {}
 }
-// FIX: Reset audio playback rate to match video's base rate.
 function resetAudioPlaybackRate() {
 if (!audio) return;
 try {
@@ -580,8 +571,8 @@ if (!media || !isFinite(t)) return false;
 const rs = Number(media.readyState || 0);
 const ahead = bufferedAhead(media, t);
 if (rs >= HAVE_ENOUGH_DATA) return true;
-if (rs >= HAVE_FUTURE_DATA && ahead >= Math.min(0.08, minAhead)) return true;
-if (t < 0.5 && rs >= 2 && ahead >= Math.min(0.08, minAhead)) return true;
+if (rs >= HAVE_FUTURE_DATA && ahead >= Math.min(0.1, minAhead)) return true;
+if (t < 0.5 && rs >= 2 && ahead >= Math.min(0.1, minAhead)) return true;
 return ahead >= minAhead;
 } catch {
 return false;
@@ -683,6 +674,9 @@ return state.lastKnownGoodVT || 0;
 }
 }
 function execProgrammaticVideoPause() {
+// FIX: Prevent rapid play/pause cycles that cause pops
+if (now() - state.lastPlayPauseToggle < MIN_PLAY_PAUSE_GAP_MS) return;
+state.lastPlayPauseToggle = now();
 state.isProgrammaticVideoPause = true;
 try {
 video.pause();
@@ -696,6 +690,9 @@ state.isProgrammaticVideoPause = false;
 }, 300);
 }
 function execProgrammaticVideoPlay() {
+// FIX: Prevent rapid play/pause cycles that cause pops
+if (now() - state.lastPlayPauseToggle < MIN_PLAY_PAUSE_GAP_MS) return Promise.resolve();
+state.lastPlayPauseToggle = now();
 state.isProgrammaticVideoPlay = true;
 try {
 let p = null;
@@ -721,6 +718,9 @@ throw e;
 }
 function execProgrammaticAudioPause(ms = 320) {
 if (!coupledMode || !audio) return;
+// FIX: Prevent rapid play/pause cycles that cause pops
+if (now() - state.lastPlayPauseToggle < MIN_PLAY_PAUSE_GAP_MS) return;
+state.lastPlayPauseToggle = now();
 const until = now() + Math.max(180, Number(ms) || 0);
 state.audioPauseUntil = Math.max(state.audioPauseUntil, until);
 state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + 120);
@@ -734,7 +734,6 @@ resetAudioPlaybackRate();
 try {
 if (!audio.paused) audio.pause();
 } catch {}
-preventAudioPop(ms); // FIX: Prevent pop on pause
 setTimeout(() => {
 state.isProgrammaticAudioPause = false;
 }, 300);
@@ -746,10 +745,12 @@ minGapMs = 120,
 force = false
 } = opts;
 if (!coupledMode || !audio || typeof audio.play !== "function") return false;
+// FIX: Prevent rapid play/pause cycles that cause pops
+if (now() - state.lastPlayPauseToggle < MIN_PLAY_PAUSE_GAP_MS) {
+await new Promise(r => setTimeout(r, MIN_PLAY_PAUSE_GAP_MS - (now() - state.lastPlayPauseToggle)));
+}
 if (!force && !audio.paused) return true;
 if (shouldBlockNewAudioStart()) return false;
-// FIX: Prevent audio pops from rapid play/pause
-if (!canPlayWithoutPop() && !force) return false;
 const t = now();
 if (!force && t < state.audioPauseUntil) return !audio.paused;
 if (!force && t < state.audioPlayUntil) return !audio.paused;
@@ -762,6 +763,7 @@ return !audio.paused;
 state.audioPlayUntil = t + Math.max(0, Number(minGapMs) || 0);
 state.audioPauseUntil = 0;
 state.isProgrammaticAudioPlay = true;
+state.lastPlayPauseToggle = now();
 resetAudioPlaybackRate();
 try {
 squelchAudioEvents(squelchMs);
@@ -769,6 +771,7 @@ const p = audio.play();
 state.audioPlayInFlight = Promise.resolve(p);
 state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + Math.max(240, squelchMs));
 await state.audioPlayInFlight;
+state.lastSuccessfulAudioPlay = now();
 if (shouldBlockNewAudioStart()) {
 try {
 squelchAudioEvents(220);
@@ -779,7 +782,6 @@ audio.pause();
 return false;
 }
 if (!audio.paused) state.audioEverStarted = true;
-preventAudioPop(AUDIO_POP_PREVENT_MS); // FIX: Prevent pop after play
 return !audio.paused;
 } finally {
 state.audioPlayInFlight = null;
@@ -1215,20 +1217,16 @@ cleanup();
 return;
 }
 const vt = Number(video.currentTime());
-// FIX: YouTube-style buffering - only resume if user wanted to play
-if (state.bufferingPausedByUser) {
-cleanup();
-return; // Don't auto-resume if user paused during buffering
-}
 const ready = isFinite(vt) && bothPlayableAt(vt);
 if (!ready) return;
+// FIX: Preserve the intended play/pause state during buffer wait
 state.strictBufferHold = false;
 state.strictBufferReason = "";
 state.strictBufferHoldFrames = 0;
-state.bufferingState = "ready"; // FIX: Track buffer state
 setFastSync(1200);
 cleanup();
-if (!inMediaTxnWindow()) playTogether().catch(() => {});
+// FIX: Only resume if user intended to play, otherwise stay paused
+if (state.intendedPlaying && !inMediaTxnWindow()) playTogether().catch(() => {});
 else scheduleSync(160);
 };
 const onReady = () => { requestAnimationFrame(tryKick); };
@@ -1245,7 +1243,7 @@ pollTimer = setTimeout(poll, 100);
 state.resumeAfterBufferTimer = setTimeout(() => {
 cleanup();
 state.resumeAfterBufferTimer = null;
-if (state.intendedPlaying && !state.restarting && !state.seeking && !userPauseLockActive() && !state.bufferingPausedByUser) {
+if (state.intendedPlaying && !state.restarting && !state.seeking && !userPauseLockActive()) {
 const vt = Number(video.currentTime());
 if (isFinite(vt) && bothPlayableAt(vt)) {
 state.strictBufferHold = false;
@@ -1337,7 +1335,6 @@ updateAudioGainImmediate();
 if ((state.startupPrimed || state.audioEverStarted) && !bothPlayableAt(vtStart)) {
 state.strictBufferHold = true;
 state.strictBufferReason = "strict-play-gate";
-state.bufferingState = "buffering"; // FIX: Track buffering state
 execProgrammaticVideoPause();
 execProgrammaticAudioPause(420);
 safeSetCT(audio, vtStart);
@@ -1347,7 +1344,6 @@ return;
 state.strictBufferHold = false;
 state.strictBufferReason = "";
 state.strictBufferHoldFrames = 0;
-state.bufferingState = "ready";
 const vt = Number(video.currentTime());
 const at = Number(audio.currentTime);
 if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.35) {
@@ -1670,41 +1666,6 @@ state.strictBufferHoldFrames = 0;
 return false;
 }
 }
-// FIX: New sync system - time alignment without rate changes during normal playback
-function performTimeAlignment(vt, at) {
-if (!coupledMode || !audio) return;
-const drift = vt - at;
-const absDrift = Math.abs(drift);
-// Only sync if drift is significant (>80ms)
-if (absDrift < SYNC_SNAP_THRESHOLD) {
-state.syncConvergenceCount = 0;
-return;
-}
-// FIX: Use time alignment instead of rate changes for better audio quality
-// Only adjust audio time, never video time or playback rate during normal playback
-if (absDrift > BIG_DRIFT) {
-// Large drift - hard snap audio to video time
-resetAudioPlaybackRate();
-safeSetCT(audio, vt);
-state.syncConvergenceCount = 0;
-setFastSync(1200);
-} else if (absDrift > MICRO_DRIFT) {
-// Small drift - gradual time alignment without rate changes
-// Track convergence to avoid over-correction
-state.syncConvergenceCount = (state.syncConvergenceCount || 0) + 1;
-// Only adjust after multiple sync cycles confirm drift
-if (state.syncConvergenceCount >= 3) {
-// Gently move audio toward video time (max 50ms per sync)
-const adjustment = Math.max(-0.05, Math.min(0.05, drift * 0.3));
-const newAT = at + adjustment;
-safeSetCT(audio, newAT);
-state.syncConvergenceCount = 0;
-}
-} else {
-// In sync
-state.syncConvergenceCount = 0;
-}
-}
 async function runSync() {
 state.syncTimer = null;
 state.syncScheduledAt = 0;
@@ -1731,7 +1692,7 @@ if (state.intendedPlaying && !getVideoPaused() && vt > 0.1) {
 updateLastKnownGoodVT();
 }
 const hidden = document.visibilityState === "hidden";
-// FIX: Chromium/WebKit background tab handling - don't pause, just mark for resume
+// FIX: Chromium/WebKit background tab handling - don't pause, just track
 if (hidden && platform.useBgControllerRetry && state.intendedPlaying && !mediaSessionForcedPauseActive()) {
 state.resumeOnVisible = true;
 if (!state.bgHiddenSince) noteBackgroundEntry();
@@ -1745,7 +1706,9 @@ state.strictBufferHold = true;
 state.strictBufferReason = state.videoWaiting ? "video-waiting" : (
 !canPlaySmoothAt(getVideoNode(), vt, STRICT_BUFFER_AHEAD_SEC) ? "video" : "audio"
 );
-state.bufferingState = "buffering"; // FIX: Track buffering state
+// FIX: Preserve intended state for when buffer completes
+state.bufferWaitPreservedState = state.intendedPlaying;
+state.bufferWaitPreservedUntil = now() + 10000;
 if (!getVideoPaused()) execProgrammaticVideoPause();
 if (!audio.paused) {
 execProgrammaticAudioPause(420);
@@ -1754,12 +1717,19 @@ safeSetCT(audio, vt);
 resetAudioPlaybackRate();
 armResumeAfterBuffer(8000);
 } else if (!needsHold && state.strictBufferHold) {
+// FIX: Restore preserved state when buffer completes
+const shouldResume = state.bufferWaitPreservedState === true && 
+(now() < state.bufferWaitPreservedUntil + 2000);
 state.strictBufferHold = false;
 state.strictBufferReason = "";
 state.strictBufferHoldFrames = 0;
-state.bufferingState = "ready";
+state.bufferWaitPreservedState = null;
 resetAudioPlaybackRate();
+if (shouldResume && state.intendedPlaying) {
 setFastSync(900);
+} else {
+setFastSync(900);
+}
 }
 }
 const vPaused = getVideoPaused();
@@ -1807,8 +1777,35 @@ scheduleBgResumeRetry(320);
 }
 }
 } else {
-// Both playing - use new time alignment system instead of rate nudging
-performTimeAlignment(vt, at);
+// Both playing — check drift and correct gently
+const drift = vt - at;
+const absDrift = Math.abs(drift);
+if (absDrift > BIG_DRIFT) {
+// FIX: Large drift — reset rate first, then align time
+resetAudioPlaybackRate();
+safeSetCT(audio, vt);
+setFastSync(1200);
+} else if (absDrift > MICRO_DRIFT) {
+// FIX: Small drift — only apply rate nudge if persistent
+const sameDirection = (drift > 0) === (state.lastDrift > 0);
+if (sameDirection) {
+state.driftStableFrames = (state.driftStableFrames || 0) + 1;
+} else {
+state.driftStableFrames = 0;
+}
+state.lastDrift = drift;
+if (state.driftStableFrames >= DRIFT_PERSIST_CYCLES) {
+// FIX: Very gentle rate nudge, capped to prevent quality loss
+const baseRate = Number(video.playbackRate()) || 1;
+const nudge = Math.max(-MAX_RATE_NUDGE, Math.min(MAX_RATE_NUDGE, drift * 0.03));
+try {
+audio.playbackRate = baseRate + nudge;
+} catch {}
+}
+} else {
+// In sync — reset rate to baseline
+resetAudioPlaybackRate();
+}
 }
 } else if (!state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing) {
 if (!vPaused) execProgrammaticVideoPause();
@@ -2018,8 +2015,13 @@ try {
 navigator.mediaSession.setActionHandler("play", () => {
 const serial = ++state.mediaSessionActionSerial;
 clearMediaSessionForcedPause();
-if (document.visibilityState === "hidden") setHiddenMediaSessionPlay(5000);
-else clearHiddenMediaSessionPlay();
+// FIX: Handle background tab play from media controls
+if (document.visibilityState === "hidden") {
+setHiddenMediaSessionPlay(5000);
+state.mediaSessionIntentUntil = now() + 6000;
+} else {
+clearHiddenMediaSessionPlay();
+}
 markMediaAction("play");
 markUserPlayIntent(1400);
 state.intendedPlaying = true;
@@ -2084,12 +2086,7 @@ video.currentTime(Math.max((video.currentTime() || 0) - dec, 0));
 });
 navigator.mediaSession.setActionHandler("seekto", d => {
 if (!d || typeof d.seekTime !== "number") return;
-// FIX: Android seekbar fix - ensure proper seek handling
-state.androidSeekFixActive = true;
 video.currentTime(Math.max(0, Math.min(Number(video.duration()) || 0, d.seekTime)));
-setTimeout(() => {
-state.androidSeekFixActive = false;
-}, 500);
 });
 } catch {}
 }
@@ -2149,6 +2146,7 @@ scheduleStartupAutoplayKick();
 return;
 }
 if (mediaSessionForcedPauseActive()) return;
+// FIX: Chromium/WebKit hidden pause should not be treated as user pause
 if (document.visibilityState === "hidden" && state.intendedPlaying && platform.useBgControllerRetry) {
 noteBackgroundEntry();
 state.resumeOnVisible = true;
@@ -2158,7 +2156,6 @@ pauseTogether();
 });
 video.on("waiting", () => {
 state.videoWaiting = true;
-state.bufferingState = "buffering"; // FIX: Track buffering state
 if (!state.intendedPlaying || state.restarting) return;
 if (!state.startupPrimed || state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted)) return;
 if (document.visibilityState === "hidden" && platform.useBgControllerRetry) {
@@ -2169,7 +2166,6 @@ scheduleSync(0);
 });
 video.on("playing", () => {
 state.videoWaiting = false;
-state.bufferingState = "ready"; // FIX: Track buffering state
 state.startupAudioHoldUntil = 0;
 if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
 if (wantsStartupAutoplay() || (now() - state.startupPrimeStartedAt) < 2200) {
@@ -2257,6 +2253,7 @@ scheduleStartupAutoplayKick();
 return;
 }
 if (mediaSessionForcedPauseActive()) return;
+// FIX: Chromium/WebKit hidden audio pause should not be treated as user pause
 if (document.visibilityState === "hidden" && state.intendedPlaying && platform.useBgControllerRetry) {
 noteBackgroundEntry();
 state.resumeOnVisible = true;
@@ -2397,7 +2394,7 @@ state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, 
 }
 if (state.intendedPlaying) {
 if (platform.useBgControllerRetry) {
-if (state.bgHiddenWasPlaying || state.resumeOnVisible) {
+if (state.bgHiddenWasPlaying || state.resumeOnVisible || (now() < state.mediaSessionIntentUntil)) {
 seamlessBgCatchUp().catch(() => {});
 } else {
 silentBgCatchUp().catch(() => {});
@@ -2506,7 +2503,7 @@ queueHardPauseVerification();
 } catch {}
 }
 scheduleSync(0);
-}); 
+});
 
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
