@@ -33,12 +33,12 @@ document.addEventListener("DOMContentLoaded", () => {
   try { videoEl.setAttribute("playsinline", ""); videoEl.setAttribute("webkit-playsinline", ""); } catch {}
   try { videoEl.loop = false; videoEl.removeAttribute("loop"); } catch {}
 
-  // ── Platform ─────────────────────────────────────────────────────────────
+  // ── Platform ──────────────────────────────────────────────────────────────
   const P = (() => {
-    const ff   = !!CSS.supports?.("-moz-orient", "horizontal");
-    const ch   = !ff && typeof window.chrome !== "undefined" && !!CSS.supports?.("overflow", "overlay");
-    const ios  = !ff && typeof GestureEvent !== "undefined" && navigator.maxTouchPoints > 1;
-    let   mob  = false;
+    const ff  = !!CSS.supports?.("-moz-orient", "horizontal");
+    const ch  = !ff && typeof window.chrome !== "undefined" && !!CSS.supports?.("overflow", "overlay");
+    const ios = !ff && typeof GestureEvent !== "undefined" && navigator.maxTouchPoints > 1;
+    let mob   = false;
     try {
       mob = typeof navigator.userAgentData?.mobile === "boolean"
         ? navigator.userAgentData.mobile
@@ -61,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try { audio.preload = "auto"; audio.load(); } catch {}
   }
 
-  // ── Volume fades via RAF (no Web Audio API) ───────────────────────────────
+  // ── RAF volume fades (no Web Audio API) ───────────────────────────────────
   let fadeRaf    = null;
   let fadeTarget = 1;
 
@@ -107,40 +107,57 @@ document.addEventListener("DOMContentLoaded", () => {
   const fadeOut = (ms = 100, cb) => fadeVolTo(0, ms, cb);
   const silNow  = () => setVolNow(0);
 
+  // FIX — Race condition: pauseBoth() fades out over 80ms then calls doAPause().
+  // If the user hits play again before those 80ms are up, the fade callback fires
+  // after playBoth() has already started audio, instantly killing it.
+  // condAPause() checks st.intended at the moment of execution; if play was
+  // requested in the meantime it is a no-op.
+  function condAPause() {
+    if (!st.intended) doAPause();
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   const st = {
-    intended      : false,   // desired playback state
-    seeking       : false,   // user/MS seek in progress
-    primed        : !coupled, // both tracks buffered enough
-    firstPlay     : false,
-    userMuted     : false,
-    // Background tab
+    intended         : false,
+    seeking          : false,
+    primed           : !coupled,
+    firstPlay        : false,
+    userMuted        : false,
     wasPlayingOnHide : false,
     bgHiddenAt       : 0,
     bgBaseVT         : 0,
     bgBaseRate       : 1,
-    bgResync         : false, // bg-resync is in progress; skip seeking/seeked audio ops
-    // Sync
-    syncId        : null,
-    driftFrames   : 0,
-    nudging       : false,
-    // Autoplay retries
-    autoplayTries : 0,
-    // Focus/blur
-    focusFlag     : false,
+    bgResync         : false,
+    bgKeepAudio      : false,   // during bg-resync, audio was still running
+    syncId           : null,
+    driftFrames      : 0,
+    nudging          : false,
+    autoplayTries    : 0,
   };
 
   const NOW = () => performance.now();
 
   // ── Programmatic operation flags ──────────────────────────────────────────
-  // These let event handlers know "we triggered this, don't re-handle it."
-  // ROOT CAUSE FIX: without these, the sync loop's play() calls look like
-  // user-initiated plays, causing event handlers to fight with themselves.
+  // Let event handlers distinguish our own calls from user-initiated events.
   let pgPlay  = false;
   let pgPause = false;
+  function markPgPlay()  { pgPlay  = true; setTimeout(() => { pgPlay  = false; }, 500); }
+  function markPgPause() { pgPause = true; setTimeout(() => { pgPause = false; }, 500); }
 
-  function markPgPlay()  { pgPlay  = true; setTimeout(() => { pgPlay  = false; }, 400); }
-  function markPgPause() { pgPause = true; setTimeout(() => { pgPause = false; }, 400); }
+  // FIX — Chromium desktop alt-tab:
+  // When you alt-tab away, Chrome auto-pauses the muted video element.
+  // The "pause" event fires while visibilityState is STILL "visible"
+  // (visibilitychange hasn't fired yet), so our pause handler can't detect it
+  // as a background auto-pause and mistakenly calls pauseBoth(), killing audio.
+  // We set this flag on "blur" so the next pause event is ignored.
+  let suppressNextPause   = false;
+  let suppressPauseClear  = null;
+
+  function armSuppressPause() {
+    suppressNextPause = true;
+    clearTimeout(suppressPauseClear);
+    suppressPauseClear = setTimeout(() => { suppressNextPause = false; }, 1500);
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function vPaused() { try { return !!video.paused(); } catch {} return !!videoEl.paused; }
@@ -170,7 +187,7 @@ document.addEventListener("DOMContentLoaded", () => {
       window.forceLoop === true;
   }
 
-  // ── Low-level play/pause (programmatic) ───────────────────────────────────
+  // ── Low-level element control ─────────────────────────────────────────────
   let vPlayProm = null;
   let aPlayProm = null;
 
@@ -185,9 +202,38 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally { vPlayProm = null; }
   }
 
+  // FIX — "audio doesn't play after seeking to beginning":
+  // When audio.currentTime is set to 0 (or any position), audio.seeking becomes
+  // true for a moment. Calling play() while seeking can result in the play()
+  // promise resolving but audio silently not starting on some Chrome versions.
+  // We wait for the audio's own "seeked" event to confirm the seek finished
+  // before calling play(). Also wait for readyState >= 2 if needed.
   async function doAPlay() {
     if (!coupled || !audio) return;
     if (aPlayProm) { try { await aPlayProm; } catch {} }
+    if (!audio.paused) return;
+
+    // Wait for any pending seek on the audio element to complete first
+    if (audio.seeking) {
+      await new Promise(resolve => {
+        const done = () => { audio.removeEventListener("seeked", done); resolve(); };
+        const t = setTimeout(done, 2000);
+        audio.addEventListener("seeked", () => { clearTimeout(t); done(); }, { once: true });
+      });
+    }
+    if (!audio.paused) return;
+
+    // Wait for enough data to start playback
+    if ((audio.readyState || 0) < 2) {
+      await new Promise(resolve => {
+        const done = () => { audio.removeEventListener("canplay", done); resolve(); };
+        const t = setTimeout(done, 3000);
+        audio.addEventListener("canplay", () => { clearTimeout(t); done(); }, { once: true, passive: true });
+      });
+    }
+    if (!audio.paused) return;
+    if (!st.intended) return;
+
     try { aPlayProm = audio.play(); await aPlayProm; }
     catch {} finally { aPlayProm = null; }
   }
@@ -200,19 +246,22 @@ document.addEventListener("DOMContentLoaded", () => {
     if (coupled && audio) try { audio.pause(); } catch {}
   }
 
-  // ── High-level play/pause ─────────────────────────────────────────────────
+  // ── High-level playback control ───────────────────────────────────────────
 
-  // Dedup guard: prevents the sync loop from issuing overlapping play() calls.
-  // NOTE: This is intentionally NOT checked in the "pause" event handler —
-  // that was the root cause of "can't pause on same tab" (old bug).
+  // playCallUntil: prevents sync loop from firing overlapping play() calls.
+  // Force flag bypasses this for user actions and MediaSession.
   let playCallUntil = 0;
 
-  async function playBoth() {
+  async function playBoth(force = false) {
     if (!st.intended) return false;
-    if (NOW() < playCallUntil) return !vPaused();
-    playCallUntil = NOW() + 300;
+    if (!force && NOW() < playCallUntil) return !vPaused();
+    playCallUntil = NOW() + 150;
 
-    if (coupled && Math.abs(aTime() - vTime()) > 0.25) setATime(vTime());
+    // Align audio to video before starting
+    if (coupled) {
+      const drift = Math.abs(aTime() - vTime());
+      if (drift > 0.25) setATime(vTime());
+    }
 
     if (vPaused()) await doVPlay();
     if (!st.intended) return false;
@@ -232,13 +281,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function pauseBoth(fromUser = false) {
     st.intended = false;
     if (fromUser) st.wasPlayingOnHide = false;
-    if (coupled) fadeOut(80, () => doAPause());
+    // condAPause instead of doAPause: if play is requested before the 80ms
+    // fade completes, condAPause becomes a no-op and audio keeps playing.
+    if (coupled) fadeOut(80, condAPause);
     doVPause();
     stopSync();
     updateMSState();
   }
 
-  // ── Sync loop (250 ms) ────────────────────────────────────────────────────
+  // ── Sync loop ─────────────────────────────────────────────────────────────
   function startSync() { if (!st.syncId) st.syncId = setInterval(syncTick, 250); }
   function stopSync()  { if (st.syncId) { clearInterval(st.syncId); st.syncId = null; } }
 
@@ -275,9 +326,13 @@ document.addEventListener("DOMContentLoaded", () => {
         else st.driftFrames = Math.max(0, st.driftFrames - 1);
       }
     } else if (!vp && ap && coupled) {
-      if (aReady()) { setATime(vt); await doAPlay(); if (!audio.paused) fadeIn(150); }
+      if (aReady()) {
+        setATime(vt);
+        await doAPlay();
+        if (!audio.paused) fadeIn(150);
+      }
     } else if (vp && !ap && coupled) {
-      fadeOut(80, () => doAPause());
+      fadeOut(80, condAPause);
     } else if (vp && ap && st.intended && NOW() > playCallUntil && bothReady()) {
       await playBoth();
     }
@@ -329,12 +384,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (st.firstPlay) return;
       if (!st.primed && !bothReady()) { scheduleAutoplay(); return; }
       st.primed = true; st.intended = true;
-      const ok = await playBoth().catch(() => false);
+      const ok = await playBoth(true).catch(() => false);
       if (!ok && !st.firstPlay) scheduleAutoplay();
     }, delay);
   }
 
-  // ── VideoJS event handlers ────────────────────────────────────────────────
+  // ── VideoJS events ────────────────────────────────────────────────────────
 
   video.ready(() => {
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
@@ -352,82 +407,95 @@ document.addEventListener("DOMContentLoaded", () => {
     syncTitle();
   });
 
-  // User (or browser autoplay) started the video
   video.on("play", () => {
-    if (pgPlay)       return; // we triggered this, already handled in playBoth
-    if (pgPause)      return; // mid-pause sequence, ignore
-    if (st.bgResync)  return; // bg-resync owns this
-    if (st.seeking)   return;
+    if (pgPlay || pgPause || st.bgResync || st.seeking) return;
     st.intended = true;
     if (!st.primed && coupled) { tryPrime(); return; }
-    playBoth().catch(() => {});
+    playBoth(true).catch(() => {});
   });
 
-  // User paused
-  // FIX: NO playCallUntil guard here. That was the bug causing "can't pause on same tab".
-  // We use pgPause/pgPlay flags instead to filter out our own programmatic calls.
+  // FIX: suppressNextPause handles the Chromium alt-tab false-pause.
+  // The check `visibilityState !== "visible"` alone is NOT enough because on
+  // desktop Chromium the auto-pause fires while visibilityState is still "visible".
   video.on("pause", () => {
-    if (pgPause)     return; // we triggered this
-    if (pgPlay)      return; // mid-play sequence, ignore (e.g. Chrome fires pause during play() on slow connection)
-    if (st.bgResync) return; // bg-resync owns this
-    if (st.seeking)  return;
-    // Chromium/iOS auto-pause muted video in background tabs — ignore it here,
-    // handled exclusively by the visibilitychange handler.
+    if (pgPause || pgPlay || st.bgResync || st.seeking) return;
+    if (suppressNextPause) { suppressNextPause = false; clearTimeout(suppressPauseClear); return; }
     if (document.visibilityState !== "visible" && (P.chromium || P.ios)) return;
     pauseBoth(true);
   });
 
   video.on("waiting", () => {
     if (!st.intended || !coupled) return;
-    if (audio && !audio.paused) fadeOut(60, () => doAPause());
+    if (audio && !audio.paused) fadeOut(60, condAPause);
   });
 
+  // FIX: "playing" event fires when playBoth() is in progress (pgPlay=true).
+  // Don't start audio from here in that case — playBoth() handles it itself
+  // after doVPlay() resolves. Starting audio from both places causes a
+  // double-play / AbortError race.
   video.on("playing", () => {
-    if (!st.intended) return;
+    if (!st.intended || pgPlay) return;
     if (coupled) {
-      if (audio?.paused) { setATime(vTime()); doAPlay().then(() => { if (!audio.paused) fadeIn(180); }).catch(() => {}); }
-      else fadeIn(180);
+      if (audio?.paused) {
+        setATime(vTime());
+        doAPlay().then(() => { if (!audio.paused) fadeIn(180); }).catch(() => {});
+      } else {
+        fadeIn(180);
+      }
     }
     startSync(); updateMSState();
   });
 
-  // Seek started (user dragged scrubber or MediaSession seekto)
   video.on("seeking", () => {
-    if (st.bgResync) return; // bg-resync handles its own seeking
+    if (st.bgResync) return;
     st.seeking = true;
     silNow();
     if (coupled) doAPause();
   });
 
-  // Seek finished
   video.on("seeked", () => {
     if (st.bgResync) {
-      // bg-resync triggered this seek; resume both cleanly
-      st.bgResync = false;
+      const keepAudio   = st.bgKeepAudio;
+      st.bgResync       = false;
+      st.bgKeepAudio    = false;
       const vt = vTime();
-      if (coupled) setATime(vt);
+      if (!keepAudio && coupled) setATime(vt);
       resetNudge();
       if (st.intended) {
-        doVPlay().then(() => {
-          if (!vPaused() && st.intended && coupled) {
-            if (audio.paused) { doAPlay().then(() => { if (!audio.paused) fadeIn(200); }).catch(() => {}); }
-            else fadeIn(200);
-          }
-          startSync();
-        }).catch(() => { st.bgResync = false; });
+        doVPlay()
+          .then(() => {
+            if (!vPaused() && st.intended) {
+              if (coupled) {
+                if (keepAudio) {
+                  // Audio never stopped; just restore volume
+                  const tg = targetVol();
+                  if (Math.abs((audio?.volume ?? 0) - tg) > 0.05) fadeIn(150);
+                } else {
+                  if (audio.paused) {
+                    doAPlay().then(() => { if (!audio.paused) fadeIn(200); }).catch(() => {});
+                  } else {
+                    fadeIn(200);
+                  }
+                }
+              }
+              startSync(); updateMSState();
+            }
+          })
+          .catch(() => { st.bgResync = false; st.bgKeepAudio = false; });
       }
       return;
     }
+
     const vt = vTime();
     if (coupled) setATime(vt);
     st.seeking = false;
     resetNudge();
-    if (st.intended) setTimeout(() => playBoth().catch(() => {}), 60);
+    if (st.intended) setTimeout(() => playBoth(true).catch(() => {}), 60);
   });
 
   video.on("ended", () => {
     if (isLoop()) { restartLoop().catch(() => {}); return; }
-    if (coupled) fadeOut(100, () => doAPause());
+    if (coupled) fadeOut(100, condAPause);
     st.intended = false;
     stopSync(); updateMSState();
   });
@@ -456,33 +524,38 @@ document.addEventListener("DOMContentLoaded", () => {
   videoEl.addEventListener("canplay",    tryPrime, { passive: true });
   videoEl.addEventListener("loadeddata", tryPrime, { passive: true });
 
-  // ── Loop ──────────────────────────────────────────────────────────────────
+  // ── Loop restart ──────────────────────────────────────────────────────────
   async function restartLoop() {
     silNow(); doAPause(); doVPause();
     await new Promise(r => setTimeout(r, 40));
     setVTime(0); if (coupled) setATime(0);
     st.intended = true;
-    await playBoth().catch(() => {});
+    await playBoth(true).catch(() => {});
   }
 
   // ── Background tab handling ───────────────────────────────────────────────
   //
-  // Chromium auto-pauses muted/silent <video> in background tabs.
-  // Our <video> is silent (audio comes from <audio> element) so it always
-  // gets paused. The <audio> element keeps running since it has real audio.
+  // Chromium auto-pauses silent/muted <video> in background tabs. Our <video>
+  // is muted (audio comes from <audio>), so Chrome always pauses it.
+  // The <audio> element (with real audio) keeps playing in the background.
   //
-  // Strategy:
-  //   On hide  → snapshot position, stop sync loop
-  //   On show  → if video is close enough to audio, just resume it (seamless).
-  //              If video drifted far, do a silent seek then resume.
-  //   Critical: minimise or eliminate the time audio is silent/paused.
+  // Three cases on return:
+  //  A. Video auto-paused at correct position, audio still running
+  //     → resume video only, never touch audio. Zero perceptible gap.
+  //  B. Video drifted but audio still running
+  //     → seek video to audio's current time, then resume video only.
+  //  C. Both paused (OS media controls, phone call, etc.)
+  //     → seek both, silence briefly, resume both.
   //
   document.addEventListener("visibilitychange", () => {
     const visible = document.visibilityState === "visible";
 
     if (!visible) {
-      st.wasPlayingOnHide = st.intended && !vPaused();
-      if (st.wasPlayingOnHide) {
+      // Use st.intended as the truth — Chromium may have already auto-paused
+      // the video element before this fires (especially on desktop alt-tab),
+      // so vPaused() can't be trusted here.
+      st.wasPlayingOnHide = st.intended;
+      if (st.intended) {
         st.bgHiddenAt = NOW();
         st.bgBaseVT   = vTime();
         st.bgBaseRate = vRate();
@@ -491,69 +564,74 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    // ── Tab is now visible ──────────────────────────────────────────────────
     if (!st.intended) return;
-
-    if (!st.wasPlayingOnHide) {
-      startSync(); // wasn't playing when hidden, just restart sync
-      return;
-    }
+    if (!st.wasPlayingOnHide) { startSync(); return; }
     st.wasPlayingOnHide = false;
 
-    // Was audio (which kept running) paused by the OS/browser too?
     const audioPausedInBg = coupled && !!audio?.paused;
-
-    // Best position estimate
-    const audioNow   = coupled ? aTime() : NaN;
-    const elapsed    = (NOW() - st.bgHiddenAt) / 1000;
-    const target     = clamp(
+    const audioNow        = coupled ? aTime() : NaN;
+    const elapsed         = (NOW() - st.bgHiddenAt) / 1000;
+    const target          = clamp(
       !audioPausedInBg && isFinite(audioNow) && audioNow > 0
-        ? audioNow                                   // audio kept running → use its time
-        : st.bgBaseVT + elapsed * st.bgBaseRate      // audio also paused → extrapolate
+        ? audioNow
+        : st.bgBaseVT + elapsed * st.bgBaseRate
     );
-    const videoNow   = vTime();
+    const videoNow    = vTime();
     const videoPaused = vPaused();
-    const closeEnough = Math.abs(videoNow - target) < 0.4;
+    const closeEnough = Math.abs(videoNow - target) < 0.5;
+
+    // Case C: audio also paused
+    if (audioPausedInBg) {
+      st.bgResync    = true;
+      st.bgKeepAudio = false;
+      silNow();
+      setVTime(target);
+      if (coupled) setATime(target);
+      setTimeout(() => {
+        if (st.bgResync) { st.bgResync = false; st.bgKeepAudio = false; if (st.intended) playBoth(true).catch(() => {}); }
+      }, 2500);
+      return;
+    }
+
+    // Cases A & B: audio is still running. Do NOT touch it.
 
     if (!videoPaused && closeEnough) {
-      // Video wasn't even paused (Firefox, etc.) — just restart sync
-      if (audioPausedInBg && coupled) {
-        setATime(videoNow);
-        doAPlay().then(() => { if (!audio.paused) fadeIn(150); }).catch(() => {});
-      }
+      // Non-Chromium: video kept playing. Sync loop restart is enough.
       startSync();
       return;
     }
 
-    if (videoPaused && closeEnough && !audioPausedInBg) {
-      // Video was paused by Chrome BUT it's at the right position.
-      // Audio is still running. Just resume video — NEVER pause the audio.
-      // This is the most common Chromium case and should be completely seamless.
-      st.bgResync = true;
+    if (videoPaused && closeEnough) {
+      // Case A (Chromium): video auto-paused at correct time.
+      // Resume video with a direct play(), audio plays on uninterrupted.
+      st.bgResync    = true;
+      st.bgKeepAudio = true;
       videoEl.play()
         .then(() => {
-          st.bgResync = false;
-          if (!vPaused() && st.intended) { if (!fadeRaf) fadeIn(150); startSync(); updateMSState(); }
+          st.bgResync    = false;
+          st.bgKeepAudio = false;
+          if (st.intended) {
+            const tg = targetVol();
+            if (Math.abs((audio?.volume ?? 0) - tg) > 0.05) fadeIn(150);
+            startSync(); updateMSState();
+          }
         })
-        .catch(() => { st.bgResync = false; });
+        .catch(() => { st.bgResync = false; st.bgKeepAudio = false; });
       return;
     }
 
-    // Video drifted or both paused — need a seek.
-    // We silence audio briefly, seek both, then resume.
-    st.bgResync = true;
-    silNow();
-    if (coupled && !audioPausedInBg) doAPause();
-    // setVTime fires video.on("seeking") which is skipped when bgResync=true,
-    // then video.on("seeked") which handles the resume (see handler above).
+    // Case B: video drifted. Seek video to audio's position; audio untouched.
+    st.bgResync    = true;
+    st.bgKeepAudio = true;
     setVTime(target);
-    if (coupled) setATime(target);
-    // Safety: if seeked doesn't fire within 2s, clear the flag
-    setTimeout(() => { if (st.bgResync) { st.bgResync = false; if (st.intended) playBoth().catch(() => {}); } }, 2000);
+    // video.on("seeked") → bgResync handler → doVPlay(), audio untouched.
+    setTimeout(() => {
+      if (st.bgResync) { st.bgResync = false; st.bgKeepAudio = false; if (st.intended) playBoth(true).catch(() => {}); }
+    }, 2500);
 
   }, { passive: true });
 
-  // Page lifecycle
+  // Page lifecycle (bfcache / freeze)
   try {
     document.addEventListener("freeze", () => {
       st.wasPlayingOnHide = st.intended;
@@ -561,38 +639,35 @@ document.addEventListener("DOMContentLoaded", () => {
       stopSync();
     }, { passive: true });
     document.addEventListener("resume", () => {
-      if (st.wasPlayingOnHide && st.intended) { st.wasPlayingOnHide = false; playBoth().catch(() => {}); startSync(); }
+      if (st.wasPlayingOnHide && st.intended) {
+        st.wasPlayingOnHide = false;
+        playBoth(true).catch(() => {}); startSync();
+      }
     }, { passive: true });
     window.addEventListener("pageshow", (e) => {
-      if (e.persisted && st.wasPlayingOnHide && st.intended) { st.wasPlayingOnHide = false; playBoth().catch(() => {}); startSync(); }
+      if (e.persisted && st.wasPlayingOnHide && st.intended) {
+        st.wasPlayingOnHide = false;
+        playBoth(true).catch(() => {}); startSync();
+      }
     }, { passive: true });
   } catch {}
 
-  // ── Chromium desktop alt-tab ──────────────────────────────────────────────
-  // On desktop Chromium, alt-tabbing away fires a "pause" event before
-  // visibilitychange. The pause handler ignores it (visibilityState != visible).
-  // On focus return, if video is still paused and we intend to play, resume.
+  // ── Chromium desktop blur/focus (alt-tab) ─────────────────────────────────
   if (P.chromiumDesk) {
     window.addEventListener("blur", () => {
-      if (st.intended && !vPaused()) st.focusFlag = true;
+      if (st.intended) armSuppressPause();
     }, { passive: true, capture: true });
 
     window.addEventListener("focus", () => {
-      if (!st.focusFlag) return;
-      st.focusFlag = false;
-      // Small delay so visibilitychange fires first (it may already handle it)
-      setTimeout(async () => {
+      suppressNextPause = false;
+      clearTimeout(suppressPauseClear);
+      // visibilitychange should have already handled resumption.
+      // This is a fallback for rare cases where it didn't fire.
+      setTimeout(() => {
         if (!st.intended || !vPaused()) return;
         if (document.visibilityState !== "visible") return;
-        // Resume video first, THEN audio (prevents "audio but no video" bug)
-        await doVPlay();
-        if (!vPaused() && st.intended && coupled) {
-          setATime(vTime());
-          await doAPlay();
-          if (!audio.paused) fadeIn(200);
-        }
-        startSync(); updateMSState();
-      }, 250);
+        playBoth(true).catch(() => {});
+      }, 350);
     }, { passive: true, capture: true });
   }
 
@@ -613,29 +688,38 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
     updateMSState();
 
-    // Play — works from lock screen, notification bar, headphones, etc.
+    // FIX: msPlay uses force=true to bypass playCallUntil.
+    // FIX: msPlay explicitly resets all pause-related flags so a previously
+    // user-paused player resumes both tracks correctly via media controls.
     const msPlay = () => {
-      st.intended = true; st.wasPlayingOnHide = false;
-      playBoth().catch(() => {}); startSync();
+      st.intended         = true;
+      st.wasPlayingOnHide = false;
+      st.bgResync         = false;
+      st.bgKeepAudio      = false;
+      cancelFade();              // cancel any in-progress fadeOut
+      playBoth(true).catch(() => {});
+      startSync();
     };
 
-    // Pause — ALWAYS honored. No visibility checks, no guards.
-    // FIX: the old code had dozens of conditions blocking this. Removed entirely.
-    const msPause = () => pauseBoth(true);
+    const msPause = () => {
+      suppressNextPause = false; // clear any pending suppress so the pause goes through
+      pauseBoth(true);
+    };
 
-    // Seek — silence, seek, resume via seeked event
+    // FIX: msSeek does NOT set st.seeking = true here. The video "seeking" event
+    // fires when setVTime is called and will set it. Setting it here too was
+    // causing the seeked handler to be skipped on some paths.
     const msSeek = (t) => {
       const target = clamp(Math.max(0, t));
       silNow();
       if (coupled) doAPause();
       setVTime(target);
       if (coupled) setATime(target);
-      // seeked event handler will call playBoth() if st.intended
     };
 
-    try { navigator.mediaSession.setActionHandler("play",         msPlay);          } catch {}
-    try { navigator.mediaSession.setActionHandler("pause",        msPause);         } catch {}
-    try { navigator.mediaSession.setActionHandler("stop",         msPause);         } catch {}
+    try { navigator.mediaSession.setActionHandler("play",         msPlay);  } catch {}
+    try { navigator.mediaSession.setActionHandler("pause",        msPause); } catch {}
+    try { navigator.mediaSession.setActionHandler("stop",         msPause); } catch {}
     try { navigator.mediaSession.setActionHandler("seekforward",  (d) => msSeek(vTime() + (d?.seekOffset || 10)));          } catch {}
     try { navigator.mediaSession.setActionHandler("seekbackward", (d) => msSeek(Math.max(0, vTime() - (d?.seekOffset || 10)))); } catch {}
     try { navigator.mediaSession.setActionHandler("seekto",       (d) => { if (d?.seekTime != null) msSeek(d.seekTime); });  } catch {}
@@ -658,7 +742,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ── First user gesture unlock ─────────────────────────────────────────────
   const onGesture = () => {
-    if (wantsAutoplay() && !st.firstPlay) { st.intended = true; playBoth().catch(() => {}); }
+    if (wantsAutoplay() && !st.firstPlay) { st.intended = true; playBoth(true).catch(() => {}); }
   };
   document.addEventListener("click",      onGesture, { once: true, passive: true, capture: true });
   document.addEventListener("keydown",    onGesture, { once: true, passive: true, capture: true });
