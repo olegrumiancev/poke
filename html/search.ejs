@@ -649,438 +649,496 @@ Web              </a>
                   
                      </div>   
           </div>
-  <%
+<%
 const query = (q || '').toLowerCase().trim();
 let answer = '';
 
 function isMathExpression(s) {
-    return /^[0-9\s+\-*/.x]+$/.test(s);
+  return /^[0-9\s+\-*/.x]+$/.test(s);
 }
 
 function evaluateMathExpression(src) {
-    const expr = src.replace(/\s+/g, '');
-    if (expr === '9+10') return '21';
-    try {
-        // Safer than eval: no access to local scope; still only for simple arithmetic
-        const val = Function('"use strict";return (' + expr + ')')();
-        return String(val);
-    } catch {
-        return 'Invalid Expression';
-    }
+  const expr = src.replace(/\s+/g, '').replace(/x/g, '*');
+  if (expr === '9+10') return '21';
+  try {
+    const val = Function('"use strict";return (' + expr + ')')();
+    return String(val);
+  } catch {
+    return 'Invalid Expression';
+  }
 }
 
 function getCurrentDate() {
-    const now = new Date();
-    return now.toLocaleDateString();
+  const now = new Date();
+  return now.toLocaleDateString();
 }
 
 function getCurrentYear() {
-    return String(new Date().getFullYear());
+  return String(new Date().getFullYear());
 }
 
 function getTimeInTimezone(location) {
-   const tzMap = {
-  // USA (states & major cities)
-  "california":"America/Los_Angeles","los angeles":"America/Los_Angeles","la":"America/Los_Angeles","san diego":"America/Los_Angeles","santa monica":"America/Los_Angeles","san francisco":"America/Los_Angeles","oakland":"America/Los_Angeles","san jose":"America/Los_Angeles","sacramento":"America/Los_Angeles",
-  "seattle":"America/Los_Angeles","portland":"America/Los_Angeles","las vegas":"America/Los_Angeles","reno":"America/Los_Angeles","boise":"America/Boise","spokane":"America/Los_Angeles",
-  "arizona":"America/Phoenix","phoenix":"America/Phoenix","tucson":"America/Phoenix","mesa":"America/Phoenix","scottsdale":"America/Phoenix",
-  "denver":"America/Denver","colorado springs":"America/Denver","salt lake city":"America/Denver","albuquerque":"America/Denver","santa fe":"America/Denver","cheyenne":"America/Denver",
-  "chicago":"America/Chicago","minneapolis":"America/Chicago","saint paul":"America/Chicago","st paul":"America/Chicago","milwaukee":"America/Chicago","madison":"America/Chicago","des moines":"America/Chicago","kansas city":"America/Chicago","st louis":"America/Chicago","saint louis":"America/Chicago","memphis":"America/Chicago","nashville":"America/Chicago","birmingham al":"America/Chicago","houston":"America/Chicago","dallas":"America/Chicago","austin":"America/Chicago","san antonio":"America/Chicago","oklahoma city":"America/Chicago","tulsa":"America/Chicago","new orleans":"America/Chicago","baton rouge":"America/Chicago","little rock":"America/Chicago","fargo":"America/Chicago","lincoln ne":"America/Chicago","omaha":"America/Chicago",
-  "new york":"America/New_York","nyc":"America/New_York","manhattan":"America/New_York","brooklyn":"America/New_York","queens":"America/New_York","the bronx":"America/New_York","staten island":"America/New_York","buffalo":"America/New_York","rochester ny":"America/New_York","albany ny":"America/New_York",
-  "boston":"America/New_York","cambridge ma":"America/New_York","providence":"America/New_York","hartford":"America/New_York","new haven":"America/New_York",
-  "philadelphia":"America/New_York","pittsburgh":"America/New_York","baltimore":"America/New_York","washington dc":"America/New_York","dc":"America/New_York","arlington va":"America/New_York","richmond va":"America/New_York","charlotte":"America/New_York","raleigh":"America/New_York","durham":"America/New_York","charleston sc":"America/New_York","atlanta":"America/New_York","savannah":"America/New_York","miami":"America/New_York","orlando":"America/New_York","tampa":"America/New_York","jacksonville":"America/New_York",
-  "detroit":"America/Detroit","cleveland":"America/New_York","columbus oh":"America/New_York","cincinnati":"America/New_York","indianapolis":"America/Indiana/Indianapolis","louisville":"America/Kentucky/Louisville",
-  "anchorage":"America/Anchorage","fairbanks":"America/Anchorage","juneau":"America/Juneau",
-  "honolulu":"Pacific/Honolulu","hilo":"Pacific/Honolulu","kahului":"Pacific/Honolulu","lihue":"Pacific/Honolulu",  "toronto":"America/Toronto","mississauga":"America/Toronto","ottawa":"America/Toronto","kingston on":"America/Toronto","london on":"America/Toronto",
-  "montreal":"America/Toronto","bagotville":"America/Montreal","quebec city":"America/Toronto","sherbrooke":"America/Toronto",
-  "vancouver":"America/Vancouver","victoria bc":"America/Vancouver","kelowna":"America/Vancouver","prince george":"America/Vancouver",
-  "calgary":"America/Edmonton","edmonton":"America/Edmonton","winnipeg":"America/Winnipeg","regina":"America/Regina","saskatoon":"America/Regina",
-  "st johns":"America/St_Johns","halifax":"America/Halifax","moncton":"America/Moncton","fredericton":"America/Halifax","charlottetown":"America/Halifax",
-  "mexico city":"America/Mexico_City","guadalajara":"America/Mexico_City","monterrey":"America/Monterrey","tijuana":"America/Tijuana","hermosillo":"America/Hermosillo","culiacan":"America/Mazatlan","mazatlan":"America/Mazatlan","chihuahua":"America/Chihuahua","merida":"America/Merida","cancun":"America/Cancun","quetzaltenango":"America/Guatemala",
-  "guatemala city":"America/Guatemala","belmopan":"America/Belize","belize city":"America/Belize","san salvador":"America/El_Salvador","tegucigalpa":"America/Tegucigalpa","managua":"America/Managua","san jose cr":"America/Costa_Rica","panama city":"America/Panama",
+  const tzMap = {
+    "california":"America/Los_Angeles","los angeles":"America/Los_Angeles","la":"America/Los_Angeles","san diego":"America/Los_Angeles","santa monica":"America/Los_Angeles","san francisco":"America/Los_Angeles","oakland":"America/Los_Angeles","san jose":"America/Los_Angeles","sacramento":"America/Los_Angeles",
+    "seattle":"America/Los_Angeles","portland":"America/Los_Angeles","las vegas":"America/Los_Angeles","reno":"America/Los_Angeles","boise":"America/Boise","spokane":"America/Los_Angeles",
+    "arizona":"America/Phoenix","phoenix":"America/Phoenix","tucson":"America/Phoenix","mesa":"America/Phoenix","scottsdale":"America/Phoenix",
+    "denver":"America/Denver","colorado springs":"America/Denver","salt lake city":"America/Denver","albuquerque":"America/Denver","santa fe":"America/Denver","cheyenne":"America/Denver",
+    "chicago":"America/Chicago","minneapolis":"America/Chicago","saint paul":"America/Chicago","st paul":"America/Chicago","milwaukee":"America/Chicago","madison":"America/Chicago","des moines":"America/Chicago","kansas city":"America/Chicago","st louis":"America/Chicago","saint louis":"America/Chicago","memphis":"America/Chicago","nashville":"America/Chicago","birmingham al":"America/Chicago","houston":"America/Chicago","dallas":"America/Chicago","austin":"America/Chicago","san antonio":"America/Chicago","oklahoma city":"America/Chicago","tulsa":"America/Chicago","new orleans":"America/Chicago","baton rouge":"America/Chicago","little rock":"America/Chicago","fargo":"America/Chicago","lincoln ne":"America/Chicago","omaha":"America/Chicago",
+    "new york":"America/New_York","nyc":"America/New_York","manhattan":"America/New_York","brooklyn":"America/New_York","queens":"America/New_York","the bronx":"America/New_York","staten island":"America/New_York","buffalo":"America/New_York","rochester ny":"America/New_York","albany ny":"America/New_York",
+    "boston":"America/New_York","cambridge ma":"America/New_York","providence":"America/New_York","hartford":"America/New_York","new haven":"America/New_York",
+    "philadelphia":"America/New_York","pittsburgh":"America/New_York","baltimore":"America/New_York","washington dc":"America/New_York","dc":"America/New_York","arlington va":"America/New_York","richmond va":"America/New_York","charlotte":"America/New_York","raleigh":"America/New_York","durham":"America/New_York","charleston sc":"America/New_York","atlanta":"America/New_York","savannah":"America/New_York","miami":"America/New_York","orlando":"America/New_York","tampa":"America/New_York","jacksonville":"America/New_York",
+    "detroit":"America/Detroit","cleveland":"America/New_York","columbus oh":"America/New_York","cincinnati":"America/New_York","indianapolis":"America/Indiana/Indianapolis","louisville":"America/Kentucky/Louisville",
+    "anchorage":"America/Anchorage","fairbanks":"America/Anchorage","juneau":"America/Juneau",
+    "honolulu":"Pacific/Honolulu","hilo":"Pacific/Honolulu","kahului":"Pacific/Honolulu","lihue":"Pacific/Honolulu",  "toronto":"America/Toronto","mississauga":"America/Toronto","ottawa":"America/Toronto","kingston on":"America/Toronto","london on":"America/Toronto",
+    "montreal":"America/Toronto","bagotville":"America/Montreal","quebec city":"America/Toronto","sherbrooke":"America/Toronto",
+    "vancouver":"America/Vancouver","victoria bc":"America/Vancouver","kelowna":"America/Vancouver","prince george":"America/Vancouver",
+    "calgary":"America/Edmonton","edmonton":"America/Edmonton","winnipeg":"America/Winnipeg","regina":"America/Regina","saskatoon":"America/Regina",
+    "st johns":"America/St_Johns","halifax":"America/Halifax","moncton":"America/Moncton","fredericton":"America/Halifax","charlottetown":"America/Halifax",
+    "mexico city":"America/Mexico_City","guadalajara":"America/Mexico_City","monterrey":"America/Monterrey","tijuana":"America/Tijuana","hermosillo":"America/Hermosillo","culiacan":"America/Mazatlan","mazatlan":"America/Mazatlan","chihuahua":"America/Chihuahua","merida":"America/Merida","cancun":"America/Cancun","quetzaltenango":"America/Guatemala",
+    "guatemala city":"America/Guatemala","belmopan":"America/Belize","belize city":"America/Belize","san salvador":"America/El_Salvador","tegucigalpa":"America/Tegucigalpa","managua":"America/Managua","san jose cr":"America/Costa_Rica","panama city":"America/Panama",
+    
+    "bogota":"America/Bogota","medellin":"America/Bogota","cali":"America/Bogota",
+    "lima":"America/Lima","quito":"America/Quito","guayaquil":"America/Guayaquil",
+    "caracas":"America/Caracas","maracaibo":"America/Caracas",
+    "santiago":"America/Santiago","valparaiso":"America/Santiago","concepcion":"America/Santiago","punta arenas":"America/Punta_Arenas","easter island":"Pacific/Easter",
+    "buenos aires":"America/Argentina/Buenos_Aires","cordoba ar":"America/Argentina/Cordoba","mendoza":"America/Argentina/Mendoza","rosario":"America/Argentina/Cordoba","ushuaia":"America/Argentina/Ushuaia",
+    "sao paulo":"America/Sao_Paulo","rio de janeiro":"America/Sao_Paulo","brasilia":"America/Sao_Paulo","salvador":"America/Bahia","recife":"America/Recife","fortaleza":"America/Fortaleza","manaus":"America/Manaus","belem":"America/Belem","porto alegre":"America/Sao_Paulo","curitiba":"America/Sao_Paulo","belo horizonte":"America/Sao_Paulo","cuiaba":"America/Cuiaba","campo grande":"America/Campo_Grande","boa vista":"America/Boa_Vista","rio branco":"America/Rio_Branco","araguaina":"America/Araguaina",
+    "georgetown":"America/Guyana","paramaribo":"America/Paramaribo","cayenne":"America/Cayenne",
+    "kingston":"America/Jamaica","nassau":"America/Nassau","port au prince":"America/Port-au-Prince","santo domingo":"America/Santo_Domingo","port of spain":"America/Port_of_Spain","port_of_spain":"America/Port_of_Spain","bridgetown":"America/Barbados","castries":"America/St_Lucia","st george's":"America/Grenada","saint george's":"America/Grenada","roseau":"America/Dominica","st john's ag":"America/Antigua","the valley anguilla":"America/Anguilla","charlotte amalie":"America/St_Thomas","san juan":"America/Puerto_Rico","willemstad":"America/Curacao","oranjestad":"America/Aruba","kralendijk":"America/Kralendijk",
+    
+    "london":"Europe/London","manchester":"Europe/London","birmingham uk":"Europe/London","leeds":"Europe/London","liverpool":"Europe/London","edinburgh":"Europe/London","glasgow":"Europe/London","belfast":"Europe/London","cardiff":"Europe/London","bristol":"Europe/London","oxford":"Europe/London","cambridge uk":"Europe/London",
+    "dublin":"Europe/Dublin","cork":"Europe/Dublin","galway":"Europe/Dublin","limerick":"Europe/Dublin",
+    "lisbon":"Europe/Lisbon","porto":"Europe/Lisbon","funchal":"Atlantic/Madeira","ponta delgada":"Atlantic/Azores",
+    "paris":"Europe/Paris","lyon":"Europe/Paris","marseille":"Europe/Paris","toulouse":"Europe/Paris","nice":"Europe/Paris","nantes":"Europe/Paris","strasbourg":"Europe/Paris","lille":"Europe/Paris","bordeaux":"Europe/Paris","montpellier":"Europe/Paris",
+    "brussels":"Europe/Brussels","antwerp":"Europe/Brussels","ghent":"Europe/Brussels","bruges":"Europe/Brussels",
+    "amsterdam":"Europe/Amsterdam","rotterdam":"Europe/Amsterdam","the hague":"Europe/Amsterdam","utrecht":"Europe/Amsterdam","eindhoven":"Europe/Amsterdam",
+    "luxembourg":"Europe/Luxembourg","monaco":"Europe/Monaco","andorra la vella":"Europe/Andorra","valletta":"Europe/Malta",
+    
+    "berlin":"Europe/Berlin","hamburg":"Europe/Berlin","munich":"Europe/Berlin","frankfurt":"Europe/Berlin","stuttgart":"Europe/Berlin","dusseldorf":"Europe/Berlin","leipzig":"Europe/Berlin","dresden":"Europe/Berlin","hannover":"Europe/Berlin","nuremberg":"Europe/Berlin","bremen":"Europe/Berlin","bonn":"Europe/Berlin","cologne":"Europe/Berlin",
+    "vienna":"Europe/Vienna","salzburg":"Europe/Vienna","graz":"Europe/Vienna","innsbruck":"Europe/Vienna","linz":"Europe/Vienna",
+    "zurich":"Europe/Zurich","geneva":"Europe/Zurich","basel":"Europe/Zurich","lausanne":"Europe/Zurich","bern":"Europe/Zurich","lugano":"Europe/Zurich",
+    "prague":"Europe/Prague","brno":"Europe/Prague","ostrava":"Europe/Prague",
+    "warsaw":"Europe/Warsaw","krakow":"Europe/Warsaw","wroclaw":"Europe/Warsaw","gdansk":"Europe/Warsaw","poznan":"Europe/Warsaw","lodz":"Europe/Warsaw",
+    "budapest":"Europe/Budapest","debrecen":"Europe/Budapest","szeged":"Europe/Budapest",
+    "bratislava":"Europe/Bratislava","kosice":"Europe/Bratislava",
+    "ljubljana":"Europe/Ljubljana","maribor":"Europe/Ljubljana","zagreb":"Europe/Zagreb","split":"Europe/Zagreb","dubrovnik":"Europe/Zagreb","sarajevo":"Europe/Sarajevo","banja luka":"Europe/Sarajevo","belgrade":"Europe/Belgrade","novi sad":"Europe/Belgrade","podgorica":"Europe/Podgorica","tirana":"Europe/Tirane","skopje":"Europe/Skopje","sofia":"Europe/Sofia","bucharest":"Europe/Bucharest","cluj napoca":"Europe/Bucharest","timisoara":"Europe/Bucharest","iasi":"Europe/Bucharest",
+    
+    "madrid":"Europe/Madrid","barcelona":"Europe/Madrid","valencia":"Europe/Madrid","seville":"Europe/Madrid","malaga":"Europe/Madrid","bilbao":"Europe/Madrid","zaragoza":"Europe/Madrid","palma de mallorca":"Europe/Madrid","las palmas":"Atlantic/Canary","santa cruz de tenerife":"Atlantic/Canary",
+    "rome":"Europe/Rome","milan":"Europe/Rome","naples":"Europe/Rome","turin":"Europe/Rome","florence":"Europe/Rome","venice":"Europe/Rome","bologna":"Europe/Rome","genoa":"Europe/Rome","palermo":"Europe/Rome","catania":"Europe/Rome",
+    "athens":"Europe/Athens","thessaloniki":"Europe/Athens","heraklion":"Europe/Athens","patras":"Europe/Athens","rhodes":"Europe/Athens",
+    "valletta":"Europe/Malta","san marino":"Europe/Rome","vaduz":"Europe/Zurich",
+    
+    "istanbul":"Europe/Istanbul","ankara":"Europe/Istanbul","izmir":"Europe/Istanbul","bursa":"Europe/Istanbul","antalya":"Europe/Istanbul","adana":"Europe/Istanbul","konya":"Europe/Istanbul","gaziantep":"Europe/Istanbul","trabzon":"Europe/Istanbul","diyarbakir":"Europe/Istanbul","edirne":"Europe/Istanbul",
+    "moscow":"Europe/Moscow","saint petersburg":"Europe/Moscow","st petersburg":"Europe/Moscow","kazan":"Europe/Moscow","yekaterinburg":"Asia/Yekaterinburg","novosibirsk":"Asia/Novosibirsk","omsk":"Asia/Omsk","irkutsk":"Asia/Irkutsk","krasnoyarsk":"Asia/Krasnoyarsk","vladivostok":"Asia/Vladivostok","samara":"Europe/Samara","ufa":"Asia/Yekaterinburg","perm":"Asia/Yekaterinburg","khabarovsk":"Asia/Vladivostok","tomsk":"Asia/Tomsk","barnaul":"Asia/Barnaul","novokuznetsk":"Asia/Novokuznetsk",
+    "kyiv":"Europe/Kyiv","lviv":"Europe/Kyiv","odesa":"Europe/Kyiv","kharkiv":"Europe/Kyiv","dnipro":"Europe/Kyiv",
+    "minsk":"Europe/Minsk","chisinau":"Europe/Chisinau",
+    "tbilisi":"Asia/Tbilisi","yerevan":"Asia/Yerevan","baku":"Asia/Baku",
+    "jerusalem":"Asia/Jerusalem","tel aviv":"Asia/Jerusalem","haifa":"Asia/Jerusalem",
+    "amman":"Asia/Amman","beirut":"Asia/Beirut","damascus":"Asia/Damascus","baghdad":"Asia/Baghdad","kuwait city":"Asia/Kuwait","riyadh":"Asia/Riyadh","jeddah":"Asia/Riyadh","mecca":"Asia/Riyadh","medina":"Asia/Riyadh","doha":"Asia/Qatar","manama":"Asia/Bahrain","muscat":"Asia/Muscat","dubai":"Asia/Dubai","abu dhabi":"Asia/Dubai","sharjah":"Asia/Dubai",
+    
+    "tehran":"Asia/Tehran","mashhad":"Asia/Tehran","isfahan":"Asia/Tehran","tabriz":"Asia/Tehran","shiraz":"Asia/Tehran",
+    "kabul":"Asia/Kabul","ashgabat":"Asia/Ashgabat","tashkent":"Asia/Tashkent","samarkand":"Asia/Samarkand","almaty":"Asia/Almaty","astana":"Asia/Almaty","nur sultan":"Asia/Almaty","bishkek":"Asia/Bishkek","dushanbe":"Asia/Dushanbe",
+    "islamabad":"Asia/Karachi","karachi":"Asia/Karachi","lahore":"Asia/Karachi","rawalpindi":"Asia/Karachi",
+    "delhi":"Asia/Kolkata","new delhi":"Asia/Kolkata","mumbai":"Asia/Kolkata","kolkata":"Asia/Kolkata","chennai":"Asia/Kolkata","bengaluru":"Asia/Kolkata","bangalore":"Asia/Kolkata","hyderabad in":"Asia/Kolkata","pune":"Asia/Kolkata","ahmedabad":"Asia/Kolkata","jaipur":"Asia/Kolkata","kochi":"Asia/Kolkata",
+    "kathmandu":"Asia/Kathmandu","thimphu":"Asia/Thimphu","colombo":"Asia/Colombo","male":"Indian/Maldives","dhaka":"Asia/Dhaka",
+    
+    "yangon":"Asia/Yangon","naypyidaw":"Asia/Yangon",
+    "bangkok":"Asia/Bangkok","phuket":"Asia/Bangkok","chiang mai":"Asia/Bangkok",
+    "hanoi":"Asia/Ho_Chi_Minh","ho chi minh city":"Asia/Ho_Chi_Minh","saigon":"Asia/Ho_Chi_Minh","da nang":"Asia/Ho_Chi_Minh",
+    "vientiane":"Asia/Vientiane","phnom penh":"Asia/Phnom_Penh",
+    "kuala lumpur":"Asia/Kuala_Lumpur","george town penang":"Asia/Kuala_Lumpur","kuching":"Asia/Kuching","kota kinabalu":"Asia/Kuching",
+    "singapore":"Asia/Singapore",
+    "jakarta":"Asia/Jakarta","bandung":"Asia/Jakarta","surabaya":"Asia/Jakarta","yogyakarta":"Asia/Jakarta","denpasar":"Asia/Makassar","bali":"Asia/Makassar","medan":"Asia/Jakarta","makassar":"Asia/Makassar","jayapura":"Asia/Jayapura",
+    "manila":"Asia/Manila","cebu city":"Asia/Manila","davao":"Asia/Manila","iloilo city":"Asia/Manila","bacolod":"Asia/Manila","cagayan de oro":"Asia/Manila","general santos":"Asia/Manila","taguig":"Asia/Manila","quezon city":"Asia/Manila","pasig":"Asia/Manila","makati":"Asia/Manila","pasay":"Asia/Manila","caloocan":"Asia/Manila","mandaluyong":"Asia/Manila",
+    
+    "beijing":"Asia/Shanghai","shanghai":"Asia/Shanghai","shenzhen":"Asia/Shanghai","guangzhou":"Asia/Shanghai","chengdu":"Asia/Shanghai","chongqing":"Asia/Chongqing","tianjin":"Asia/Shanghai","wuhan":"Asia/Shanghai","xi'an":"Asia/Shanghai","xian":"Asia/Shanghai","hangzhou":"Asia/Shanghai","nanjing":"Asia/Shanghai","suzhou":"Asia/Shanghai","qingdao":"Asia/Shanghai","dalian":"Asia/Shanghai","harbin":"Asia/Harbin",
+    "hong kong":"Asia/Hong_Kong","macau":"Asia/Macau",
+    "taipei":"Asia/Taipei","kaohsiung":"Asia/Taipei","taichung":"Asia/Taipei",
+    "tokyo":"Asia/Tokyo","osaka":"Asia/Tokyo","kyoto":"Asia/Tokyo","yokohama":"Asia/Tokyo","sapporo":"Asia/Tokyo","fukuoka":"Asia/Tokyo","nagoya":"Asia/Tokyo","kobe":"Asia/Tokyo","hiroshima":"Asia/Tokyo","sendai":"Asia/Tokyo","naha":"Asia/Tokyo",
+    "seoul":"Asia/Seoul","incheon":"Asia/Seoul","busan":"Asia/Seoul","daegu":"Asia/Seoul","daejeon":"Asia/Seoul","gwangju kr":"Asia/Seoul","ulsan":"Asia/Seoul",
+    
+    "isfahan":"Asia/Tehran","esfahan":"Asia/Tehran","doha":"Asia/Qatar","manama":"Asia/Bahrain","sana'a":"Asia/Aden","sanaa":"Asia/Aden","aden":"Asia/Aden",
+    
+    "cairo":"Africa/Cairo","alexandria eg":"Africa/Cairo","giza":"Africa/Cairo",
+    "casablanca":"Africa/Casablanca","rabat":"Africa/Casablanca","marrakesh":"Africa/Casablanca","marrakech":"Africa/Casablanca","tangier":"Africa/Casablanca",
+    "algiers":"Africa/Algiers","oran":"Africa/Algiers","constantine":"Africa/Algiers",
+    "tunis":"Africa/Tunis","tripoli ly":"Africa/Tripoli",
+    "lagos":"Africa/Lagos","abuja":"Africa/Lagos","ibadan":"Africa/Lagos","kano":"Africa/Lagos","port harcourt":"Africa/Lagos",
+    "accra":"Africa/Accra","kumasi":"Africa/Accra",
+    "abidjan":"Africa/Abidjan","dakar":"Africa/Dakar","bamako":"Africa/Bamako","conakry":"Africa/Conakry","freetown":"Africa/Freetown","banjul":"Africa/Banjul","bissau":"Africa/Bissau","monrovia":"Africa/Monrovia","ouagadougou":"Africa/Ouagadougou","niamey":"Africa/Niamey","lome":"Africa/Lome","porto novo":"Africa/Porto-Novo","cotonou":"Africa/Porto-Novo","nouakchott":"Africa/Nouakchott","praia":"Atlantic/Cape_Verde",
+    
+    "nairobi":"Africa/Nairobi","mombasa":"Africa/Nairobi","kampala":"Africa/Kampala","addis ababa":"Africa/Addis_Ababa","dar es salaam":"Africa/Dar_es_Salaam","arusha":"Africa/Dar_es_Salaam","lusaka":"Africa/Lusaka","harare":"Africa/Harare","maputo":"Africa/Maputo","antananarivo":"Indian/Antananarivo","victoria seychelles":"Indian/Mahe","mahe":"Indian/Mahe","moroni":"Indian/Comoro","port louis":"Indian/Mauritius","saint denis re":"Indian/Reunion",
+    "johannesburg":"Africa/Johannesburg","pretoria":"Africa/Johannesburg","cape town":"Africa/Johannesburg","durban":"Africa/Johannesburg","gaborone":"Africa/Gaborone","windhoek":"Africa/Windhoek","mbabane":"Africa/Johannesburg","maseru":"Africa/Johannesburg","antananarivo mg":"Indian/Antananarivo",
+    
+    "sydney":"Australia/Sydney","melbourne":"Australia/Melbourne","brisbane":"Australia/Brisbane","gold coast":"Australia/Brisbane","canberra":"Australia/Sydney","hobart":"Australia/Hobart","adelaide":"Australia/Adelaide","perth":"Australia/Perth","darwin":"Australia/Darwin","alice springs":"Australia/Darwin",
+    "auckland":"Pacific/Auckland","wellington":"Pacific/Auckland","christchurch":"Pacific/Auckland","dunedin":"Pacific/Auckland",
+    "suva":"Pacific/Fiji","nadi":"Pacific/Fiji","apia":"Pacific/Apia","nuku alofa":"Pacific/Tongatapu","port moresby":"Pacific/Port_Moresby","honiara":"Pacific/Guadalcanal","port vila":"Pacific/Efate","palikir":"Pacific/Pohnpei","majuro":"Pacific/Majuro","kwajalein":"Pacific/Kwajalein","tarawa":"Pacific/Tarawa","funafuti":"Pacific/Funafuti","palau":"Pacific/Palau","noumea":"Pacific/Noumea","papeete":"Pacific/Tahiti","rikitea":"Pacific/Gambier","rarotonga":"Pacific/Rarotonga","niue":"Pacific/Niue","midway":"Pacific/Midway","chatham":"Pacific/Chatham","norfolk island":"Pacific/Norfolk","lord howe":"Australia/Lord_Howe","pitcairn":"Pacific/Pitcairn","galapagos":"Pacific/Galapagos","easter island":"Pacific/Easter",
+    "port chalmers":"Pacific/Auckland",
+    
+    "mcmurdo":"Antarctica/McMurdo","rothera":"Antarctica/Rothera","troll":"Antarctica/Troll","davis":"Antarctica/Davis","casey":"Antarctica/Casey","mawson":"Antarctica/Mawson","vostok":"Antarctica/Vostok","syowa":"Antarctica/Syowa","palmer":"Antarctica/Palmer",
+    
+    "st helena":"Atlantic/St_Helena","stanley":"Atlantic/Stanley","reykjavik":"Atlantic/Reykjavik","praia cv":"Atlantic/Cape_Verde","faial":"Atlantic/Azores",
+    
+    "al ain":"Asia/Dubai","ras al khaimah":"Asia/Dubai","fujairah":"Asia/Dubai","ajman":"Asia/Dubai",
+    
+    "oslo":"Europe/Oslo","bergen":"Europe/Oslo","stockholm":"Europe/Stockholm","gothenburg":"Europe/Stockholm","malmo":"Europe/Stockholm","uppsala":"Europe/Stockholm",
+    "helsinki":"Europe/Helsinki","tampere":"Europe/Helsinki","turku":"Europe/Helsinki","oulu":"Europe/Helsinki",
+    "copenhagen":"Europe/Copenhagen","aarhus":"Europe/Copenhagen","odense":"Europe/Copenhagen",
+    "reykjavik":"Atlantic/Reykjavik","faroe":"Atlantic/Faroe","torshavn":"Atlantic/Faroe",
+    "vilnius":"Europe/Vilnius","kaunas":"Europe/Vilnius","klaipeda":"Europe/Vilnius",
+    "riga":"Europe/Riga","daugavpils":"Europe/Riga",
+    "tallinn":"Europe/Tallinn","tartu":"Europe/Tallinn",
+    
+    "jericho":"Asia/Jerusalem","gaza city":"Asia/Gaza","hebron":"Asia/Hebron","nablus":"Asia/Hebron",
+    "suez":"Africa/Cairo","aswan":"Africa/Cairo","luxor":"Africa/Cairo","tripoli lb":"Asia/Beirut",
+    
+    "sri jayawardenepura kotte":"Asia/Colombo","kotte":"Asia/Colombo","trivandrum":"Asia/Kolkata","thiruvananthapuram":"Asia/Kolkata",
+    "goa":"Asia/Kolkata","lucknow":"Asia/Kolkata","bhopal":"Asia/Kolkata","kanpur":"Asia/Kolkata","patna":"Asia/Kolkata","guwahati":"Asia/Kolkata","ranchi":"Asia/Kolkata","coimbatore":"Asia/Kolkata","visakhapatnam":"Asia/Kolkata","vishakhapatnam":"Asia/Kolkata","kozhikode":"Asia/Kolkata","calicut":"Asia/Kolkata","mysuru":"Asia/Kolkata","mysore":"Asia/Kolkata","vijayawada":"Asia/Kolkata","erode":"Asia/Kolkata","madurai":"Asia/Kolkata","tiruchirappalli":"Asia/Kolkata","trichy":"Asia/Kolkata","varanasi":"Asia/Kolkata","agra":"Asia/Kolkata","srinagar":"Asia/Kolkata","amritsar":"Asia/Kolkata","chandigarh":"Asia/Kolkata","noida":"Asia/Kolkata","gurugram":"Asia/Kolkata","gurgaon":"Asia/Kolkata",
+    "peshawar":"Asia/Karachi","quetta":"Asia/Karachi","multan":"Asia/Karachi","faisalabad":"Asia/Karachi",
+    "chittagong":"Asia/Dhaka","khulna":"Asia/Dhaka","sylhet":"Asia/Dhaka",
+    
+    "urumqi":"Asia/Urumqi","kashgar":"Asia/Urumqi","urumchi":"Asia/Urumqi","lhasa":"Asia/Urumqi",
+    "nanchang":"Asia/Shanghai","zhengzhou":"Asia/Shanghai","taiyuan":"Asia/Shanghai","changsha":"Asia/Shanghai","haikou":"Asia/Shanghai","sanya":"Asia/Shanghai","xiamen":"Asia/Shanghai","fuzhou":"Asia/Shanghai","jinan":"Asia/Shanghai","shenyang":"Asia/Shanghai","changchun":"Asia/Shanghai","ningbo":"Asia/Shanghai","wuxi":"Asia/Shanghai","dongguan":"Asia/Shanghai","foshan":"Asia/Shanghai","wenzhou":"Asia/Shanghai",
+    
+    "okinawa":"Asia/Tokyo","kawasaki":"Asia/Tokyo","saitama":"Asia/Tokyo","chiba":"Asia/Tokyo","kitakyushu":"Asia/Tokyo","kumamoto":"Asia/Tokyo","niigata":"Asia/Tokyo","kanazawa":"Asia/Tokyo","nagano":"Asia/Tokyo","akita":"Asia/Tokyo","aomori":"Asia/Tokyo","morioka":"Asia/Tokyo","matsuyama":"Asia/Tokyo","tokushima":"Asia/Tokyo","takamatsu":"Asia/Tokyo",
+    "gyeonggi":"Asia/Seoul","jeju":"Asia/Seoul","gwangju":"Asia/Seoul","suwon":"Asia/Seoul","ilsan":"Asia/Seoul","daegu":"Asia/Seoul",
+    
+    "bandar lampung":"Asia/Jakarta","palembang":"Asia/Jakarta","padang":"Asia/Jakarta","pekanbaru":"Asia/Jakarta","batam":"Asia/Jakarta","pontianak":"Asia/Pontianak","banjarmasin":"Asia/Makassar","manado":"Asia/Makassar","ambon":"Asia/Jayapura","sorong":"Asia/Jayapura",
+    "quezon":"Asia/Manila","antipolo":"Asia/Manila","calamba":"Asia/Manila","binan":"Asia/Manila","san pedro laguna":"Asia/Manila","santa rosa laguna":"Asia/Manila","angeles city":"Asia/Manila","olongapo":"Asia/Manila","subic":"Asia/Manila","bataan":"Asia/Manila","pampanga":"Asia/Manila","baguio":"Asia/Manila","laoag":"Asia/Manila","vigan":"Asia/Manila","tacloban":"Asia/Manila","dumaguete":"Asia/Manila","roxas city":"Asia/Manila","legazpi":"Asia/Manila","naga":"Asia/Manila","butuan":"Asia/Manila","surigao":"Asia/Manila","zamboanga":"Asia/Manila","cotabato":"Asia/Manila","pagadian":"Asia/Manila","sultan kudarat":"Asia/Manila","kidapawan":"Asia/Manila",
+    
+    "geelong":"Australia/Melbourne","ballarat":"Australia/Melbourne","wollongong":"Australia/Sydney","newcastle nsw":"Australia/Sydney","townsville":"Australia/Brisbane","cairns":"Australia/Brisbane","toowoomba":"Australia/Brisbane","launceston":"Australia/Hobart","whyalla":"Australia/Adelaide","mount gambier":"Australia/Adelaide","geraldton":"Australia/Perth","broome":"Australia/Perth","kalgoorlie":"Australia/Perth",
+    
+    "hamilton nz":"Pacific/Auckland","tauranga":"Pacific/Auckland","napier":"Pacific/Auckland","hastings nz":"Pacific/Auckland","palmerston north":"Pacific/Auckland","nelson nz":"Pacific/Auckland","rotorua":"Pacific/Auckland","whangarei":"Pacific/Auckland","gisborne":"Pacific/Auckland","invercargill":"Pacific/Auckland",
+    
+    "antigua guatemala":"America/Guatemala","quetzaltenango":"America/Guatemala","bluefields":"America/Managua","leon ni":"America/Managua",
+    
+    "arequipa":"America/Lima","trujillo pe":"America/Lima","cuzco":"America/Lima","cusco":"America/Lima",
+    "valledupar":"America/Bogota","barranquilla":"America/Bogota","cartagena co":"America/Bogota","pereira":"America/Bogota","bucaramanga":"America/Bogota",
+    "mar del plata":"America/Argentina/Buenos_Aires","neuquen":"America/Argentina/Neuquen","salta":"America/Argentina/Salta","posadas":"America/Argentina/Cordoba",
+    "curitiba":"America/Sao_Paulo","goiania":"America/Sao_Paulo","joao pessoa":"America/Fortaleza","maceio":"America/Maceio","santarem":"America/Santarem","porto velho":"America/Porto_Velho","macapa":"America/Belem",
+    
+    "san juan pr":"America/Puerto_Rico","caguas":"America/Puerto_Rico","ponce":"America/Puerto_Rico","mayaguez":"America/Puerto_Rico",
+    "cap haitien":"America/Port-au-Prince","santiago de los caballeros":"America/Santo_Domingo","santo domingo este":"America/Santo_Domingo","la romana":"America/Santo_Domingo",
+    "george town cayman":"America/Cayman","kingstown":"America/St_Vincent","castries lc":"America/St_Lucia",
+    
+    "reunion":"Indian/Reunion","mauritius":"Indian/Mauritius","port louis mu":"Indian/Mauritius","antananarivo mg":"Indian/Antananarivo",
+    "kerguelen":"Indian/Kerguelen","chagos":"Indian/Chagos",
+    
+    "gmt":"Etc/GMT","utc":"UTC","greenwich":"Europe/London","iceland":"Atlantic/Reykjavik",
+    
+    "jersey":"Europe/Jersey","guernsey":"Europe/Guernsey","isle of man":"Europe/Isle_of_Man","gibraltar":"Europe/Gibraltar","ceuta":"Africa/Ceuta","melilla":"Africa/Ceuta",
+    "madeira":"Atlantic/Madeira","azores":"Atlantic/Azores","canary islands":"Atlantic/Canary",
+    
+    "erbil":"Asia/Baghdad","sulaymaniyah":"Asia/Baghdad","mosul":"Asia/Baghdad","aleppo":"Asia/Damascus","homs":"Asia/Damascus",
+    "shiraz":"Asia/Tehran","ahvaz":"Asia/Tehran","qom":"Asia/Tehran","karaj":"Asia/Tehran",
+    
+    "izmit":"Europe/Istanbul","eskisehir":"Europe/Istanbul","kayseri":"Europe/Istanbul","samsun":"Europe/Istanbul","malatya":"Europe/Istanbul","van":"Europe/Istanbul","gaziosmanpasa":"Europe/Istanbul","mersin":"Europe/Istanbul","hatay":"Europe/Istanbul","sanliurfa":"Europe/Istanbul","kocaeli":"Europe/Istanbul",
+    
+    "al khobar":"Asia/Riyadh","dammam":"Asia/Riyadh","taif":"Asia/Riyadh","tabuk":"Asia/Riyadh","abha":"Asia/Riyadh",
+    
+    "netanya":"Asia/Jerusalem","ashdod":"Asia/Jerusalem","beer sheva":"Asia/Jerusalem","beersheba":"Asia/Jerusalem","nazareth":"Asia/Jerusalem","ramallah":"Asia/Hebron"
+  };
 
-  // South America & Caribbean
-  "bogota":"America/Bogota","medellin":"America/Bogota","cali":"America/Bogota",
-  "lima":"America/Lima","quito":"America/Quito","guayaquil":"America/Guayaquil",
-  "caracas":"America/Caracas","maracaibo":"America/Caracas",
-  "santiago":"America/Santiago","valparaiso":"America/Santiago","concepcion":"America/Santiago","punta arenas":"America/Punta_Arenas","easter island":"Pacific/Easter",
-  "buenos aires":"America/Argentina/Buenos_Aires","cordoba ar":"America/Argentina/Cordoba","mendoza":"America/Argentina/Mendoza","rosario":"America/Argentina/Cordoba","ushuaia":"America/Argentina/Ushuaia",
-  "sao paulo":"America/Sao_Paulo","rio de janeiro":"America/Sao_Paulo","brasilia":"America/Sao_Paulo","salvador":"America/Bahia","recife":"America/Recife","fortaleza":"America/Fortaleza","manaus":"America/Manaus","belem":"America/Belem","porto alegre":"America/Sao_Paulo","curitiba":"America/Sao_Paulo","belo horizonte":"America/Sao_Paulo","cuiaba":"America/Cuiaba","campo grande":"America/Campo_Grande","boa vista":"America/Boa_Vista","rio branco":"America/Rio_Branco","araguaina":"America/Araguaina",
-  "georgetown":"America/Guyana","paramaribo":"America/Paramaribo","cayenne":"America/Cayenne",
-  "kingston":"America/Jamaica","nassau":"America/Nassau","port au prince":"America/Port-au-Prince","santo domingo":"America/Santo_Domingo","port of spain":"America/Port_of_Spain","port_of_spain":"America/Port_of_Spain","bridgetown":"America/Barbados","castries":"America/St_Lucia","st george's":"America/Grenada","saint george's":"America/Grenada","roseau":"America/Dominica","st john's ag":"America/Antigua","the valley anguilla":"America/Anguilla","charlotte amalie":"America/St_Thomas","san juan":"America/Puerto_Rico","willemstad":"America/Curacao","oranjestad":"America/Aruba","kralendijk":"America/Kralendijk",
+  const timezone = tzMap[location.toLowerCase()];
+  if (!timezone) return null;
 
-  // Europe (West/North)
-  "london":"Europe/London","manchester":"Europe/London","birmingham uk":"Europe/London","leeds":"Europe/London","liverpool":"Europe/London","edinburgh":"Europe/London","glasgow":"Europe/London","belfast":"Europe/London","cardiff":"Europe/London","bristol":"Europe/London","oxford":"Europe/London","cambridge uk":"Europe/London",
-  "dublin":"Europe/Dublin","cork":"Europe/Dublin","galway":"Europe/Dublin","limerick":"Europe/Dublin",
-  "lisbon":"Europe/Lisbon","porto":"Europe/Lisbon","funchal":"Atlantic/Madeira","ponta delgada":"Atlantic/Azores",
-  "paris":"Europe/Paris","lyon":"Europe/Paris","marseille":"Europe/Paris","toulouse":"Europe/Paris","nice":"Europe/Paris","nantes":"Europe/Paris","strasbourg":"Europe/Paris","lille":"Europe/Paris","bordeaux":"Europe/Paris","montpellier":"Europe/Paris",
-  "brussels":"Europe/Brussels","antwerp":"Europe/Brussels","ghent":"Europe/Brussels","bruges":"Europe/Brussels",
-  "amsterdam":"Europe/Amsterdam","rotterdam":"Europe/Amsterdam","the hague":"Europe/Amsterdam","utrecht":"Europe/Amsterdam","eindhoven":"Europe/Amsterdam",
-  "luxembourg":"Europe/Luxembourg","monaco":"Europe/Monaco","andorra la vella":"Europe/Andorra","valletta":"Europe/Malta",
-
-  // Europe (Central)
-  "berlin":"Europe/Berlin","hamburg":"Europe/Berlin","munich":"Europe/Berlin","frankfurt":"Europe/Berlin","stuttgart":"Europe/Berlin","dusseldorf":"Europe/Berlin","leipzig":"Europe/Berlin","dresden":"Europe/Berlin","hannover":"Europe/Berlin","nuremberg":"Europe/Berlin","bremen":"Europe/Berlin","bonn":"Europe/Berlin","cologne":"Europe/Berlin",
-  "vienna":"Europe/Vienna","salzburg":"Europe/Vienna","graz":"Europe/Vienna","innsbruck":"Europe/Vienna","linz":"Europe/Vienna",
-  "zurich":"Europe/Zurich","geneva":"Europe/Zurich","basel":"Europe/Zurich","lausanne":"Europe/Zurich","bern":"Europe/Zurich","lugano":"Europe/Zurich",
-  "prague":"Europe/Prague","brno":"Europe/Prague","ostrava":"Europe/Prague",
-  "warsaw":"Europe/Warsaw","krakow":"Europe/Warsaw","wroclaw":"Europe/Warsaw","gdansk":"Europe/Warsaw","poznan":"Europe/Warsaw","lodz":"Europe/Warsaw",
-  "budapest":"Europe/Budapest","debrecen":"Europe/Budapest","szeged":"Europe/Budapest",
-  "bratislava":"Europe/Bratislava","kosice":"Europe/Bratislava",
-  "ljubljana":"Europe/Ljubljana","maribor":"Europe/Ljubljana","zagreb":"Europe/Zagreb","split":"Europe/Zagreb","dubrovnik":"Europe/Zagreb","sarajevo":"Europe/Sarajevo","banja luka":"Europe/Sarajevo","belgrade":"Europe/Belgrade","novi sad":"Europe/Belgrade","podgorica":"Europe/Podgorica","tirana":"Europe/Tirane","skopje":"Europe/Skopje","sofia":"Europe/Sofia","bucharest":"Europe/Bucharest","cluj napoca":"Europe/Bucharest","timisoara":"Europe/Bucharest","iasi":"Europe/Bucharest",
-
-  // Europe (South)
-  "madrid":"Europe/Madrid","barcelona":"Europe/Madrid","valencia":"Europe/Madrid","seville":"Europe/Madrid","malaga":"Europe/Madrid","bilbao":"Europe/Madrid","zaragoza":"Europe/Madrid","palma de mallorca":"Europe/Madrid","las palmas":"Atlantic/Canary","santa cruz de tenerife":"Atlantic/Canary",
-  "rome":"Europe/Rome","milan":"Europe/Rome","naples":"Europe/Rome","turin":"Europe/Rome","florence":"Europe/Rome","venice":"Europe/Rome","bologna":"Europe/Rome","genoa":"Europe/Rome","palermo":"Europe/Rome","catania":"Europe/Rome",
-  "athens":"Europe/Athens","thessaloniki":"Europe/Athens","heraklion":"Europe/Athens","patras":"Europe/Athens","rhodes":"Europe/Athens",
-  "valletta":"Europe/Malta","san marino":"Europe/Rome","vaduz":"Europe/Zurich",
-
-  // Europe (East & Russia/Türkiye/Caucasus)
-  "istanbul":"Europe/Istanbul","ankara":"Europe/Istanbul","izmir":"Europe/Istanbul","bursa":"Europe/Istanbul","antalya":"Europe/Istanbul","adana":"Europe/Istanbul","konya":"Europe/Istanbul","gaziantep":"Europe/Istanbul","trabzon":"Europe/Istanbul","diyarbakir":"Europe/Istanbul","edirne":"Europe/Istanbul",
-  "moscow":"Europe/Moscow","saint petersburg":"Europe/Moscow","st petersburg":"Europe/Moscow","kazan":"Europe/Moscow","yekaterinburg":"Asia/Yekaterinburg","novosibirsk":"Asia/Novosibirsk","omsk":"Asia/Omsk","irkutsk":"Asia/Irkutsk","krasnoyarsk":"Asia/Krasnoyarsk","vladivostok":"Asia/Vladivostok","samara":"Europe/Samara","ufa":"Asia/Yekaterinburg","perm":"Asia/Yekaterinburg","khabarovsk":"Asia/Vladivostok","tomsk":"Asia/Tomsk","barnaul":"Asia/Barnaul","novokuznetsk":"Asia/Novokuznetsk",
-  "kyiv":"Europe/Kyiv","lviv":"Europe/Kyiv","odesa":"Europe/Kyiv","kharkiv":"Europe/Kyiv","dnipro":"Europe/Kyiv",
-  "minsk":"Europe/Minsk","chisinau":"Europe/Chisinau",
-  "tbilisi":"Asia/Tbilisi","yerevan":"Asia/Yerevan","baku":"Asia/Baku",
-  "jerusalem":"Asia/Jerusalem","tel aviv":"Asia/Jerusalem","haifa":"Asia/Jerusalem",
-  "amman":"Asia/Amman","beirut":"Asia/Beirut","damascus":"Asia/Damascus","baghdad":"Asia/Baghdad","kuwait city":"Asia/Kuwait","riyadh":"Asia/Riyadh","jeddah":"Asia/Riyadh","mecca":"Asia/Riyadh","medina":"Asia/Riyadh","doha":"Asia/Qatar","manama":"Asia/Bahrain","muscat":"Asia/Muscat","dubai":"Asia/Dubai","abu dhabi":"Asia/Dubai","sharjah":"Asia/Dubai",
-
-  // Central & South Asia
-  "tehran":"Asia/Tehran","mashhad":"Asia/Tehran","isfahan":"Asia/Tehran","tabriz":"Asia/Tehran","shiraz":"Asia/Tehran",
-  "kabul":"Asia/Kabul","ashgabat":"Asia/Ashgabat","tashkent":"Asia/Tashkent","samarkand":"Asia/Samarkand","almaty":"Asia/Almaty","astana":"Asia/Almaty","nur sultan":"Asia/Almaty","bishkek":"Asia/Bishkek","dushanbe":"Asia/Dushanbe",
-  "islamabad":"Asia/Karachi","karachi":"Asia/Karachi","lahore":"Asia/Karachi","rawalpindi":"Asia/Karachi",
-  "delhi":"Asia/Kolkata","new delhi":"Asia/Kolkata","mumbai":"Asia/Kolkata","kolkata":"Asia/Kolkata","chennai":"Asia/Kolkata","bengaluru":"Asia/Kolkata","bangalore":"Asia/Kolkata","hyderabad in":"Asia/Kolkata","pune":"Asia/Kolkata","ahmedabad":"Asia/Kolkata","jaipur":"Asia/Kolkata","kochi":"Asia/Kolkata",
-  "kathmandu":"Asia/Kathmandu","thimphu":"Asia/Thimphu","colombo":"Asia/Colombo","male":"Indian/Maldives","dhaka":"Asia/Dhaka",
-
-  // Southeast Asia
-  "yangon":"Asia/Yangon","naypyidaw":"Asia/Yangon",
-  "bangkok":"Asia/Bangkok","phuket":"Asia/Bangkok","chiang mai":"Asia/Bangkok",
-  "hanoi":"Asia/Ho_Chi_Minh","ho chi minh city":"Asia/Ho_Chi_Minh","saigon":"Asia/Ho_Chi_Minh","da nang":"Asia/Ho_Chi_Minh",
-  "vientiane":"Asia/Vientiane","phnom penh":"Asia/Phnom_Penh",
-  "kuala lumpur":"Asia/Kuala_Lumpur","george town penang":"Asia/Kuala_Lumpur","kuching":"Asia/Kuching","kota kinabalu":"Asia/Kuching",
-  "singapore":"Asia/Singapore",
-  "jakarta":"Asia/Jakarta","bandung":"Asia/Jakarta","surabaya":"Asia/Jakarta","yogyakarta":"Asia/Jakarta","denpasar":"Asia/Makassar","bali":"Asia/Makassar","medan":"Asia/Jakarta","makassar":"Asia/Makassar","jayapura":"Asia/Jayapura",
-  "manila":"Asia/Manila","cebu city":"Asia/Manila","davao":"Asia/Manila","iloilo city":"Asia/Manila","bacolod":"Asia/Manila","cagayan de oro":"Asia/Manila","general santos":"Asia/Manila","taguig":"Asia/Manila","quezon city":"Asia/Manila","pasig":"Asia/Manila","makati":"Asia/Manila","pasay":"Asia/Manila","caloocan":"Asia/Manila","mandaluyong":"Asia/Manila",
-
-  // East Asia
-  "beijing":"Asia/Shanghai","shanghai":"Asia/Shanghai","shenzhen":"Asia/Shanghai","guangzhou":"Asia/Shanghai","chengdu":"Asia/Shanghai","chongqing":"Asia/Chongqing","tianjin":"Asia/Shanghai","wuhan":"Asia/Shanghai","xi'an":"Asia/Shanghai","xian":"Asia/Shanghai","hangzhou":"Asia/Shanghai","nanjing":"Asia/Shanghai","suzhou":"Asia/Shanghai","qingdao":"Asia/Shanghai","dalian":"Asia/Shanghai","harbin":"Asia/Harbin",
-  "hong kong":"Asia/Hong_Kong","macau":"Asia/Macau",
-  "taipei":"Asia/Taipei","kaohsiung":"Asia/Taipei","taichung":"Asia/Taipei",
-  "tokyo":"Asia/Tokyo","osaka":"Asia/Tokyo","kyoto":"Asia/Tokyo","yokohama":"Asia/Tokyo","sapporo":"Asia/Tokyo","fukuoka":"Asia/Tokyo","nagoya":"Asia/Tokyo","kobe":"Asia/Tokyo","hiroshima":"Asia/Tokyo","sendai":"Asia/Tokyo","naha":"Asia/Tokyo",
-  "seoul":"Asia/Seoul","incheon":"Asia/Seoul","busan":"Asia/Seoul","daegu":"Asia/Seoul","daejeon":"Asia/Seoul","gwangju kr":"Asia/Seoul","ulsan":"Asia/Seoul",
-
-  // Western Asia & Middle East (extras)
-  "isfahan":"Asia/Tehran","esfahan":"Asia/Tehran","doha":"Asia/Qatar","manama":"Asia/Bahrain","sana'a":"Asia/Aden","sanaa":"Asia/Aden","aden":"Asia/Aden",
-
-  // Africa (North & West)
-  "cairo":"Africa/Cairo","alexandria eg":"Africa/Cairo","giza":"Africa/Cairo",
-  "casablanca":"Africa/Casablanca","rabat":"Africa/Casablanca","marrakesh":"Africa/Casablanca","marrakech":"Africa/Casablanca","tangier":"Africa/Casablanca",
-  "algiers":"Africa/Algiers","oran":"Africa/Algiers","constantine":"Africa/Algiers",
-  "tunis":"Africa/Tunis","tripoli ly":"Africa/Tripoli",
-  "lagos":"Africa/Lagos","abuja":"Africa/Lagos","ibadan":"Africa/Lagos","kano":"Africa/Lagos","port harcourt":"Africa/Lagos",
-  "accra":"Africa/Accra","kumasi":"Africa/Accra",
-  "abidjan":"Africa/Abidjan","dakar":"Africa/Dakar","bamako":"Africa/Bamako","conakry":"Africa/Conakry","freetown":"Africa/Freetown","banjul":"Africa/Banjul","bissau":"Africa/Bissau","monrovia":"Africa/Monrovia","ouagadougou":"Africa/Ouagadougou","niamey":"Africa/Niamey","lome":"Africa/Lome","porto novo":"Africa/Porto-Novo","cotonou":"Africa/Porto-Novo","nouakchott":"Africa/Nouakchott","praia":"Atlantic/Cape_Verde",
-
-  // Africa (Central, East & South)
-  "nairobi":"Africa/Nairobi","mombasa":"Africa/Nairobi","kampala":"Africa/Kampala","addis ababa":"Africa/Addis_Ababa","dar es salaam":"Africa/Dar_es_Salaam","arusha":"Africa/Dar_es_Salaam","lusaka":"Africa/Lusaka","harare":"Africa/Harare","maputo":"Africa/Maputo","antananarivo":"Indian/Antananarivo","victoria seychelles":"Indian/Mahe","mahe":"Indian/Mahe","moroni":"Indian/Comoro","port louis":"Indian/Mauritius","saint denis re":"Indian/Reunion",
-  "johannesburg":"Africa/Johannesburg","pretoria":"Africa/Johannesburg","cape town":"Africa/Johannesburg","durban":"Africa/Johannesburg","gaborone":"Africa/Gaborone","windhoek":"Africa/Windhoek","mbabane":"Africa/Johannesburg","maseru":"Africa/Johannesburg","antananarivo mg":"Indian/Antananarivo",
-
-  // Oceania
-  "sydney":"Australia/Sydney","melbourne":"Australia/Melbourne","brisbane":"Australia/Brisbane","gold coast":"Australia/Brisbane","canberra":"Australia/Sydney","hobart":"Australia/Hobart","adelaide":"Australia/Adelaide","perth":"Australia/Perth","darwin":"Australia/Darwin","alice springs":"Australia/Darwin",
-  "auckland":"Pacific/Auckland","wellington":"Pacific/Auckland","christchurch":"Pacific/Auckland","dunedin":"Pacific/Auckland",
-  "suva":"Pacific/Fiji","nadi":"Pacific/Fiji","apia":"Pacific/Apia","nuku alofa":"Pacific/Tongatapu","port moresby":"Pacific/Port_Moresby","honiara":"Pacific/Guadalcanal","port vila":"Pacific/Efate","palikir":"Pacific/Pohnpei","majuro":"Pacific/Majuro","kwajalein":"Pacific/Kwajalein","tarawa":"Pacific/Tarawa","funafuti":"Pacific/Funafuti","palau":"Pacific/Palau","noumea":"Pacific/Noumea","papeete":"Pacific/Tahiti","rikitea":"Pacific/Gambier","rarotonga":"Pacific/Rarotonga","niue":"Pacific/Niue","midway":"Pacific/Midway","chatham":"Pacific/Chatham","norfolk island":"Pacific/Norfolk","lord howe":"Australia/Lord_Howe","pitcairn":"Pacific/Pitcairn","galapagos":"Pacific/Galapagos","easter island":"Pacific/Easter",
-  "port chalmers":"Pacific/Auckland",
-
-  // Antarctica
-  "mcmurdo":"Antarctica/McMurdo","rothera":"Antarctica/Rothera","troll":"Antarctica/Troll","davis":"Antarctica/Davis","casey":"Antarctica/Casey","mawson":"Antarctica/Mawson","vostok":"Antarctica/Vostok","syowa":"Antarctica/Syowa","palmer":"Antarctica/Palmer",
-
-  // Middle & South Atlantic islands
-  "st helena":"Atlantic/St_Helena","stanley":"Atlantic/Stanley","reykjavik":"Atlantic/Reykjavik","praia cv":"Atlantic/Cape_Verde","faial":"Atlantic/Azores",
-
-  // UAE & Gulf aliases (extra)
-  "al ain":"Asia/Dubai","ras al khaimah":"Asia/Dubai","fujairah":"Asia/Dubai","ajman":"Asia/Dubai",
-
-  // Additional city aliases (Europe extras)
-  "oslo":"Europe/Oslo","bergen":"Europe/Oslo","stockholm":"Europe/Stockholm","gothenburg":"Europe/Stockholm","malmo":"Europe/Stockholm","uppsala":"Europe/Stockholm",
-  "helsinki":"Europe/Helsinki","tampere":"Europe/Helsinki","turku":"Europe/Helsinki","oulu":"Europe/Helsinki",
-  "copenhagen":"Europe/Copenhagen","aarhus":"Europe/Copenhagen","odense":"Europe/Copenhagen",
-  "reykjavik":"Atlantic/Reykjavik","faroe":"Atlantic/Faroe","torshavn":"Atlantic/Faroe",
-  "vilnius":"Europe/Vilnius","kaunas":"Europe/Vilnius","klaipeda":"Europe/Vilnius",
-  "riga":"Europe/Riga","daugavpils":"Europe/Riga",
-  "tallinn":"Europe/Tallinn","tartu":"Europe/Tallinn",
-
-  // North Africa & Levant extras
-  "jericho":"Asia/Jerusalem","gaza city":"Asia/Gaza","hebron":"Asia/Hebron","nablus":"Asia/Hebron",
-  "suez":"Africa/Cairo","aswan":"Africa/Cairo","luxor":"Africa/Cairo","tripoli lb":"Asia/Beirut", // common confusion alias
-
-  // More South Asia aliases
-  "sri jayawardenepura kotte":"Asia/Colombo","kotte":"Asia/Colombo","trivandrum":"Asia/Kolkata","thiruvananthapuram":"Asia/Kolkata",
-  "goa":"Asia/Kolkata","lucknow":"Asia/Kolkata","bhopal":"Asia/Kolkata","kanpur":"Asia/Kolkata","patna":"Asia/Kolkata","guwahati":"Asia/Kolkata","ranchi":"Asia/Kolkata","coimbatore":"Asia/Kolkata","visakhapatnam":"Asia/Kolkata","vishakhapatnam":"Asia/Kolkata","kozhikode":"Asia/Kolkata","calicut":"Asia/Kolkata","mysuru":"Asia/Kolkata","mysore":"Asia/Kolkata","vijayawada":"Asia/Kolkata","erode":"Asia/Kolkata","madurai":"Asia/Kolkata","tiruchirappalli":"Asia/Kolkata","trichy":"Asia/Kolkata","varanasi":"Asia/Kolkata","agra":"Asia/Kolkata","srinagar":"Asia/Kolkata","amritsar":"Asia/Kolkata","chandigarh":"Asia/Kolkata","noida":"Asia/Kolkata","gurugram":"Asia/Kolkata","gurgaon":"Asia/Kolkata",
-  "peshawar":"Asia/Karachi","quetta":"Asia/Karachi","multan":"Asia/Karachi","faisalabad":"Asia/Karachi",
-  "chittagong":"Asia/Dhaka","khulna":"Asia/Dhaka","sylhet":"Asia/Dhaka",
-
-  // China aliases (extras)
-  "urumqi":"Asia/Urumqi","kashgar":"Asia/Urumqi","urumchi":"Asia/Urumqi","lhasa":"Asia/Urumqi", // official IANA lacks Asia/Lhasa; many map Tibet to Asia/Urumqi
-  "nanchang":"Asia/Shanghai","zhengzhou":"Asia/Shanghai","taiyuan":"Asia/Shanghai","changsha":"Asia/Shanghai","haikou":"Asia/Shanghai","sanya":"Asia/Shanghai","xiamen":"Asia/Shanghai","fuzhou":"Asia/Shanghai","jinan":"Asia/Shanghai","shenyang":"Asia/Shanghai","changchun":"Asia/Shanghai","ningbo":"Asia/Shanghai","wuxi":"Asia/Shanghai","dongguan":"Asia/Shanghai","foshan":"Asia/Shanghai","wenzhou":"Asia/Shanghai",
-
-  // Japan & Korea extras
-  "okinawa":"Asia/Tokyo","kawasaki":"Asia/Tokyo","saitama":"Asia/Tokyo","chiba":"Asia/Tokyo","kitakyushu":"Asia/Tokyo","kumamoto":"Asia/Tokyo","niigata":"Asia/Tokyo","kanazawa":"Asia/Tokyo","nagano":"Asia/Tokyo","akita":"Asia/Tokyo","aomori":"Asia/Tokyo","morioka":"Asia/Tokyo","matsuyama":"Asia/Tokyo","tokushima":"Asia/Tokyo","takamatsu":"Asia/Tokyo",
-  "gyeonggi":"Asia/Seoul","jeju":"Asia/Seoul","gwangju":"Asia/Seoul","suwon":"Asia/Seoul","ilsan":"Asia/Seoul","daegu":"Asia/Seoul",
-
-  // Indonesia & Philippines extras
-  "bandar lampung":"Asia/Jakarta","palembang":"Asia/Jakarta","padang":"Asia/Jakarta","pekanbaru":"Asia/Jakarta","batam":"Asia/Jakarta","pontianak":"Asia/Pontianak","banjarmasin":"Asia/Makassar","manado":"Asia/Makassar","ambon":"Asia/Jayapura","sorong":"Asia/Jayapura",
-  "quezon":"Asia/Manila","antipolo":"Asia/Manila","calamba":"Asia/Manila","binan":"Asia/Manila","san pedro laguna":"Asia/Manila","santa rosa laguna":"Asia/Manila","angeles city":"Asia/Manila","olongapo":"Asia/Manila","subic":"Asia/Manila","bataan":"Asia/Manila","pampanga":"Asia/Manila","baguio":"Asia/Manila","laoag":"Asia/Manila","vigan":"Asia/Manila","tacloban":"Asia/Manila","dumaguete":"Asia/Manila","roxas city":"Asia/Manila","legazpi":"Asia/Manila","naga":"Asia/Manila","butuan":"Asia/Manila","surigao":"Asia/Manila","zamboanga":"Asia/Manila","cotabato":"Asia/Manila","pagadian":"Asia/Manila","sultan kudarat":"Asia/Manila","kidapawan":"Asia/Manila",
-
-  // Australia extras
-  "geelong":"Australia/Melbourne","ballarat":"Australia/Melbourne","wollongong":"Australia/Sydney","newcastle nsw":"Australia/Sydney","townsville":"Australia/Brisbane","cairns":"Australia/Brisbane","toowoomba":"Australia/Brisbane","launceston":"Australia/Hobart","whyalla":"Australia/Adelaide","mount gambier":"Australia/Adelaide","geraldton":"Australia/Perth","broome":"Australia/Perth","kalgoorlie":"Australia/Perth",
-
-  // New Zealand extras
-  "hamilton nz":"Pacific/Auckland","tauranga":"Pacific/Auckland","napier":"Pacific/Auckland","hastings nz":"Pacific/Auckland","palmerston north":"Pacific/Auckland","nelson nz":"Pacific/Auckland","rotorua":"Pacific/Auckland","whangarei":"Pacific/Auckland","gisborne":"Pacific/Auckland","invercargill":"Pacific/Auckland",
-
-  // Central America extras
-  "antigua guatemala":"America/Guatemala","quetzaltenango":"America/Guatemala","bluefields":"America/Managua","leon ni":"America/Managua",
-
-  // South America extras
-  "arequipa":"America/Lima","trujillo pe":"America/Lima","cuzco":"America/Lima","cusco":"America/Lima",
-  "valledupar":"America/Bogota","barranquilla":"America/Bogota","cartagena co":"America/Bogota","pereira":"America/Bogota","bucaramanga":"America/Bogota",
-  "mar del plata":"America/Argentina/Buenos_Aires","neuquen":"America/Argentina/Neuquen","salta":"America/Argentina/Salta","posadas":"America/Argentina/Cordoba",
-  "curitiba":"America/Sao_Paulo","goiania":"America/Sao_Paulo","joao pessoa":"America/Fortaleza","maceio":"America/Maceio","santarem":"America/Santarem","porto velho":"America/Porto_Velho","macapa":"America/Belem",
-
-  // Caribbean extras
-  "san juan pr":"America/Puerto_Rico","caguas":"America/Puerto_Rico","ponce":"America/Puerto_Rico","mayaguez":"America/Puerto_Rico",
-  "cap haitien":"America/Port-au-Prince","santiago de los caballeros":"America/Santo_Domingo","santo domingo este":"America/Santo_Domingo","la romana":"America/Santo_Domingo",
-  "george town cayman":"America/Cayman","kingstown":"America/St_Vincent","castries lc":"America/St_Lucia",
-
-  // Indian Ocean & Subantarctic
-  "reunion":"Indian/Reunion","mauritius":"Indian/Mauritius","port louis mu":"Indian/Mauritius","antananarivo mg":"Indian/Antananarivo",
-  "kerguelen":"Indian/Kerguelen","chagos":"Indian/Chagos",
-
-  // GMT/UTC & Etc
-  "gmt":"Etc/GMT","utc":"UTC","greenwich":"Europe/London","iceland":"Atlantic/Reykjavik",
-
-  // Special territories
-  "jersey":"Europe/Jersey","guernsey":"Europe/Guernsey","isle of man":"Europe/Isle_of_Man","gibraltar":"Europe/Gibraltar","ceuta":"Africa/Ceuta","melilla":"Africa/Ceuta",
-  "madeira":"Atlantic/Madeira","azores":"Atlantic/Azores","canary islands":"Atlantic/Canary",
-
-  // Additional Middle East & Caucasus extras
-  "erbil":"Asia/Baghdad","sulaymaniyah":"Asia/Baghdad","mosul":"Asia/Baghdad","aleppo":"Asia/Damascus","homs":"Asia/Damascus",
-  "shiraz":"Asia/Tehran","ahvaz":"Asia/Tehran","qom":"Asia/Tehran","karaj":"Asia/Tehran",
-
-  // Turkey extras (aliases)
-  "izmit":"Europe/Istanbul","eskisehir":"Europe/Istanbul","kayseri":"Europe/Istanbul","samsun":"Europe/Istanbul","malatya":"Europe/Istanbul","van":"Europe/Istanbul","gaziosmanpasa":"Europe/Istanbul","mersin":"Europe/Istanbul","hatay":"Europe/Istanbul","sanliurfa":"Europe/Istanbul","kocaeli":"Europe/Istanbul",
-
-  // UAE/KSA extras
-  "al khobar":"Asia/Riyadh","dammam":"Asia/Riyadh","taif":"Asia/Riyadh","tabuk":"Asia/Riyadh","abha":"Asia/Riyadh",
-
-  // Palestine extras
-  "netanya":"Asia/Jerusalem","ashdod":"Asia/Jerusalem","beer sheva":"Asia/Jerusalem","beersheba":"Asia/Jerusalem","nazareth":"Asia/Jerusalem","ramallah":"Asia/Hebron"
-};
-
-
-    const timezone = tzMap[location.toLowerCase()];
-    if (!timezone) return null;
-
-    const now = new Date();
-    const options = { timeZone: timezone, timeStyle: 'medium', hour12: false };
-    return now.toLocaleTimeString('en-US', options);
+  const now = new Date();
+  const options = { timeZone: timezone, timeStyle: 'medium', hour12: false };
+  return now.toLocaleTimeString('en-US', options);
 }
 
 function randomCompliment() {
-    const compliments = [
-        "You’re an awesome friend.",
-        "You light up the room.",
-        "You have a great sense of humor.",
-        "You make a difference.",
-        "You're like a ray of sunshine."
-    ];
-    return compliments[Math.floor(Math.random() * compliments.length)];
+  const compliments = [
+    "You’re an awesome friend.",
+    "You light up the room.",
+    "You have a great sense of humor.",
+    "You make a difference.",
+    "You're like a ray of sunshine."
+  ];
+  return compliments[Math.floor(Math.random() * compliments.length)];
 }
 
 function randomEncouragement() {
-    const encourages = [
-        "Keep going—you’ve got this!",
-        "Don’t give up now!",
-        "Every step counts.",
-        "Believe in yourself.",
-        "You can do anything."
-    ];
-    return encourages[Math.floor(Math.random() * encourages.length)];
+  const encourages = [
+    "Keep going—you’ve got this!",
+    "Don’t give up now!",
+    "Every step counts.",
+    "Believe in yourself.",
+    "You can do anything."
+  ];
+  return encourages[Math.floor(Math.random() * encourages.length)];
 }
 
-function base64Encode(str) { return btoa(str); }
-function base64Decode(str) { try { return atob(str); } catch { return 'Invalid Base64'; } }
-function hexToDec(str) { return parseInt(str.replace(/^0x/, ''), 16).toString(); }
-function decToHex(num) { return Number(num).toString(16); }
-function textToCharCodes(text) { return text.split('').map(c => c.charCodeAt(0)).join(' '); }
-function charCodesToText(codes) { return String.fromCharCode(...codes.split(/\s+/).map(n => +n)); }
-function countWords(text) { return text.trim().split(/\s+/).length; }
-function titleCase(text) { return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '); }
-function slugify(text) { return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+function base64Encode(str) {
+  return btoa(str);
+}
+
+function base64Decode(str) {
+  try {
+    return atob(str);
+  } catch {
+    return 'Invalid Base64';
+  }
+}
+
+function hexToDec(str) {
+  return parseInt(str.replace(/^0x/, ''), 16).toString();
+}
+
+function decToHex(num) {
+  return Number(num).toString(16);
+}
+
+function textToCharCodes(text) {
+  return text.split('').map(c => c.charCodeAt(0)).join(' ');
+}
+
+function charCodesToText(codes) {
+  return String.fromCharCode(...codes.split(/\s+/).map(n => +n));
+}
+
+function countWords(text) {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function titleCase(text) {
+  return text.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+function slugify(text) {
+  return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
 
 function isPrime(n) {
-    n = Number(n);
-    if (n < 2) return false;
-    for (let i = 2; i <= Math.sqrt(n); i++) if (n % i === 0) return false;
-    return true;
+  n = Number(n);
+  if (n < 2) return false;
+  for (let i = 2; i <= Math.sqrt(n); i++) {
+    if (n % i === 0) return false;
+  }
+  return true;
 }
 
-function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a; }
-function lcm(a, b) { return Math.abs(a * b) / gcd(a, b); }
+function gcd(a, b) {
+  a = Math.abs(Number(a));
+  b = Math.abs(Number(b));
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+
+function lcm(a, b) {
+  a = Number(a);
+  b = Number(b);
+  return Math.abs(a * b) / gcd(a, b);
+}
 
 function fibonacci(n) {
-    n = Number(n);
-    if (n < 2) return n;
-    let a = 0, b = 1;
-    for (let i = 2; i <= n; i++) [a, b] = [b, a + b];
-    return b;
+  n = Number(n);
+  if (n < 2) return n;
+  let a = 0, b = 1;
+  for (let i = 2; i <= n; i++) [a, b] = [b, a + b];
+  return b;
 }
 
 function generatePassword(length = 8) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()';
-    let pw = '';
-    for (let i = 0; i < length; i++) pw += chars.charAt(Math.floor(Math.random() * chars.length));
-    return pw;
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()';
+  let pw = '';
+  for (let i = 0; i < length; i++) {
+    pw += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pw;
 }
 
 function daysUntil(dateStr) {
-    const now = new Date();
-    const then = new Date(dateStr);
-    const diff = then - now;
-    return diff > 0 ? Math.ceil(diff / (1000 * 60 * 60 * 24)) + ' days' : 'Date passed';
+  const now = new Date();
+  const then = new Date(dateStr);
+  const diff = then - now;
+  return diff > 0 ? Math.ceil(diff / (1000 * 60 * 60 * 24)) + ' days' : 'Date passed';
 }
 
 function generateUUID() {
-    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-    );
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
 }
 
 function generateRandomString(length = 8) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let s = '';
-    for (let i = 0; i < length; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
-    return s;
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let s = '';
+  for (let i = 0; i < length; i++) {
+    s += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return s;
+}
+
+function rollDice(sides = 6) {
+  sides = Number(sides);
+  if (!Number.isFinite(sides) || sides < 2) return 'Invalid dice';
+  return String(Math.floor(Math.random() * sides) + 1);
+}
+
+function coinFlip() {
+  return Math.random() < 0.5 ? 'Heads' : 'Tails';
+}
+
+function epochToHere(value) {
+  let n = String(value).trim();
+  if (!/^-?\d+$/.test(n)) return 'Invalid epoch';
+
+  let num = Number(n);
+  if (n.length === 10) num *= 1000;
+
+  const d = new Date(num);
+  if (Number.isNaN(d.getTime())) return 'Invalid epoch';
+
+  return d.toLocaleString();
+}
+
+function toEpoch(dateStr) {
+  const parsed = new Date(dateStr);
+  if (Number.isNaN(parsed.getTime())) return 'Invalid date';
+  return String(Math.floor(parsed.getTime() / 1000));
 }
 
 const emojiMap = {
-    "grinning face":"😀","grin":"😁","smiley":"😃","smile":"😄","sweat smile":"😅","joy":"😂","rofl":"🤣","relaxed":"☺️","blush":"😊","innocent":"😇",
-    "slightly_smiling_face":"🙂","upside_down":"🙃","wink":"😉","relieved":"😌","heart eyes":"😍","kissing_heart":"😘","kissing":"😗","kissing_smiling_eyes":"😙","kissing_closed_eyes":"😚",
-    "yum":"😋","stuck out tongue":"😛","stuck out tongue wink":"😜","stuck out tongue closed eyes":"😝","money_mouth":"🤑","hug":"🤗","nerd":"🤓","sunglasses":"😎","star_struck":"🤩",
-    "thinking":"🤔","zipper_mouth":"🤐","raised_eyebrow":"🤨","neutral":"😐","expressionless":"😑","no_mouth":"😶","roll_eyes":"🙄","smirk":"😏","persevere":"😣","disappointed_relieved":"😥",
-    "cold_sweat":"😰","pensive":"😔","confused":"😕","worried":"😟","slightly_frowning":"🙁","frowning":"☹️","anguished":"😧","open_mouth":"😮","grimacing":"😬","hushed":"😯","astonished":"😲",
-    "flushed":"😳","pleading":"🥺","frowning2":"😦","anguished2":"😧","cry":"😢","disappointed":"😞","scream":"😱","fearful":"😨","tired_face":"😫","weary":"😩","triumph":"😤",
-    "angry":"😠","rage":"😡","poop":"💩","thumbsup":"👍","thumbsdown":"👎","clap":"👏","raised_hands":"🙌","pray":"🙏","muscle":"💪","eyes":"👀","ear":"👂","nose":"👃","tongue":"👅",
-    "lips":"👄","kiss":"💋","crown":"👑","womans hat":"👒","eyeglasses":"👓","necktie":"👔","shirt":"👕","jeans":"👖","dress":"👗","kimono":"👘","bikini":"👙","sandal":"👡","boot":"👢",
-    "mans shoe":"👞","high heel":"👠","sock":"🧦","gloves":"🧤","scarf":"🧣","tophat":"🎩","billed cap":"🧢","flag us":"🇺🇸","flag gb":"🇬🇧","flag ca":"🇨🇦","flag de":"🇩🇪","flag fr":"🇫🇷",
-    "flag es":"🇪🇸","flag it":"🇮🇹","flag jp":"🇯🇵","flag cn":"🇨🇳","flag in":"🇮🇳","flag br":"🇧🇷","flag ru":"🇷🇺","flag za":"🇿🇦","flag au":"🇦🇺","flag nz":"🇳🇿","flag ng":"🇳🇬","flag eg":"🇪🇬",
-    "flag ar":"🇦🇷","flag mx":"🇲🇽","flag kr":"🇰🇷","flag tr":"🇹🇷",
-    "dog face":"🐶","cat face":"🐱","mouse face":"🐭","hamster":"🐹","rabbit":"🐰","fox face":"🦊","bear face":"🐻","koala":"🐨","tiger face":"🐯","lion face":"🦁","cow face":"🐮","pig face":"🐷",
-    "frog face":"🐸","octopus":"🐙","monkey face":"🐵","chicken":"🐔","penguin":"🐧","bird":"🐦","baby chick":"🐤","hatching chick":"🐣",
-    "sun":"☀️","moon":"🌙","star":"⭐️","cloud":"☁️","umbrella":"☂️","snowflake":"❄️","fire":"🔥","droplet":"💧","ocean":"🌊","volcano":"🌋","cactus":"🌵","palm tree":"🌴","evergreen tree":"🌲",
-    "deciduous tree":"🌳","fallen leaf":"🍂","maple leaf":"🍁","seedling":"🌱","flower":"🌸","rose":"🌹","sunflower":"🌻","blossom":"🌼",
-    "grapes":"🍇","watermelon":"🍉","tangerine":"🍊","banana":"🍌","pineapple":"🍍","apple":"🍎","pear":"🍐","peach":"🍑","strawberry":"🍓","cherries":"🍒","mango":"🥭","lemon":"🍋",
-    "coffee":"☕️","tea":"🍵","beer":"🍺","wine glass":"🍷","cocktail":"🍸","tropical drink":"🍹","birthday cake":"🎂","pizza":"🍕","hamburger":"🍔","fries":"🍟","hot dog":"🌭","taco":"🌮",
-    "burrito":"🌯","popcorn":"🍿","chocolate bar":"🍫","candy":"🍬","lollipop":"🍭","honey pot":"🍯"
+  "grinning face":"😀","grin":"😁","smiley":"😃","smile":"😄","sweat smile":"😅","joy":"😂","rofl":"🤣","relaxed":"☺️","blush":"😊","innocent":"😇",
+  "slightly_smiling_face":"🙂","upside_down":"🙃","wink":"😉","relieved":"😌","heart eyes":"😍","kissing_heart":"😘","kissing":"😗","kissing_smiling_eyes":"😙","kissing_closed_eyes":"😚",
+  "yum":"😋","stuck out tongue":"😛","stuck out tongue wink":"😜","stuck out tongue closed eyes":"😝","money_mouth":"🤑","hug":"🤗","nerd":"🤓","sunglasses":"😎","star_struck":"🤩",
+  "thinking":"🤔","zipper_mouth":"🤐","raised_eyebrow":"🤨","neutral":"😐","expressionless":"😑","no_mouth":"😶","roll_eyes":"🙄","smirk":"😏","persevere":"😣","disappointed_relieved":"😥",
+  "cold_sweat":"😰","pensive":"😔","confused":"😕","worried":"😟","slightly_frowning":"🙁","frowning":"☹️","anguished":"😧","open_mouth":"😮","grimacing":"😬","hushed":"😯","astonished":"😲",
+  "flushed":"😳","pleading":"🥺","frowning2":"😦","anguished2":"😧","cry":"😢","disappointed":"😞","scream":"😱","fearful":"😨","tired_face":"😫","weary":"😩","triumph":"😤",
+  "angry":"😠","rage":"😡","poop":"💩","thumbsup":"👍","thumbsdown":"👎","clap":"👏","raised_hands":"🙌","pray":"🙏","muscle":"💪","eyes":"👀","ear":"👂","nose":"👃","tongue":"👅",
+  "lips":"👄","kiss":"💋","crown":"👑","womans hat":"👒","eyeglasses":"👓","necktie":"👔","shirt":"👕","jeans":"👖","dress":"👗","kimono":"👘","bikini":"👙","sandal":"👡","boot":"👢",
+  "mans shoe":"👞","high heel":"👠","sock":"🧦","gloves":"🧤","scarf":"🧣","tophat":"🎩","billed cap":"🧢","flag us":"🇺🇸","flag gb":"🇬🇧","flag ca":"🇨🇦","flag de":"🇩🇪","flag fr":"🇫🇷",
+  "flag es":"🇪🇸","flag it":"🇮🇹","flag jp":"🇯🇵","flag cn":"🇨🇳","flag in":"🇮🇳","flag br":"🇧🇷","flag ru":"🇷🇺","flag za":"🇿🇦","flag au":"🇦🇺","flag nz":"🇳🇿","flag ng":"🇳🇬","flag eg":"🇪🇬",
+  "flag ar":"🇦🇷","flag mx":"🇲🇽","flag kr":"🇰🇷","flag tr":"🇹🇷",
+  "dog face":"🐶","cat face":"🐱","mouse face":"🐭","hamster":"🐹","rabbit":"🐰","fox face":"🦊","bear face":"🐻","koala":"🐨","tiger face":"🐯","lion face":"🦁","cow face":"🐮","pig face":"🐷",
+  "frog face":"🐸","octopus":"🐙","monkey face":"🐵","chicken":"🐔","penguin":"🐧","bird":"🐦","baby chick":"🐤","hatching chick":"🐣",
+  "sun":"☀️","moon":"🌙","star":"⭐️","cloud":"☁️","umbrella":"☂️","snowflake":"❄️","fire":"🔥","droplet":"💧","ocean":"🌊","volcano":"🌋","cactus":"🌵","palm tree":"🌴","evergreen tree":"🌲",
+  "deciduous tree":"🌳","fallen leaf":"🍂","maple leaf":"🍁","seedling":"🌱","flower":"🌸","rose":"🌹","sunflower":"🌻","blossom":"🌼",
+  "grapes":"🍇","watermelon":"🍉","tangerine":"🍊","banana":"🍌","pineapple":"🍍","apple":"🍎","pear":"🍐","peach":"🍑","strawberry":"🍓","cherries":"🍒","mango":"🥭","lemon":"🍋",
+  "coffee":"☕️","tea":"🍵","beer":"🍺","wine glass":"🍷","cocktail":"🍸","tropical drink":"🍹","birthday cake":"🎂","pizza":"🍕","hamburger":"🍔","fries":"🍟","hot dog":"🌭","taco":"🌮",
+  "burrito":"🌯","popcorn":"🍿","chocolate bar":"🍫","candy":"🍬","lollipop":"🍭","honey pot":"🍯"
 };
 
 let m;
 
 if (isMathExpression(query)) {
-    answer = evaluateMathExpression(query);
+  answer = evaluateMathExpression(query);
 } else if (query.includes('date') || query.includes('what date is it')) {
-    answer = getCurrentDate();
+  answer = getCurrentDate();
 } else if (query.includes('year') || query.includes('what year is it')) {
-    answer = getCurrentYear();
+  answer = getCurrentYear();
 } else if (query.includes('what time is it in')) {
-    const location = query.split('what time is it in')[1].trim();
-    answer = getTimeInTimezone(location) || 'Unknown location';
+  const location = query.split('what time is it in')[1].trim();
+  answer = getTimeInTimezone(location) || 'Unknown location';
 } else if (query.includes('what time is it')) {
-    answer = new Date().toLocaleTimeString();
+  answer = new Date().toLocaleTimeString();
 } else if (query.includes('day') || query.includes('what day is it')) {
-    const now = new Date();
-    const options = { weekday: 'long' };
-    answer = now.toLocaleDateString(undefined, options);
+  const now = new Date();
+  const options = { weekday: 'long' };
+  answer = now.toLocaleDateString(undefined, options);
 } else if (query.includes('u are cute') || query.includes('you are cute')) {
-    answer = "jifshfgdhjf >~< no u";
+  answer = "jifshfgdhjf >~< no u";
 } else if (query.includes('ur cute') || query.includes('your cute')) {
-    answer = "efkohgefgef >///< no u";
+  answer = "efkohgefgef >///< no u";
 } else if (query.includes('am i cute') || query.includes('am i a cutie?')) {
-    answer = "yesh :3 u are ";
+  answer = "yesh :3 u are ";
 } else if (query.includes('am i a good girl') || query.includes('am i a good boy?')) {
-    answer = query.includes('girl') ? "yesh :3 u are a good girl" : "yesh :3 u are a good boy";
+  answer = query.includes('girl') ? "yesh :3 u are a good girl" : "yesh :3 u are a good boy";
 } else if (query.includes('ur hot') || query.includes('you are hot')) {
-    answer = "jrifyehgyerfgu9wdswgfsafgydwgbfwdfge >~< ";
+  answer = "jrifyehgyerfgu9wdswgfsafgydwgbfwdfge >~< ";
 } else if (/^(?:emoji\s+(.+)|(.+)\s+emoji)$/.test(query)) {
-    const match = query.match(/^(?:emoji\s+(.+)|(.+)\s+emoji)$/);
-    let name = (match[1] || match[2]).trim().toLowerCase();
-    const keySpace = name.replace(/_/g, ' ');
-    const keyUnderscore = name.replace(/\s+/g, '_');
-    answer = emojiMap[keySpace] || emojiMap[keyUnderscore] || 'Unknown emoji';
+  const match = query.match(/^(?:emoji\s+(.+)|(.+)\s+emoji)$/);
+  let name = (match[1] || match[2]).trim().toLowerCase();
+  const keySpace = name.replace(/_/g, ' ');
+  const keyUnderscore = name.replace(/\s+/g, '_');
+  answer = emojiMap[keySpace] || emojiMap[keyUnderscore] || 'Unknown emoji';
 } else if (query.includes('compliment')) {
-    answer = randomCompliment();
+  answer = randomCompliment();
 } else if (query.includes('encouragement') || query.includes('encourage me')) {
-    answer = randomEncouragement();
+  answer = randomEncouragement();
 } else if (query.startsWith('base64 encode ')) {
-    answer = base64Encode(query.slice(14));
+  answer = base64Encode(query.slice(14));
 } else if (query.startsWith('base64 decode ')) {
-    answer = base64Decode(query.slice(14));
+  answer = base64Decode(query.slice(14));
 } else if ((m = /0x[0-9a-f]+/i.exec(query))) {
-    answer = hexToDec(m[0]);
+  answer = hexToDec(m[0]);
 } else if (/\d+\s+to\s+hex/i.test(query)) {
-    answer = decToHex(query.match(/\d+/)[0]);
+  answer = decToHex(query.match(/\d+/)[0]);
 } else if (query.startsWith('char codes for ')) {
-    answer = textToCharCodes(query.slice(15));
+  answer = textToCharCodes(query.slice(15));
 } else if (query.startsWith('text from codes ')) {
-    answer = charCodesToText(query.slice(16));
+  answer = charCodesToText(query.slice(16));
 } else if (query.startsWith('word count of ')) {
-    answer = String(countWords(query.slice(14)));
+  answer = String(countWords(query.slice(14)));
 } else if (query.startsWith('titlecase ')) {
-    answer = titleCase(query.slice(10));
+  answer = titleCase(query.slice(10));
 } else if (query.startsWith('slugify ')) {
-    answer = slugify(query.slice(8));
+  answer = slugify(query.slice(8));
 } else if (/\bprime\b/.test(query)) {
-    const n = query.match(/\d+/);
-    answer = n ? (isPrime(n[0]) ? 'Yes' : 'No') : 'No';
+  const n = query.match(/\d+/);
+  answer = n ? (isPrime(n[0]) ? 'Yes' : 'No') : 'No';
 } else if (query.includes('gcd of ')) {
-    const nums = query.match(/\d+/g);
-    answer = nums ? String(gcd(nums[0], nums[1])) : 'Invalid';
+  const nums = query.match(/\d+/g);
+  answer = nums ? String(gcd(nums[0], nums[1])) : 'Invalid';
 } else if (query.includes('lcm of ')) {
-    const nums = query.match(/\d+/g);
-    answer = nums ? String(lcm(nums[0], nums[1])) : 'Invalid';
+  const nums = query.match(/\d+/g);
+  answer = nums ? String(lcm(nums[0], nums[1])) : 'Invalid';
 } else if (/fib(?:onacci)?\s*\d+/i.test(query)) {
-    answer = String(fibonacci(query.match(/\d+/)[0]));
+  answer = String(fibonacci(query.match(/\d+/)[0]));
 } else if (query.startsWith('generate password')) {
-    const n = query.match(/\d+/);
-    answer = generatePassword(n ? Number(n[0]) : undefined);
+  const n = query.match(/\d+/);
+  answer = generatePassword(n ? Number(n[0]) : undefined);
 } else if (query.includes('days until ')) {
-    answer = daysUntil(query.split('days until ')[1].trim());
+  answer = daysUntil(query.split('days until ')[1].trim());
 } else if (query.includes('uuid')) {
-    answer = generateUUID();
+  answer = generateUUID();
 } else if (query.startsWith('random string')) {
-    const n = query.match(/\d+/);
-    answer = generateRandomString(n ? Number(n[0]) : undefined);
+  const n = query.match(/\d+/);
+  answer = generateRandomString(n ? Number(n[0]) : undefined);
+} else if (
+  query === 'roll a dice' ||
+  query === 'roll dice' ||
+  query === 'roll die'
+) {
+  answer = rollDice(6);
+} else if ((m = query.match(/^roll\s+d(\d+)$/i))) {
+  answer = rollDice(m[1]);
+} else if ((m = query.match(/^roll\s+(\d+)\s*sided\s*dice$/i))) {
+  answer = rollDice(m[1]);
+} else if (query === 'coinflip' || query === 'coin flip' || query === 'flip a coin') {
+  answer = coinFlip();
+} else if ((m = query.match(/^(?:epoch|unix|convert epoch)\s+(-?\d{10,13})$/i))) {
+  answer = epochToHere(m[1]);
+} else if ((m = query.match(/^to epoch\s+(.+)$/i))) {
+  answer = toEpoch(m[1]);
 }
 
 const upsellMessages = [
-    "[new] Try searching 'What's 4+4?'",
-    "[new] Ask 'What's the date today?'",
-    "[new] Try 'What time is it in California?'",
-    "[new] Ask 'What's the current year?'",
-    "[new] Try searching 'What's 7*8?'"
+  "[new] Try searching 'What's 4+4?'",
+  "[new] Ask 'What's the date today?'",
+  "[new] Try 'What time is it in California?'",
+  "[new] Ask 'What's the current year?'",
+  "[new] Try searching 'What's 7*8?'",
+  "[new] Try 'roll a dice'",
+  "[new] Try 'coinflip'",
+  "[new] Try 'epoch 1700000000'"
 ];
 
 const showUpsell = !answer && Math.random() < 0.1;
 const randomUpsellMessage = showUpsell
-    ? upsellMessages[Math.floor(Math.random() * upsellMessages.length)]
-    : '';
+  ? upsellMessages[Math.floor(Math.random() * upsellMessages.length)]
+  : '';
 
 function extractQueryFromUpsellMessage(message) {
-    return message
-        .replace("[new] Try searching '", "")
-        .replace("[new] Try '", "")
-        .replace("[new] Ask '", "")
-        .replace("[new] Try ", "")
-        .replace("'", "")
-        .replace("?", "")
-        .trim();
+  return message
+    .replace("[new] Try searching '", "")
+    .replace("[new] Try '", "")
+    .replace("[new] Ask '", "")
+    .replace("[new] Try ", "")
+    .replace("'", "")
+    .replace("?", "")
+    .trim();
 }
 %>
 
