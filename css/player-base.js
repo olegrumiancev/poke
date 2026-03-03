@@ -312,7 +312,12 @@ document.addEventListener("DOMContentLoaded", () => {
     audioForcePlayTimer: null,
     wakeupTimer: null,
     // FIX (0.175s offset): guard so we only zero both tracks once
-    startupZeroed: false
+    startupZeroed: false,
+    // FIX (startup double-play): guard window that suppresses all pause enforcement
+    // during the very first play attempt, preventing the play→pause→play glitch.
+    startupPlaySettleUntil: 0,
+    startupPlaySettled: false,
+    startupKickAttempts: 0
   };
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -346,6 +351,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const AUDIO_PLAY_ATTEMPT_RESET_MS = 5000;
   const AUDIO_STARTUP_PLAY_RETRY_MS = 300;
   const MAX_AUDIO_STARTUP_RETRIES = 8;
+  // FIX (startup double-play): how long after the first kick we suppress spurious pauses.
+  // Long enough to cover slow-loading streams but short enough not to mask real user pauses.
+  const STARTUP_SETTLE_MS = 3500;
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
   function isWindowFocused() { try { return typeof document.hasFocus === "function" ? document.hasFocus() : true; } catch { return true; } }
@@ -385,6 +393,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function clearMediaSessionForcedPause() { state.mediaForcedPauseUntil = 0; }
   function mediaSessionForcedPauseActive() { return now() < state.mediaForcedPauseUntil; }
   function markUserPauseIntent(ms = 1800) {
+    // FIX (startup double-play): ignore pause intent during startup settle window
+    if (!state.startupPlaySettled && now() < state.startupPlaySettleUntil) return;
     const until = now() + Math.max(0, Number(ms) || 0);
     state.userPauseUntil = Math.max(state.userPauseUntil, until);
     state.userPauseLockUntil = Math.max(state.userPauseLockUntil, until + 300);
@@ -493,9 +503,20 @@ document.addEventListener("DOMContentLoaded", () => {
   function shouldTreatVisiblePauseAsUserPause() {
     return document.visibilityState === "visible" && (userPauseIntentActive() || userPauseLockActive());
   }
+
+  // FIX (startup double-play): returns true during the startup settle window,
+  // blocking all spurious auto-pause logic that causes the play→pause→play glitch.
+  function startupSettleActive() {
+    if (state.startupPlaySettled) return false;
+    return now() < state.startupPlaySettleUntil;
+  }
+
   function shouldIgnorePauseAsTransient() {
     if (mediaSessionForcedPauseActive()) return false;
     if (userPauseIntentActive() || userPauseLockActive()) return false;
+    // FIX (startup double-play): treat the settle window as a transient state so
+    // no pause path can interrupt the very first play attempt.
+    if (startupSettleActive()) return true;
     if (document.visibilityState === "hidden") return true;
     if (!isWindowFocused()) return true;
     if (isVisibilityTransitionActive()) return true;
@@ -1183,6 +1204,8 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => {
         if (serial !== state.hardPauseVerifySerial) return;
         if (state.intendedPlaying || userPlayIntentActive()) return;
+        // FIX (startup double-play): never force-pause during startup settle window
+        if (startupSettleActive()) return;
         try { if (!getVideoPaused()) execProgrammaticVideoPause(); } catch {}
         try { if (coupledMode && !audio.paused) execProgrammaticAudioPause(500); } catch {}
         clearSyncLoop();
@@ -1199,6 +1222,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!state.intendedPlaying) queueHardPauseVerification();
   }
   function pauseTogether() {
+    // FIX (startup double-play): block spurious pauseTogether calls during settle window
+    if (startupSettleActive() && !userPauseIntentActive() && !mediaSessionForcedPauseActive()) return;
     state.intendedPlaying = false;
     state.bufferHoldIntendedPlaying = false;
     state.strictBufferHold = false;
@@ -1473,6 +1498,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const aOk = canStartAudioAt(t0);
     return vOk && aOk;
   }
+
+  // FIX (startup double-play): Wait until both video AND audio have enough data
+  // before priming and kicking startup. This prevents the premature play attempt
+  // that the buffer gate then immediately pauses.
+  function bothReadyForStartupKick() {
+    if (!coupledMode) return true;
+    const t0 = Number(video.currentTime()) || 0;
+    const vNode = getVideoNode();
+    const vRS = Number(vNode.readyState || 0);
+    const aRS = Number(audio ? audio.readyState : 0);
+    // Require at least HAVE_FUTURE_DATA (3) on both so the buffer gate won't
+    // immediately stall us and trigger the pause→retry cycle.
+    if (vRS >= HAVE_FUTURE_DATA && aRS >= HAVE_FUTURE_DATA) return true;
+    // Looser fallback: both at readyState 2 with buffered data ahead
+    if (vRS >= 2 && aRS >= 2 && canPlayAt(vNode, t0) && canStartAudioAt(t0)) return true;
+    return false;
+  }
+
   function scheduleStartupAutoplayKick() {
     if (!coupledMode) return;
     if (state.startupKickDone || state.startupKickInFlight) return;
@@ -1483,6 +1526,15 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(async () => {
       try {
         if (!state.startupPrimed || mediaSessionForcedPauseActive()) return;
+
+        // FIX (startup double-play): if both tracks aren't ready yet, defer the
+        // kick rather than playing prematurely into the buffer gate.
+        if (!bothReadyForStartupKick()) {
+          state.startupKickInFlight = false;
+          scheduleStartupAutoplayRetry();
+          return;
+        }
+
         clearMediaSessionForcedPause();
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
@@ -1494,6 +1546,11 @@ document.addEventListener("DOMContentLoaded", () => {
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
         setFastSync(2600);
+
+        // FIX (startup double-play): arm the settle guard BEFORE the first play call.
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
+        state.startupPlaySettled = false;
+
         // FIX (0.175s offset): zero both before first play
         ensureStartupZeroed();
         const vt = Number(video.currentTime()) || 0;
@@ -1509,8 +1566,13 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch {}
         if (getVideoPaused()) return;
         await playTogether().catch(() => {});
-        if (!getVideoPaused()) state.startupKickDone = true;
-        else scheduleStartupAutoplayRetry();
+        if (!getVideoPaused()) {
+          state.startupKickDone = true;
+          // Mark settled after a short grace period so normal pause logic re-enables
+          setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
+        } else {
+          scheduleStartupAutoplayRetry();
+        }
       } finally {
         state.startupKickInFlight = false;
       }
@@ -1551,6 +1613,11 @@ document.addEventListener("DOMContentLoaded", () => {
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
         setFastSync(2600);
+
+        // FIX (startup double-play): arm settle guard on retry path too
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
+        state.startupPlaySettled = false;
+
         // FIX (0.175s offset): also zero on retry path
         ensureStartupZeroed();
         const t0 = Number(video.currentTime()) || 0;
@@ -1562,8 +1629,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!getVideoPaused()) {
           await playTogether().catch(() => {});
         }
-        if (!getVideoPaused()) state.startupKickDone = true;
-        else scheduleStartupAutoplayRetry();
+        if (!getVideoPaused()) {
+          state.startupKickDone = true;
+          setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
+        } else {
+          scheduleStartupAutoplayRetry();
+        }
       } finally {
         state.startupKickInFlight = false;
       }
@@ -1594,7 +1665,13 @@ document.addEventListener("DOMContentLoaded", () => {
       safeSetAudioTime(t);
     }
     softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
-    scheduleStartupAutoplayKick();
+    // FIX (startup double-play): only kick autoplay if both tracks are truly ready,
+    // otherwise scheduleStartupAutoplayRetry will wait for them.
+    if (bothReadyForStartupKick()) {
+      scheduleStartupAutoplayKick();
+    } else {
+      scheduleStartupAutoplayRetry();
+    }
     setTimeout(() => {
       if (!state.firstPlayCommitted) state.startupPhase = false;
     }, 3500);
@@ -1768,7 +1845,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const shouldRepair =
           (now() - state.lastVTts) > 3500 &&
           !state.videoRepairing &&
-          getVideoReadyState() >= 2 && !state.strictBufferHold && !userPauseLockActive();
+          getVideoReadyState() >= 2 && !state.strictBufferHold && !state.userPauseLockActive && !userPauseLockActive();
         if (shouldRepair && platform.problemMobileBrowser && document.visibilityState === "visible") {
           kickVideo().catch(() => {});
           state.lastVTts = now();
@@ -2052,6 +2129,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (isAltTabTransitionActive()) return;
       if (!isVisibilityStable()) return;
       if (!isFocusStable()) return;
+      // FIX (startup double-play): ignore pause events during startup settle window
+      if (startupSettleActive()) return;
       if (shouldTreatVisiblePauseAsUserPause()) {
         state.intendedPlaying = false;
         state.bufferHoldIntendedPlaying = false;
@@ -2153,6 +2232,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (isAltTabTransitionActive()) return;
       if (!isVisibilityStable()) return;
       if (!isFocusStable()) return;
+      // FIX (startup double-play): ignore audio pause events during startup settle window
+      if (startupSettleActive()) return;
       if (shouldTreatVisiblePauseAsUserPause()) {
         state.intendedPlaying = false;
         state.bufferHoldIntendedPlaying = false;
@@ -2543,6 +2624,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
