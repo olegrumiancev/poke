@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Poke</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="/css/yt-ukraine.svg?v=7" rel="icon"><meta name="darkreader-lock"> <!-- tells dark reader that the site has a dark theme and to turn itself off -->
+
+  
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Poke - The privacy app of your dreams!">
+  
+    <meta property="og:description" content="Poke is a free software YouTube front-end, translator, map app, and more!! Watch silly videos, check your weather, and do all of that and more anonymously in this all-in-one privacy app!!!">
+    <meta property="og:image" content="/static/poke-embed.webp">
+    <meta name="og:image:alt" content="A pink gradient promotional banner for the app Poke.">
+  
+
+  <!-- Twitter -->
+  <meta name="twitter:title" content="Poke - The privacy app of your dreams!">
+  
+    <meta name="twitter:description" content="Poke is a free software YouTube front-end, translator, map app, and more!! Watch silly videos, check your weather, and do all of that and more anonymously in this all-in-one privacy app!!!">
+    <meta name="twitter:image" content="/static/poke-embed.webp">
+    <meta name="twitter:image:alt" content="A pink gradient promotional banner for the app Poke.">
+  
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Facebook -->
+  <meta property="facebook:title" content="Poke - The privacy app of your dreams!">
+  
+    <meta property="facebook:description" content="Poke is a free software YouTube front-end, translator, map app, and more!! Watch silly videos, check your weather, and do all of that and more anonymously in this all-in-one privacy app!!!">
+    <meta property="og:image" content="/static/poke-embed.webp">
+  
+ 
+<style>
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #0f0f0f;
+  font-family: sans-serif;
+  color: #fff;
+}
+
+.container {
+  text-align: center;
+}
+
+.logo {
+  width: 220px;
+  margin-bottom: 28px;
+}
+
+form {
+  display: flex;
+  justify-content: center;
+}
+
+.search-bar {
+  width: 420px;
+  max-width: 90vw;
+  padding: 14px 18px;
+  font-size: 16px;
+  border-radius: 28px;
+  border: 1px solid #2a2a2a;
+  background: #181818;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-bar::placeholder {
+  color: #888;
+}
+
+.search-bar:focus {
+  border-color: #4a8cff;
+  box-shadow: 0 0 8px rgba(74,140,255,0.25);
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+  <img src="https://poketube.fun/static/logo-poke.svg" class="logo" alt="Poke Logo">
+
+  <form action="/search" method="get">
+    <input
+      class="search-bar"
+      autocomplete="on"
+      id="fname"
+      name="query"
+      type="text"
+      placeholder="Search..."
+    >
+  </form>
+</div>
+
+</body>
+</html>
