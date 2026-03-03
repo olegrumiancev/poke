@@ -145,8 +145,8 @@ if (typeof query === 'string') {
     }
 
     if (!query) {
-      return res.redirect("/");
-    }
+ renderTemplate(res, req, "search-no-query.ejs", { });
+ }
 
     let continuation = req.query.continuation || "";
     let date = req.query.date || "";
