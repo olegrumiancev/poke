@@ -83,10 +83,6 @@
   <% } %>
 
   <style>
-    html {
-      scroll-behavior: smooth;
-    }
-
     body {
       overflow-x: hidden;
     }
@@ -161,132 +157,320 @@
       color: #111827;
     }
 
+    .problem-jump {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(26px);
+      width: 62px;
+      height: 62px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.04));
+      color: #fff;
+      box-shadow: 0 14px 40px rgba(0,0,0,.26);
+      backdrop-filter: blur(12px);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .22s ease, transform .22s ease, border-color .18s ease, filter .18s ease;
+      z-index: 60;
+    }
+
+    .problem-jump.is-visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .problem-jump:hover {
+      border-color: rgba(255,171,204,.42);
+      filter: brightness(1.06);
+      transform: translateX(-50%) translateY(-2px);
+    }
+
+    .problem-jump svg {
+      width: 26px;
+      height: 26px;
+    }
+
     .poke-problem-section {
-      margin: 4.75em auto 2.75em auto;
+      margin: 4.25em auto 2.75em auto;
       max-width: 1240px;
       padding: 0 20px;
     }
 
-    .poke-problem-layout {
+    .poke-problem-stage {
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, .78fr);
       gap: 18px;
       align-items: stretch;
     }
 
-    .poke-problem-hero {
+    .poke-problem-feature {
       position: relative;
       overflow: hidden;
-      border-radius: 32px;
-      padding: 34px;
-      min-height: 420px;
       background:
-        radial-gradient(circle at top right, rgba(255,171,204,.22), transparent 34%),
-        radial-gradient(circle at bottom left, rgba(255,255,255,.05), transparent 35%),
+        radial-gradient(circle at top right, rgba(255,171,204,.15), transparent 36%),
         linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
       border: 1px solid rgba(255,255,255,.14);
-      box-shadow: 0 18px 50px rgba(0,0,0,.18);
+      border-radius: 28px;
+      padding: 20px;
+      box-shadow: 0 18px 42px rgba(0,0,0,.18);
       backdrop-filter: blur(12px);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      isolation: isolate;
     }
 
-    .poke-problem-hero::before {
+    .poke-problem-feature::before {
       content: "";
       position: absolute;
       inset: 0;
       pointer-events: none;
-      background: linear-gradient(145deg, rgba(255,255,255,.06), transparent 45%);
-      z-index: -1;
+      background: linear-gradient(135deg, rgba(255,255,255,.05), transparent 46%);
+    }
+
+    .poke-problem-feature-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .poke-problem-feature-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.12);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .poke-problem-feature-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, .95fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .poke-problem-preview {
+      position: relative;
+      overflow: hidden;
+      min-height: 340px;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,.12);
+      background:
+        radial-gradient(circle at center, rgba(255,255,255,.09), transparent 40%),
+        linear-gradient(135deg, rgba(255,171,204,.24), rgba(124,58,237,.12) 55%, rgba(255,255,255,.03));
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    .poke-problem-preview-badge {
+      width: fit-content;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      display: inline-flex;
+      align-items: center;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .poke-problem-preview-play {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      width: 72px;
+      height: 72px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.16);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 14px 35px rgba(0,0,0,.18);
+      backdrop-filter: blur(8px);
+    }
+
+    .poke-problem-preview-title {
+      margin: 18px 0 10px 0;
+      max-width: 520px;
+      font-size: clamp(2.4rem, 5vw, 4.25rem);
+      line-height: .9;
+      font-weight: 900;
+      color: #fff;
+      text-wrap: balance;
+      text-shadow: 0 8px 28px rgba(0,0,0,.18);
+    }
+
+    .poke-problem-preview-meta {
+      max-width: 520px;
+      color: #f3f3f3;
+      font-size: 1rem;
+      line-height: 1.65;
+    }
+
+    .poke-problem-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 4px 2px;
     }
 
     .poke-problem-eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      width: fit-content;
+      display: inline-block;
       font-size: 12px;
       letter-spacing: .18em;
       text-transform: uppercase;
-      color: #ffd7e9;
-      margin-bottom: 16px;
+      color: #ffd6e7;
+      margin-bottom: 12px;
       font-weight: 700;
-      padding: 10px 12px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.05);
-      border: 1px solid rgba(255,255,255,.1);
     }
 
     .poke-problem-heading {
-      margin: 0 0 12px 0;
-      font-size: clamp(2.4rem, 5.2vw, 4.4rem);
-      line-height: .92;
+      margin: 0 0 14px 0;
+      font-size: clamp(1.9rem, 4vw, 3rem);
+      line-height: .98;
       text-wrap: balance;
-      max-width: 8ch;
     }
 
     .poke-problem-lead {
-      max-width: 560px;
       margin: 0;
-      font-size: 1.05rem;
-      line-height: 1.7;
+      font-size: 1rem;
+      line-height: 1.72;
       color: #ececec;
+      max-width: 470px;
     }
 
-    .poke-problem-footer {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .poke-problem-actions {
+      display: flex;
+      flex-wrap: wrap;
       gap: 12px;
-      margin-top: 28px;
+      margin-top: 2px;
     }
 
-    .poke-problem-stat {
-      border-radius: 20px;
-      padding: 14px 16px;
-      background: rgba(255,255,255,.045);
-      border: 1px solid rgba(255,255,255,.1);
+    .poke-problem-action {
+      min-height: 44px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.05);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      transition: transform .16s ease, filter .16s ease, border-color .16s ease;
     }
 
-    .poke-problem-stat strong {
-      display: block;
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: #ffd7e9;
-      margin-bottom: 6px;
-    }
-
-    .poke-problem-stat span {
-      display: block;
-      color: #f0f0f0;
-      line-height: 1.5;
-      font-size: 14px;
+    .poke-problem-action:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+      border-color: rgba(255,171,204,.28);
     }
 
     .poke-problem-side {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 28px;
+      padding: 20px;
+      box-shadow: 0 18px 42px rgba(0,0,0,.14);
+      backdrop-filter: blur(12px);
+    }
+
+    .poke-problem-side h2 {
+      margin: 0 0 14px 0;
+      font-size: 1.1rem;
+      letter-spacing: .02em;
+    }
+
+    .poke-problem-side-list {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      gap: 12px;
+    }
+
+    .poke-problem-side-item {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(255,255,255,.035);
+    }
+
+    .poke-problem-side-number {
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,171,204,.14);
+      border: 1px solid rgba(255,171,204,.22);
+      color: #ffd7e9;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .poke-problem-side-text strong {
+      display: block;
+      color: #fff;
+      font-size: .98rem;
+      margin-bottom: 3px;
+    }
+
+    .poke-problem-side-text span {
+      display: block;
+      color: #dfdfdf;
+      font-size: 14px;
+      line-height: 1.52;
+    }
+
+    .poke-problem-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
     }
 
     .poke-problem-card {
       position: relative;
       overflow: hidden;
-      border-radius: 26px;
-      padding: 20px;
-      min-height: 170px;
-      background: linear-gradient(180deg, rgba(255,255,255,.065), rgba(255,255,255,.025));
+      min-height: 126px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025));
       border: 1px solid rgba(255,255,255,.12);
-      box-shadow: 0 14px 30px rgba(0,0,0,.12);
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.1);
       transition: transform .18s ease, border-color .18s ease, background .18s ease;
     }
 
     .poke-problem-card:hover {
       transform: translateY(-2px);
-      border-color: rgba(255,171,204,.28);
-      background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.03));
+      border-color: rgba(255,171,204,.24);
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
     }
 
     .poke-problem-card-number {
@@ -295,49 +479,42 @@
       justify-content: center;
       width: 34px;
       height: 34px;
-      border-radius: 999px;
+      border-radius: 12px;
       background: rgba(255,171,204,.14);
-      border: 1px solid rgba(255,171,204,.26);
+      border: 1px solid rgba(255,171,204,.22);
       color: #ffd7e9;
       font-size: 13px;
       font-weight: 700;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
 
     .poke-problem-card h2 {
-      margin: 0 0 8px 0;
-      font-size: 1.1rem;
-      line-height: 1.2;
+      margin: 0 0 6px 0;
+      font-size: 1rem;
+      line-height: 1.24;
       color: #fff;
-      text-wrap: balance;
     }
 
     .poke-problem-card p {
       margin: 0;
-      color: #e5e5e5;
-      line-height: 1.58;
-      font-size: 14px;
-      max-width: 24ch;
+      color: #e4e4e4;
+      line-height: 1.52;
+      font-size: 13px;
     }
 
-    .poke-problem-card.is-highlight {
-      background:
-        radial-gradient(circle at top right, rgba(255,171,204,.18), transparent 45%),
-        linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.03));
-    }
-
-    .poke-problem-bottom {
-      margin-top: 18px;
+    .poke-answer-banner {
+      margin: 18px auto 0 auto;
+      max-width: 920px;
       text-align: center;
-      border-radius: 24px;
       padding: 18px 20px;
-      border: 1px solid rgba(255,255,255,.12);
-      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
-      color: #ececec;
-      line-height: 1.65;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      font-size: 1rem;
+      line-height: 1.7;
     }
 
-    .poke-problem-bottom strong {
+    .poke-answer-banner strong {
       color: #fff;
     }
 
@@ -362,66 +539,27 @@
     }
 
     .poke-watch-shell {
-      overflow: hidden;
-      background:
-        radial-gradient(circle at top right, rgba(255,171,204,.16), transparent 30%),
-        linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
-      border: 1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+      border: 2px solid rgba(255,255,255,.14);
       border-radius: 28px;
-      box-shadow: 0 16px 36px rgba(0,0,0,.18);
+      padding: 20px;
+      box-shadow: 0 12px 35px rgba(0,0,0,.18);
       backdrop-filter: blur(10px);
-    }
-
-    .poke-watch-topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 14px 16px;
-      border-bottom: 1px solid rgba(255,255,255,.08);
-      background: rgba(255,255,255,.03);
-    }
-
-    .poke-watch-dots {
-      display: inline-flex;
-      gap: 8px;
-      min-width: 64px;
-    }
-
-    .poke-watch-dots span {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.26);
-    }
-
-    .poke-watch-toplabel {
-      color: #f8d9e9;
-      font-size: 13px;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      font-weight: 700;
-      text-align: center;
-      flex: 1;
-    }
-
-    .poke-watch-spacer {
-      min-width: 64px;
     }
 
     .poke-watch-tabs {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 12px;
       justify-content: center;
-      padding: 16px 16px 0 16px;
+      margin-bottom: 18px;
     }
 
     .poke-watch-tab {
-      border: 1px solid rgba(255,255,255,.12);
+      border: 2px solid rgba(255,255,255,.15);
       background: rgba(255,255,255,.05);
       color: #fff;
-      border-radius: 16px;
+      border-radius: 18px;
       padding: 12px 18px;
       font: inherit;
       font-weight: 700;
@@ -431,18 +569,17 @@
 
     .poke-watch-tab:hover {
       transform: translateY(-1px);
-      filter: brightness(1.04);
+      filter: brightness(1.05);
     }
 
     .poke-watch-tab[aria-selected="true"] {
-      background: rgba(255,171,204,.18);
-      border-color: rgba(255,171,204,.42);
-      box-shadow: 0 0 0 3px rgba(255,171,204,.1);
+      background: rgba(255,171,204,.22);
+      border-color: rgba(255,171,204,.55);
+      box-shadow: 0 0 0 3px rgba(255,171,204,.12);
     }
 
     .poke-watch-panels {
       position: relative;
-      padding: 16px;
     }
 
     .poke-watch-panel {
@@ -454,79 +591,33 @@
       display: block;
     }
 
-    .poke-watch-frame {
-      overflow: hidden;
-      border-radius: 22px;
-      border: 1px solid rgba(255,255,255,.1);
-      background: rgba(0,0,0,.16);
-      box-shadow: 0 14px 32px rgba(0,0,0,.16);
-    }
-
     .poke-watch-shot {
       width: 100%;
       display: block;
+      border-radius: 20px;
+      border: 2px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.22);
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
       object-fit: cover;
     }
 
     .poke-watch-panel-copy {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 14px 16px;
-      border-top: 1px solid rgba(255,255,255,.08);
-      background: rgba(255,255,255,.03);
+      text-align: center;
+      margin-top: 14px;
     }
 
     .poke-watch-panel-copy h3 {
+      margin: 0 0 8px 0;
+      font-size: 1.35rem;
+    }
+
+    .poke-watch-panel-copy p {
       margin: 0;
-      font-size: 1.12rem;
-    }
-
-    .poke-watch-panel-copy span {
-      color: #d9d9d9;
-      font-size: 14px;
-      line-height: 1.5;
-      text-align: right;
-    }
-
-    .scroll-cue {
-      position: fixed;
-      left: 50%;
-      bottom: 22px;
-      transform: translateX(-50%) translateY(10px);
-      width: 58px;
-      height: 58px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.14);
-      background: rgba(12,12,14,.72);
-      backdrop-filter: blur(14px);
-      color: #fff;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 14px 30px rgba(0,0,0,.22);
-      cursor: pointer;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .22s ease, transform .22s ease, border-color .18s ease;
-      z-index: 60;
-    }
-
-    .scroll-cue:hover {
-      border-color: rgba(255,171,204,.38);
-    }
-
-    .scroll-cue.is-visible {
-      opacity: 1;
-      pointer-events: auto;
-      transform: translateX(-50%) translateY(0);
-      animation: cueFloat 1.6s ease-in-out infinite;
-    }
-
-    .scroll-cue svg {
-      width: 24px;
-      height: 24px;
+      color: #e5e7eb;
+      line-height: 1.65;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
     }
 
     @keyframes pokeFade {
@@ -540,45 +631,17 @@
       }
     }
 
-    @keyframes cueFloat {
-      0%, 100% {
-        transform: translateX(-50%) translateY(0);
-      }
-      50% {
-        transform: translateX(-50%) translateY(6px);
-      }
-    }
-
-    @media (max-width: 1050px) {
-      .poke-problem-layout {
+    @media (max-width: 1120px) {
+      .poke-problem-stage {
         grid-template-columns: 1fr;
       }
 
-      .poke-problem-side {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }
-    }
-
-    @media (max-width: 840px) {
-      .poke-problem-hero {
-        min-height: unset;
-      }
-
-      .poke-problem-footer {
+      .poke-problem-feature-body {
         grid-template-columns: 1fr;
       }
 
-      .poke-problem-side {
+      .poke-problem-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .poke-watch-panel-copy {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-
-      .poke-watch-panel-copy span {
-        text-align: left;
       }
     }
 
@@ -587,65 +650,61 @@
         margin-top: 3.5em;
       }
 
-      .poke-problem-hero {
-        padding: 24px 18px;
-        border-radius: 24px;
-      }
-
-      .poke-problem-heading {
-        max-width: 10ch;
-      }
-
+      .poke-problem-feature,
       .poke-problem-side {
+        padding: 16px;
+        border-radius: 22px;
+      }
+
+      .poke-problem-preview {
+        min-height: 260px;
+        border-radius: 18px;
+        padding: 18px;
+      }
+
+      .poke-problem-preview-title {
+        font-size: clamp(2rem, 9vw, 3rem);
+      }
+
+      .poke-problem-preview-play {
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+      }
+
+      .poke-problem-grid {
         grid-template-columns: 1fr;
       }
 
       .poke-problem-card {
         min-height: unset;
-        border-radius: 20px;
-        padding: 18px 16px;
+        padding: 16px;
+        border-radius: 18px;
+      }
+
+      .poke-answer-banner {
+        padding: 16px;
+        font-size: .98rem;
       }
 
       .poke-watch-shell {
-        border-radius: 22px;
-      }
-
-      .poke-watch-tabs {
-        padding-top: 14px;
+        padding: 16px;
+        border-radius: 20px;
       }
 
       .poke-watch-tab {
         width: 100%;
-        border-radius: 14px;
       }
 
-      .poke-watch-panels {
-        padding: 12px;
+      .poke-watch-shot {
+        border-radius: 16px;
       }
 
-      .poke-watch-frame {
+      .problem-jump {
+        width: 56px;
+        height: 56px;
         border-radius: 18px;
-      }
-
-      .scroll-cue {
-        width: 52px;
-        height: 52px;
         bottom: 18px;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      html {
-        scroll-behavior: auto;
-      }
-
-      .scroll-cue,
-      .scroll-cue.is-visible,
-      .poke-problem-card,
-      .poke-watch-tab,
-      .poke-watch-panel {
-        animation: none !important;
-        transition: none !important;
       }
     }
   </style>
@@ -656,13 +715,6 @@
   <div style="margin-top: 6em;margin-left: auto;margin-right: auto;margin-bottom: -7em;background: #000;padding: 1em;border-radius: 14px;font-family: ubuntu;" id="banner_text"> <%- banner %> </div>
   <%- include('./partials/header.ejs') %>
   <video playsinline muted paused><source src="/bg-480.webm" type="video/webm"/></video>
-
-  <button class="scroll-cue" id="scroll-cue" type="button" aria-label="Scroll to the next section">
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 10L12 15L17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-    </svg>
-  </button>
-
   <div class="landing">
     <h1 style="text-align: center;">WELCOME TO POKE!</h1>
     <p style="max-width: 800px;text-align: center;margin: auto;margin-bottom: 3em;">Poke is a free software AD-FREE ! YouTube front-end, translator, weather app, and more!!1! Watch videos and explore without a trace in this all-in-one privacy app!!1! :3</p>   
@@ -703,72 +755,144 @@
       <img src="/static/the-contract-mobile-landing.webp" />
     </div>
 
-    <section class="poke-problem-section">
-      <div class="poke-problem-layout">
-        <div class="poke-problem-hero">
-          <div>
-             <h1 class="poke-problem-heading">THE WEB GOT WEIRD.</h1>
-            <p class="poke-problem-lead">
-              too much tracking, too much lock-in, too much junk. Poke is for people who just want a calmer, cleaner place to watch stuff and explore without all the usual nonsense.
-            </p>
+    <button id="problemJump" class="problem-jump" type="button" aria-label="Jump to why Poke exists">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 5V19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M6.5 13.5L12 19L17.5 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+    <section class="poke-problem-section" id="why-poke">
+      <div class="poke-problem-stage">
+        <div class="poke-problem-feature">
+          <div class="poke-problem-feature-bar">
+            <span class="poke-problem-feature-chip">featured</span>
+            <span class="poke-problem-feature-chip">privacy first</span>
+            <span class="poke-problem-feature-chip">free software</span>
           </div>
 
-          <div class="poke-problem-footer">
-            <div class="poke-problem-stat">
-              <strong>Less noise</strong>
-              <span>cleaner pages, fewer distractions, simpler browsing.</span>
+          <div class="poke-problem-feature-body">
+            <div class="poke-problem-preview">
+              <div class="poke-problem-preview-badge">now playing</div>
+              <div>
+                <h1 class="poke-problem-preview-title">THE WEB GOT WEIRD.</h1>
+                <p class="poke-problem-preview-meta">
+                  too much tracking, too much lock-in, too much junk. Poke is for ppl who just want a calmer place to watch stuff and explore.
+                </p>
+              </div>
+              <div class="poke-problem-preview-play" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none">
+                  <path d="M8 6.5V17.5L17 12L8 6.5Z" fill="white"/>
+                </svg>
+              </div>
             </div>
-            <div class="poke-problem-stat">
-              <strong>Less creepiness</strong>
-              <span>privacy first, not “profile the user and sell it later.”</span>
-            </div>
-            <div class="poke-problem-stat">
-              <strong>More control</strong>
-              <span>watch what you want without fighting the page.</span>
+
+            <div class="poke-problem-copy">
+              <div>
+                <span class="poke-problem-eyebrow">why poke exists</span>
+                <h2 class="poke-problem-heading">A softer place away from big tech nonsense.</h2>
+                <p class="poke-problem-lead">
+                  no lecture wall, no weird little traps, no “engagement” sludge all over the page. just a cleaner experience that feels easier to breathe in.
+                </p>
+              </div>
+
+              <div class="poke-problem-actions">
+                <a class="poke-problem-action" href="/app">Start discovering</a>
+                <a class="poke-problem-action" href="/privacy">Read privacy</a>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="poke-problem-side">
-          <article class="poke-problem-card is-highlight">
-            <div class="poke-problem-card-number">01</div>
-            <h2>Tracking</h2>
-            <p>your clicks, interests, and watch habits should stay yours.</p>
-          </article>
+        <aside class="poke-problem-side">
+          <h2>Why people leave big tech</h2>
+          <div class="poke-problem-side-list">
+            <div class="poke-problem-side-item">
+              <div class="poke-problem-side-number">01</div>
+              <div class="poke-problem-side-text">
+                <strong>Tracking everywhere</strong>
+                <span>your clicks and watch habits should not be the product.</span>
+              </div>
+            </div>
 
-          <article class="poke-problem-card">
-            <div class="poke-problem-card-number">02</div>
-            <h2>Ads everywhere</h2>
-            <p>watch the content, not a page full of junk fighting for attention.</p>
-          </article>
+            <div class="poke-problem-side-item">
+              <div class="poke-problem-side-number">02</div>
+              <div class="poke-problem-side-text">
+                <strong>Pages full of junk</strong>
+                <span>ads, bait, clutter, and too much noise around the actual content.</span>
+              </div>
+            </div>
 
-          <article class="poke-problem-card">
-            <div class="poke-problem-card-number">03</div>
-            <h2>Dark patterns</h2>
-            <p>less bait, less trickery, less “oops we moved the real button.”</p>
-          </article>
+            <div class="poke-problem-side-item">
+              <div class="poke-problem-side-number">03</div>
+              <div class="poke-problem-side-text">
+                <strong>Lock-in and control</strong>
+                <span>giant platforms should not decide how the web feels to use.</span>
+              </div>
+            </div>
 
-          <article class="poke-problem-card">
-            <div class="poke-problem-card-number">04</div>
-            <h2>Platform lock-in</h2>
-            <p>giant platforms should not decide how you browse the web.</p>
-          </article>
-
-          <article class="poke-problem-card">
-            <div class="poke-problem-card-number">05</div>
-            <h2>Propaganda</h2>
-            <p>platforms should not shape conflict and narratives for power.</p>
-          </article>
-
-          <article class="poke-problem-card">
-            <div class="poke-problem-card-number">06</div>
-            <h2>Tech harm</h2>
-            <p>tools should never help scale cruelty, surveillance, or genocides.</p>
-          </article>
-        </div>
+            <div class="poke-problem-side-item">
+              <div class="poke-problem-side-number">04</div>
+              <div class="poke-problem-side-text">
+                <strong>Real-world harm</strong>
+                <span>tech should not scale propaganda, surveillance, or atrocities.</span>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
 
-      <div class="poke-problem-bottom">
+      <div class="poke-problem-grid">
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">01</div>
+          <h2>Tracking</h2>
+          <p>your clicks, interests, and watch habits should stay yours.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">02</div>
+          <h2>Ads everywhere</h2>
+          <p>watch the content, not a page full of junk fighting for attention.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">03</div>
+          <h2>Dark patterns</h2>
+          <p>less bait, less trickery, less “oops we moved the real button.”</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">04</div>
+          <h2>Platform lock-in</h2>
+          <p>giant platforms should not decide how you browse the web.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">05</div>
+          <h2>Propaganda</h2>
+          <p>platforms should not shape conflict and narratives for power.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">06</div>
+          <h2>Atrocities</h2>
+          <p>tech should never help scale surveillance, cruelty, or genocides.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">07</div>
+          <h2>Overcomplication</h2>
+          <p>sometimes ppl just want direct links and pages that feel normal.</p>
+        </article>
+
+        <article class="poke-problem-card">
+          <div class="poke-problem-card-number">08</div>
+          <h2>Big tech nonsense</h2>
+          <p>Poke tries to be a softer place away from all that mess.</p>
+        </article>
+      </div>
+
+      <div class="poke-answer-banner">
         <strong>Poke exists for ppl who are tired of all that.</strong> a privacy app that feels calmer, lighter, and nicer to use.
       </div>
     </section>
@@ -780,16 +904,6 @@
       </p>
 
       <div class="poke-watch-shell">
-        <div class="poke-watch-topbar">
-          <div class="poke-watch-dots" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-          <div class="poke-watch-toplabel">Poke Showcase</div>
-          <div class="poke-watch-spacer" aria-hidden="true"></div>
-        </div>
-
         <div class="poke-watch-tabs" role="tablist" aria-label="Content categories">
           <button class="poke-watch-tab" type="button" role="tab" id="watch-tab-news" aria-controls="watch-panel-news" aria-selected="true" data-target="news">
             News
@@ -804,32 +918,23 @@
 
         <div class="poke-watch-panels">
           <div class="poke-watch-panel is-active" id="watch-panel-news" role="tabpanel" aria-labelledby="watch-tab-news">
-            <div class="poke-watch-frame">
-              <img class="poke-watch-shot" src="/static/poke-screenshot-news.webp" alt="Poke showing a news screenshot" />
-              <div class="poke-watch-panel-copy">
-                <h3>Keep up with news without the usual mess</h3>
-                <span>clean view • less clutter • just the content</span>
-              </div>
+            <img class="poke-watch-shot" src="/static/poke-screenshot-news.webp" alt="Poke showing a news screenshot" />
+            <div class="poke-watch-panel-copy">
+              <h3>Keep up with news without the usual mess</h3>
             </div>
           </div>
 
           <div class="poke-watch-panel" id="watch-panel-gaming" role="tabpanel" aria-labelledby="watch-tab-gaming" hidden>
-            <div class="poke-watch-frame">
-              <img class="poke-watch-shot" src="/static/poke-screenshot-gaming.webp" alt="Poke showing a gaming screenshot" />
-              <div class="poke-watch-panel-copy">
-                <h3>Watch gaming stuff without clutter</h3>
-                <span>gameplay, reviews, lore, streams, whatever u want</span>
-              </div>
+            <img class="poke-watch-shot" src="/static/poke-screenshot-gaming.webp" alt="Poke showing a gaming screenshot" />
+            <div class="poke-watch-panel-copy">
+              <h3>Watch gaming stuff without clutter</h3>
             </div>
           </div>
 
           <div class="poke-watch-panel" id="watch-panel-music" role="tabpanel" aria-labelledby="watch-tab-music" hidden>
-            <div class="poke-watch-frame">
-              <img class="poke-watch-shot" src="/static/poke-screenshot-music.webp" alt="Poke showing a music screenshot" />
-              <div class="poke-watch-panel-copy">
-                <h3>Listen to music and explore whatever fits ur mood</h3>
-                <span>artists, mixes, live sessions, playlists, and more</span>
-              </div>
+            <img class="poke-watch-shot" src="/static/poke-screenshot-music.webp" alt="Poke showing a music screenshot" />
+            <div class="poke-watch-panel-copy">
+              <h3>Listen to music and explore whatever fits ur mood</h3>
             </div>
           </div>
         </div>
@@ -1171,47 +1276,27 @@ const randomFeatures = features.sort(() => 0.5 - Math.random()).slice(0, 3);
 
     <script>
       (function () {
-        var cue = document.getElementById('scroll-cue');
-        var target = document.querySelector('.poke-problem-section');
-        var watched = [
-          document.querySelector('.poke-problem-section'),
-          document.querySelector('.poke-watch-section')
-        ].filter(Boolean);
+        var jump = document.getElementById('problemJump');
+        var section = document.getElementById('why-poke');
 
-        if (!cue || !target || !('IntersectionObserver' in window)) {
-          if (cue) cue.style.display = 'none';
-          return;
+        if (!jump || !section) return;
+
+        function syncProblemJump() {
+          var rect = section.getBoundingClientRect();
+          var isBeforeSection = rect.top > window.innerHeight * 0.82;
+          var isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+          var isPastSection = rect.bottom <= 0;
+
+          jump.classList.toggle('is-visible', isBeforeSection && !isVisible && !isPastSection);
         }
 
-        var visibility = new Map();
-
-        function syncCue() {
-          var anyVisible = Array.from(visibility.values()).some(Boolean);
-          var nearBottom = window.scrollY + window.innerHeight > document.documentElement.scrollHeight - 220;
-          cue.classList.toggle('is-visible', !anyVisible && !nearBottom);
-        }
-
-        var observer = new IntersectionObserver(function (entries) {
-          entries.forEach(function (entry) {
-            visibility.set(entry.target, entry.isIntersecting);
-          });
-          syncCue();
-        }, {
-          threshold: 0.18
+        jump.addEventListener('click', function () {
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
 
-        watched.forEach(function (section) {
-          visibility.set(section, false);
-          observer.observe(section);
-        });
-
-        cue.addEventListener('click', function () {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-
-        window.addEventListener('scroll', syncCue, { passive: true });
-        window.addEventListener('resize', syncCue);
-        syncCue();
+        syncProblemJump();
+        window.addEventListener('scroll', syncProblemJump, { passive: true });
+        window.addEventListener('resize', syncProblemJump);
       })();
     </script>
   </div>
