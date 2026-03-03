@@ -2607,89 +2607,78 @@ document.addEventListener('DOMContentLoaded', checkTheaterMode);
 
 <script>
 const AMvideo = document.getElementById("video");
-const canvases =[
-  document.getElementById("ambient-canvas-1"),
-  document.getElementById("ambient-canvas-2")
-];
+const canvas1 = document.getElementById("ambient-canvas-1");
+const canvas2 = document.getElementById("ambient-canvas-2");
+
+// WE NO LONGER NEED CANVAS 2! 
+// Hide it completely to save 50% of the CSS rendering cost.
+if (canvas2) {
+  canvas2.style.display = "none";
+}
 
 const CONFIG = {
-  internalWidth: 128, // 128px is the magic number. Practically 0 GPU load, looks identical under CSS blur.
-  internalHeight: 72, 
-  opacity: "0.4",
-  interval: 120 // ~8 FPS. Perfect for a smooth ambient cross-fade.
+  internalWidth: 128,
+  internalHeight: 72,
+  fps: 15 // 15 FPS is plenty because the alpha-blending naturally smooths it
 };
+const INTERVAL = 1000 / CONFIG.fps;
 
-// Initialize display canvases
-const contexts = canvases.map(c => {
-  c.width = CONFIG.internalWidth;
-  c.height = CONFIG.internalHeight;
-  
-  // Force strict GPU layer compositing to prevent CPU repaints
-  Object.assign(c.style, {
-    width: "100%",
-    height: "100%",
-    position: "absolute",
-    top: "0",
-    left: "0",
-    imageRendering: "pixelated",
-    transition: `opacity ${CONFIG.interval}ms linear`,
-    opacity: "0",
-    pointerEvents: "none",
-    willChange: "opacity",
-    transform: "translateZ(0)",       // Forces GPU hardware layer
-    backfaceVisibility: "hidden"      // Prevents sub-pixel rendering bugs
-  });
-  
-  return c.getContext("2d", { alpha: false, desynchronized: true, willReadFrequently: false });
+// Setup the single canvas
+canvas1.width = CONFIG.internalWidth;
+canvas1.height = CONFIG.internalHeight;
+
+// Removed all CSS transitions and will-change: opacity. 
+// We are letting the canvas handle the fading now.
+Object.assign(canvas1.style, {
+  width: "100%",
+  height: "100%",
+  position: "absolute",
+  top: "0",
+  left: "0",
+  imageRendering: "pixelated",
+  pointerEvents: "none",
+  transform: "translateZ(0)",
+  backfaceVisibility: "hidden"
 });
 
+// Create single context
+const ctx = canvas1.getContext("2d", { alpha: false, desynchronized: true, willReadFrequently: false });
+
+// THE MAGIC TRICK: 
+// By setting this, every new frame drawn is highly transparent. 
+// It naturally blends with the previous frames, creating a perfect cross-fade 
+// effect with absolutely zero CSS/GPU compositing overhead!
+ctx.globalAlpha = 0.15;
+
 let activeIndex = 0;
-let renderTimer = null;
+let lastDrawTime = 0;
+let renderLoopActive = false;
 let ambientEnabled = localStorage.getItem("ambientState") !== "false";
 
 // ----- CORE DRAW LOOP -----
-const drawFrame = () => {
-  // Check exit conditions
-  if (AMvideo.paused || AMvideo.ended || !ambientEnabled || document.hidden) return;
+const drawFrame = (now) => {
+  if (AMvideo.paused || AMvideo.ended || !ambientEnabled || document.hidden) {
+    renderLoopActive = false;
+    return;
+  }
 
-  const currentCtx = contexts[activeIndex];
-  const currentCanvas = canvases[activeIndex];
-  const nextCanvas = canvases[activeIndex ^ 1];
-
-  // Direct GPU blit. At 128px, this is a single microsecond OpenGL/DirectX command.
-  // No Promises, no GC object creation, zero memory leak risk.
-  try {
-    currentCtx.drawImage(AMvideo, 0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
-  } catch (e) {}
-
-  // Trigger CSS Cross-fade
-  currentCanvas.style.opacity = CONFIG.opacity;
-  nextCanvas.style.opacity = "0";
-  activeIndex ^= 1;
+  const timestamp = now || performance.now();
+  
+  if (timestamp - lastDrawTime >= INTERVAL) {
+    lastDrawTime = timestamp;
+    try {
+      // Draw directly. The globalAlpha handles the smooth fading instantly.
+      ctx.drawImage(AMvideo, 0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
+    } catch (e) {}
+  }
 
   scheduleNextFrame();
 };
 
 const scheduleNextFrame = () => {
-  clearTimeout(renderTimer);
   if (!ambientEnabled || AMvideo.paused || AMvideo.ended || document.hidden) return;
+  renderLoopActive = true;
 
-  // 1. Completely put JS thread to sleep for the interval duration (0% CPU usage here)
-  renderTimer = setTimeout(() => {
-    // 2. When awake, align exactly with the browser's next actual video frame
-    if ('requestVideoFrameCallback' in AMvideo) {
-      AMvideo.requestVideoFrameCallback(drawFrame);
-    } else {
-      requestAnimationFrame(drawFrame);
-    }
-  }, CONFIG.interval);
-};
-
-const drawStart = () => {
-  if (!ambientEnabled || document.hidden) return;
-  clearTimeout(renderTimer);
-  
-  // Draw first frame instantly, then start the scheduling loop
   if ('requestVideoFrameCallback' in AMvideo) {
     AMvideo.requestVideoFrameCallback(drawFrame);
   } else {
@@ -2697,8 +2686,14 @@ const drawStart = () => {
   }
 };
 
+const drawStart = () => {
+  if (!ambientEnabled || document.hidden || renderLoopActive) return;
+  lastDrawTime = 0; // Force immediate draw
+  scheduleNextFrame();
+};
+
 const drawPause = () => {
-  clearTimeout(renderTimer);
+  renderLoopActive = false;
 };
 
 // ----- VISIBILITY API — stop loop entirely when tab hidden -----
@@ -2756,7 +2751,7 @@ const forcePlay = async () => {
   if (AMaudio) AMaudio.currentTime = 0;
 
   try {
-    const playPromises = [AMvideo.play()];
+    const playPromises =[AMvideo.play()];
     if (AMaudio) playPromises.push(AMaudio.play());
     await Promise.all(playPromises);
 
@@ -2778,7 +2773,7 @@ window.addEventListener("load", () => { forcePlay(); }, { once: true });
 // ----- FULLSCREEN -----
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
-  canvases.forEach(c => c.style.display = (isFullscreen || !ambientEnabled) ? "none" : "block");
+  canvas1.style.display = (isFullscreen || !ambientEnabled) ? "none" : "block";
 };
 
 // ----- AMBIENT TOGGLE -----
@@ -2792,17 +2787,16 @@ const setupAmbientToggle = () => {
         <i class="fa-light fa-lightbulb-on"></i>
         Ambient Mode • on
       `;
-      canvases.forEach(c => c.style.display = document.fullscreenElement ? "none" : "block");
+      canvas1.style.display = document.fullscreenElement ? "none" : "block";
       if (!AMvideo.paused && !document.hidden) drawStart();
     } else {
       toggleBtn.innerHTML = `
         <i class="fa-light fa-lightbulb" style="width: 1em;margin-left: 4px;"></i>
         Ambient Mode • off
       `;
-      canvases.forEach(c => {
-        c.style.display = "none";
-        c.style.opacity = "0";
-      });
+      canvas1.style.display = "none";
+      // Clear the canvas instantly when turned off
+      ctx.fillRect(0, 0, CONFIG.internalWidth, CONFIG.internalHeight); 
       drawPause();
     }
   };
@@ -2827,9 +2821,10 @@ const init = () => {
 
   AMvideo.addEventListener("loadedmetadata", () => {
     const ratio = AMvideo.videoWidth / AMvideo.videoHeight;
-    // Calculate aspect ratio dynamically while keeping width fixed at 128
     CONFIG.internalHeight = Math.round(CONFIG.internalWidth / ratio);
-    canvases.forEach(c => c.height = CONFIG.internalHeight);
+    canvas1.height = CONFIG.internalHeight;
+    // Re-apply alpha after resizing because changing dimensions resets canvas state
+    ctx.globalAlpha = 0.15; 
   }, { once: true });
 
   setupAmbientToggle();
