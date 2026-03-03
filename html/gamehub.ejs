@@ -746,7 +746,7 @@
 
 
 <% if (game === "tic-tac-toe") { %>
- <!DOCTYPE html>
+     <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -969,8 +969,7 @@
 
   <div id="board-container">
     <canvas id="overlay-canvas"></canvas>
-    <div id="game-grid">
-      </div>
+    <div id="game-grid"></div>
   </div>
 
   <div class="controls">
@@ -1062,33 +1061,33 @@ function playSound(type) {
 }
 
 /**
- * AI ENGINE (Minimax)
+ * AI ENGINE
  */
 const AI = {
   // Returns score: +10 (AI wins), -10 (Human wins), 0 (Draw)
-  minimax: (board, depth, isMaximizing) => {
-    const winner = Game.checkWinStatic(board);
-    if (winner === 'O') return 10 - depth;
-    if (winner === 'X') return depth - 10;
+  minimax: (board, depth, isMaximizing, aiPlayer, humanPlayer) => {
+    const winner = TicTacToe.checkWinStatic(board);
+    if (winner === aiPlayer) return 10 - depth;
+    if (winner === humanPlayer) return depth - 10;
     if (!board.includes('')) return 0;
 
-    if (isMaximizing) { // AI's turn
+    if (isMaximizing) {
       let bestScore = -Infinity;
       for (let i = 0; i < 9; i++) {
         if (board[i] === '') {
-          board[i] = 'O';
-          let score = AI.minimax(board, depth + 1, false);
+          board[i] = aiPlayer;
+          let score = AI.minimax(board, depth + 1, false, aiPlayer, humanPlayer);
           board[i] = '';
           bestScore = Math.max(score, bestScore);
         }
       }
       return bestScore;
-    } else { // Human's turn
+    } else {
       let bestScore = Infinity;
       for (let i = 0; i < 9; i++) {
         if (board[i] === '') {
-          board[i] = 'X';
-          let score = AI.minimax(board, depth + 1, true);
+          board[i] = humanPlayer;
+          let score = AI.minimax(board, depth + 1, true, aiPlayer, humanPlayer);
           board[i] = '';
           bestScore = Math.min(score, bestScore);
         }
@@ -1097,27 +1096,50 @@ const AI = {
     }
   },
 
-  getBestMove: (board, difficulty) => {
-    // 1. Determine "Smartness" (Probability to use Minimax)
-    // Easy: 20% smart, Normal: 70% smart, Hard: 100% smart
-    let accuracy = 0.7;
-    if (difficulty === 'easy') accuracy = 0.2;
-    if (difficulty === 'hard') accuracy = 1.0;
-
+  getBestMove: (board, difficulty, aiPlayer, humanPlayer) => {
     const availableMoves = board.map((v, i) => v === '' ? i : null).filter(v => v !== null);
-    
-    // Random move logic (Human Error simulation)
-    if (Math.random() > accuracy) {
+
+    // 1. Easy: Completely Random
+    if (difficulty === 'easy') {
       return availableMoves[Math.floor(Math.random() * availableMoves.length)];
     }
 
-    // Minimax Logic (Optimal)
+    // 2. Normal: Rule-Based Logic (Takes wins, blocks threats, otherwise randomish)
+    if (difficulty === 'medium') {
+      // Rule A: Take immediate win
+      for (let i of availableMoves) {
+        board[i] = aiPlayer;
+        if (TicTacToe.checkWinStatic(board) === aiPlayer) { board[i] = ''; return i; }
+        board[i] = '';
+      }
+      // Rule B: Block immediate opponent win
+      for (let i of availableMoves) {
+        board[i] = humanPlayer;
+        if (TicTacToe.checkWinStatic(board) === humanPlayer) { board[i] = ''; return i; }
+        board[i] = '';
+      }
+      // Rule C: Smartish Randomness (Bias towards center/corners)
+      if (Math.random() > 0.3) {
+        if (availableMoves.includes(4)) return 4;
+        const corners = availableMoves.filter(m => [0,2,6,8].includes(m));
+        if (corners.length > 0) return corners[Math.floor(Math.random() * corners.length)];
+      }
+      return availableMoves[Math.floor(Math.random() * availableMoves.length)];
+    }
+
+    // 3. Hard: Perfect Minimax
     let bestScore = -Infinity;
     let move = -1;
     
+    // Add slight randomness to Hard first move to make it feel human
+    if (availableMoves.length === 9) {
+      const openers =[0, 2, 4, 6, 8];
+      return openers[Math.floor(Math.random() * openers.length)];
+    }
+
     for (let i of availableMoves) {
-      board[i] = 'O'; // AI is always 'O' internally for calculation
-      let score = AI.minimax(board, 0, false);
+      board[i] = aiPlayer; 
+      let score = AI.minimax(board, 0, false, aiPlayer, humanPlayer);
       board[i] = '';
       if (score > bestScore) {
         bestScore = score;
@@ -1134,16 +1156,18 @@ const AI = {
 class TicTacToe {
   constructor() {
     this.board = Array(9).fill('');
-    this.history = [];
+    this.history =[];
     this.currentPlayer = 'X';
     this.gameActive = false;
     this.scores = { X: 0, O: 0 };
+    this.isAiThinking = false;
+    this.aiTimeout = null;
     
     // Settings
     this.settings = {
-      mode: 'pvc', // pvc or pvp
+      mode: 'pvc',
       difficulty: 'medium',
-      playerStart: 'X', // Who starts first game
+      playerStart: 'X', 
       theme: '#00ff99'
     };
 
@@ -1163,9 +1187,9 @@ class TicTacToe {
 
   resizeCanvas() {
     const rect = document.getElementById('board-container').getBoundingClientRect();
-    this.canvas.width = rect.width - 20; // minus padding
+    this.canvas.width = rect.width - 20; 
     this.canvas.height = rect.height - 20;
-    if(!this.gameActive) this.drawWinLine(this.lastWinCombo, true); // Redraw if existing
+    if(!this.gameActive && this.lastWinCombo) this.drawWinLine(this.lastWinCombo, true); 
   }
 
   initBoard() {
@@ -1181,10 +1205,12 @@ class TicTacToe {
 
   startNewGame() {
     this.board = Array(9).fill('');
-    this.history = [];
+    this.history =[];
     this.gameActive = true;
-    this.currentPlayer = 'X';
+    this.currentPlayer = 'X'; // In Tic-Tac-Toe, X always officially goes first
     this.lastWinCombo = null;
+    this.isAiThinking = false;
+    if (this.aiTimeout) clearTimeout(this.aiTimeout);
     
     // Clear UI
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -1195,30 +1221,36 @@ class TicTacToe {
 
     this.statusEl.innerText = `Player ${this.currentPlayer}'s Turn`;
     
-    // If AI goes first
-    if (this.settings.mode === 'pvc' && this.settings.playerStart === 'O') {
-      this.currentPlayer = 'O'; // AI is O
-      setTimeout(() => this.makeAiMove(), 500);
-    } else {
-      this.currentPlayer = 'X';
+    if (this.settings.mode === 'pvc') {
+      this.humanPlayer = this.settings.playerStart;
+      this.aiPlayer = this.humanPlayer === 'X' ? 'O' : 'X';
+
+      // If Human chose "Player O", AI acts as "Player X" and will move first
+      if (this.currentPlayer === this.aiPlayer) {
+        this.isAiThinking = true;
+        this.aiTimeout = setTimeout(() => this.makeAiMove(), 500);
+      }
     }
   }
 
   handleCellClick(index) {
-    if (!this.gameActive || this.board[index] !== '') return;
+    if (!this.gameActive || this.board[index] !== '' || this.isAiThinking) return;
     
-    // Human Move
+    // Prevent human clicking if it's the AI's intended turn
+    if (this.settings.mode === 'pvc' && this.currentPlayer !== this.humanPlayer) return;
+
     this.makeMove(index, this.currentPlayer);
 
     if (this.gameActive && this.settings.mode === 'pvc') {
-      // AI Turn
-      setTimeout(() => this.makeAiMove(), 600);
+      // Lock board and trigger AI
+      this.isAiThinking = true;
+      this.aiTimeout = setTimeout(() => this.makeAiMove(), 600);
     }
   }
 
   makeMove(index, player) {
-    // Record history for undo
-    this.history.push({ board: [...this.board], player: this.currentPlayer });
+    // Record history (pre-move state)
+    this.history.push({ board:[...this.board], player: this.currentPlayer });
     
     this.board[index] = player;
     
@@ -1239,6 +1271,7 @@ class TicTacToe {
       this.statusEl.innerText = `Player ${player} Wins!`;
       playSound('win');
       confettiExplosion();
+      this.isAiThinking = false;
       return;
     }
 
@@ -1246,6 +1279,7 @@ class TicTacToe {
       this.gameActive = false;
       this.statusEl.innerText = "It's a Draw!";
       playSound('draw');
+      this.isAiThinking = false;
       return;
     }
 
@@ -1256,31 +1290,33 @@ class TicTacToe {
   makeAiMove() {
     if (!this.gameActive) return;
     
-    const moveIndex = AI.getBestMove(this.board, this.settings.difficulty);
+    const moveIndex = AI.getBestMove(this.board, this.settings.difficulty, this.aiPlayer, this.humanPlayer);
     if (moveIndex !== -1) {
-      this.makeMove(moveIndex, 'O');
+      this.makeMove(moveIndex, this.aiPlayer);
     }
+    this.isAiThinking = false;
   }
 
   undo() {
     if (this.history.length === 0 || !this.gameActive) return;
     
-    // If PvC, we usually undo 2 moves (Human + AI)
-    // unless AI just played and we want to retry human move? 
-    // Usually simpler to undo to last Human state.
-    
+    if (this.aiTimeout) clearTimeout(this.aiTimeout);
+    this.isAiThinking = false;
+
     let steps = 1;
     if (this.settings.mode === 'pvc') {
-       // If it's human turn (meaning AI just played), we need to undo 2
-       // If AI is thinking, we can't undo yet really.
-       if (this.history.length >= 2) steps = 2;
-       else steps = this.history.length;
+       // Revert human's last move AND AI's last move if both have played. 
+       if (this.currentPlayer === this.humanPlayer && this.history.length >= 2) {
+           steps = 2;
+       } else {
+           steps = 1; // Only undo the single move if AI was mid-thought
+       }
     }
 
     const prevState = this.history[this.history.length - steps];
     this.history = this.history.slice(0, this.history.length - steps);
-    this.board = prevState.board;
-    this.currentPlayer = prevState.player; // Restore turn
+    this.board = [...prevState.board];
+    this.currentPlayer = prevState.player;
     
     // Redraw Board
     Array.from(this.gridEl.children).forEach((cell, i) => {
@@ -1299,13 +1335,11 @@ class TicTacToe {
     this.statusEl.innerText = `Player ${this.currentPlayer}'s Turn`;
     this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
     this.gameActive = true;
+    this.lastWinCombo = null;
   }
 
   checkWin() {
-    const winCombos = [
-      [0,1,2], [3,4,5], [6,7,8], // Rows
-      [0,3,6], [1,4,7], [2,5,8], // Cols
-      [0,4,8], [2,4,6]           // Diagonals
+    const winCombos = [[0,1,2], [3,4,5], [6,7,8],[0,3,6], [1,4,7], [2,5,8],[0,4,8], [2,4,6]           
     ];
 
     for (let combo of winCombos) {
@@ -1318,7 +1352,7 @@ class TicTacToe {
     return false;
   }
 
-  // Static version for AI
+  // Static version strictly evaluating logical arrays for AI engine
   static checkWinStatic(board) {
     const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
     for(let c of wins) {
@@ -1330,7 +1364,7 @@ class TicTacToe {
   drawWinLine(combo, isResize=false) {
     if(!combo) return;
     this.lastWinCombo = combo;
-    const [a, c] = [combo[0], combo[2]];
+    const [a, c] =[combo[0], combo[2]];
     
     // Calculate coords
     const cellW = this.canvas.width / 3;
@@ -1404,7 +1438,7 @@ function confettiExplosion() {
     canvas.height = window.innerHeight;
     
     const particles = [];
-    const colors = [game.settings.theme, '#fff', '#ff0055', '#ffff00'];
+    const colors =[game.settings.theme, '#fff', '#ff0055', '#ffff00'];
     
     for(let i=0; i<100; i++) {
         particles.push({
@@ -1438,7 +1472,7 @@ function confettiExplosion() {
 }
 </script>
 </body>
-</html>
+</html> 
 <% } %>
 
 
