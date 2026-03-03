@@ -13,7 +13,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */  
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -320,7 +320,10 @@ document.addEventListener("DOMContentLoaded", () => {
     startupKickAttempts: 0,
     // FIX (startup pause blocked): true when a real user gesture explicitly requested pause,
     // which must always be honoured even inside the startup settle window.
-    userGesturePauseIntent: false
+    userGesturePauseIntent: false,
+    // FIX (premature autoplay): autoplay is blocked until window "load" fires, ensuring
+    // the page is 100% loaded before we ever attempt to start playback.
+    pageFullyLoaded: document.readyState === "complete"
   };
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -359,6 +362,28 @@ document.addEventListener("DOMContentLoaded", () => {
   const STARTUP_SETTLE_MS = 3500;
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
+
+  // FIX (premature autoplay): mark page as fully loaded when window fires "load".
+  // If the page was already complete when this script ran, the flag is already true above.
+  if (!state.pageFullyLoaded) {
+    window.addEventListener("load", () => {
+      state.pageFullyLoaded = true;
+      // Now that the page is fully loaded, kick off the normal startup sequence
+      // exactly as the bottom-of-file bootstrap does.
+      if (coupledMode && state.startupPhase && !state.startupPrimed) {
+        maybePrimeStartup();
+        scheduleStartupAutoplayKick();
+        forceAudioStartupPlay();
+      } else if (!coupledMode && wantsStartupAutoplay()) {
+        scheduleSync(0);
+      }
+    }, { once: true, passive: true });
+  }
+
+  // Returns true if autoplay is allowed to proceed yet.
+  function pageLoadedForAutoplay() {
+    return state.pageFullyLoaded;
+  }
   function isWindowFocused() { try { return typeof document.hasFocus === "function" ? document.hasFocus() : true; } catch { return true; } }
 
   function now() { return performance.now(); }
@@ -1534,6 +1559,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!state.startupPrimed) return;
     if (!wantsStartupAutoplay() && !state.intendedPlaying) return;
     if (mediaSessionForcedPauseActive()) return;
+    // FIX (premature autoplay): never kick before the page is fully loaded.
+    if (!pageLoadedForAutoplay()) return;
     state.startupKickInFlight = true;
     setTimeout(async () => {
       try {
@@ -1594,6 +1621,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.startupKickDone || state.startupKickInFlight) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
+    // FIX (premature autoplay): defer retry until page is fully loaded.
+    if (!pageLoadedForAutoplay()) return;
     clearStartupAutoplayRetryTimer();
     const count = state.startupAutoplayRetryCount;
     if (count >= 10) return;
@@ -1655,6 +1684,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function maybePrimeStartup() {
     if (!coupledMode) return;
     if (state.restarting || state.startupPrimed) return;
+    // FIX (premature autoplay): do not prime before page is fully loaded.
+    if (!pageLoadedForAutoplay()) return;
     const t0 = Number(video.currentTime()) || 0;
     const primeWait = now() - state.startupPrimeStartedAt;
     if (!bothStartupBufferedAt(t0)) {
@@ -2410,7 +2441,7 @@ document.addEventListener("DOMContentLoaded", () => {
       window.addEventListener("pageshow", e => {
         if (!platform.useBgControllerRetry) return;
         if (e && e.persisted) executeSeamlessWakeup();
-        if (state.startupPhase && !state.startupPrimed) {
+        if (state.startupPhase && !state.startupPrimed && pageLoadedForAutoplay()) {
           maybePrimeStartup();
           scheduleStartupAutoplayKick();
         }
@@ -2445,7 +2476,7 @@ document.addEventListener("DOMContentLoaded", () => {
             scheduleSync(0);
           }
         }
-        if (state.startupPhase && !state.startupKickDone && wantsStartupAutoplay()) {
+        if (state.startupPhase && !state.startupKickDone && wantsStartupAutoplay() && pageLoadedForAutoplay()) {
           scheduleStartupAutoplayKick();
         }
         setTimeout(() => { state.visibilityTransitionActive = false; }, VISIBILITY_TRANSITION_MS);
@@ -2501,6 +2532,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!coupledMode || !audio || state.audioStartupPlayAttempted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (state.startupPrimed && state.firstPlayCommitted) return;
+    // FIX (premature autoplay): don't force audio play before page is fully loaded.
+    if (!pageLoadedForAutoplay()) return;
     state.audioStartupPlayAttempted = true;
     const tryPlay = () => {
       if (state.audioStartupPlayRetries >= MAX_AUDIO_STARTUP_RETRIES) return;
@@ -2628,7 +2661,9 @@ document.addEventListener("DOMContentLoaded", () => {
   state.bgPlaybackAllowed = true;
   state.backgroundAutoplayTriggered = true;
   setTimeout(() => {
-    if (coupledMode && state.startupPhase && !state.startupPrimed) {
+    // Secondary bootstrap: if priming hasn't happened yet (e.g. load event already
+    // fired before we registered), nudge it along. Gated on pageFullyLoaded.
+    if (coupledMode && state.startupPhase && !state.startupPrimed && pageLoadedForAutoplay()) {
       maybePrimeStartup();
       scheduleStartupAutoplayKick();
       forceAudioStartupPlay();
@@ -2636,6 +2671,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
+
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
