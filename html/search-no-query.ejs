@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="no-js">
 <head>
 <meta charset="UTF-8">
 <title>Poke</title>
@@ -12,234 +12,350 @@
 <meta property="og:title" content="Poke - The privacy app of your dreams!">
 <meta property="og:description" content="Poke is a free software YouTube front-end, translator, map app, and more!! Watch silly videos, check your weather, and do all of that and more anonymously in this all-in-one privacy app!!!">
 <meta property="og:image" content="/static/poke-embed.webp">
+<meta name="twitter:title" content="Poke - The privacy app of your dreams!">
+<meta name="twitter:description" content="Poke is a free software YouTube front-end, translator, map app, and more!! Watch silly videos, check your weather, and do all of that and more anonymously in this all-in-one privacy app!!!">
+<meta name="twitter:image" content="/static/poke-embed.webp">
+<meta name="twitter:card" content="summary_large_image">
+
+<script>
+document.documentElement.className = document.documentElement.className.replace("no-js", "js");
+</script>
 
 <style>
-@font-face{
-  font-family:"PokeTube Flex";
-  src:url("/static/robotoflex.ttf");
-  font-style:normal;
-  font-stretch:1% 800%;
-  font-display:swap;
+@font-face {
+  font-family: "PokeTube Flex";
+  src: url("/static/robotoflex.ttf");
+  font-style: normal;
+  font-stretch: 1% 800%;
+  font-display: swap;
 }
 
 :root{
-  --bg:#0b0c10;
+  --bg:#0a0b10;
+  --bg2:#11131b;
   --panel:#151821;
   --panel2:#1a1d26;
-  --panel3:#121521;
+  --panel3:#202433;
   --text:#f4f6ff;
-  --muted:#a7adbf;
-  --muted2:#8c92a6;
-  --border:#242836;
-  --border2:#2b3041;
+  --muted:#9ea6bc;
+  --muted2:#7f879d;
+  --border:#282d3c;
+  --border-strong:#353b4f;
   --accent:#df03a8;
-  --shadow:0 14px 32px rgba(0,0,0,.45);
-  --shadow2:0 10px 22px rgba(0,0,0,.35);
-  --radius:18px;
-  --radius2:14px;
+  --accent-soft:rgba(223,3,168,.18);
+  --shadow:0 18px 40px rgba(0,0,0,.40);
+  --shadow-soft:0 10px 24px rgba(0,0,0,.24);
+  --radius:20px;
+  --radius-sm:14px;
+  --container:min(1240px,92vw);
 }
 
-*{box-sizing:border-box}
+*{
+  box-sizing:border-box;
+}
 
-html,body{height:100%}
+html{
+  background:var(--bg);
+}
 
 body{
   margin:0;
   min-height:100vh;
-  background:
-    radial-gradient(900px 420px at 50% -10%, rgba(223,3,168,.10), transparent 60%),
-    radial-gradient(800px 420px at 15% 15%, rgba(124,77,255,.08), transparent 65%),
-    radial-gradient(800px 420px at 85% 15%, rgba(0,212,255,.05), transparent 65%),
-    var(--bg);
-  font-family:"PokeTube Flex", Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   color:var(--text);
+  font-family:"PokeTube Flex",Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  font-variation-settings:"wdth" 110,"wght" 420;
+  background:
+    radial-gradient(900px 500px at 50% -120px, rgba(223,3,168,.10), transparent 60%),
+    radial-gradient(800px 420px at 0% 0%, rgba(120,60,255,.08), transparent 58%),
+    linear-gradient(180deg, #0b0d13 0%, #0a0b10 100%);
 }
 
-a{color:inherit}
+a{
+  color:inherit;
+  text-decoration:none;
+}
+
+img{
+  max-width:100%;
+  display:block;
+}
+
+button,
+input{
+  font:inherit;
+}
 
 .page{
-  width:min(1240px, 92vw);
+  width:var(--container);
   margin:0 auto;
-  padding:44px 0 60px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:22px;
+  padding:38px 0 56px;
 }
 
 .hero{
-  width:100%;
   display:flex;
   flex-direction:column;
   align-items:center;
-  gap:14px;
-  padding-top:4px;
+  justify-content:center;
+  text-align:center;
+  padding:30px 0 10px;
+}
+
+.logo-wrap{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  margin-bottom:20px;
 }
 
 .logo{
-  width:248px;
-  max-width:72vw;
-  filter: drop-shadow(0 12px 26px rgba(0,0,0,.48));
+  width:252px;
+  max-width:74vw;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));
 }
 
-.tagline{
-  margin-top:-4px;
+.hero-copy{
+  max-width:760px;
+  margin-bottom:22px;
+}
+
+.hero-title{
+  margin:0 0 8px;
+  font-size:17px;
+  line-height:1.2;
+  color:var(--text);
+  font-variation-settings:"wdth" 118,"wght" 620;
+  letter-spacing:.1px;
+}
+
+.hero-sub{
+  margin:0;
   font-size:14px;
-  color:rgba(244,246,255,.72);
-  letter-spacing:.15px;
-  text-align:center;
+  line-height:1.5;
+  color:var(--muted);
+  font-variation-settings:"wdth" 108,"wght" 430;
 }
 
 .search-wrap{
-  width:min(720px, 92vw);
-  margin-top:4px;
+  width:min(720px,92vw);
+  margin:0 auto;
 }
 
 .search-form{
-  display:flex;
-  gap:10px;
-  align-items:center;
+  display:block;
+}
+
+.search-field{
+  position:relative;
 }
 
 .search-bar{
-  flex:1;
   width:100%;
-  padding:14px 18px;
-  font-size:16px;
+  min-height:56px;
+  padding:15px 20px;
   border-radius:999px;
   border:1px solid var(--border);
-  background:var(--panel);
+  background:linear-gradient(180deg, #171b25 0%, #141821 100%);
   color:var(--text);
   outline:none;
-  box-shadow:var(--shadow2);
-  transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  box-shadow:var(--shadow-soft);
+  transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease, background .18s ease;
+  font-size:16px;
+  font-variation-settings:"wdth" 108,"wght" 445;
 }
 
 .search-bar::placeholder{
-  color:var(--muted2);
+  color:#8d95a9;
+}
+
+.search-bar:hover{
+  border-color:var(--border-strong);
+  background:linear-gradient(180deg, #191d28 0%, #151923 100%);
 }
 
 .search-bar:focus{
   border-color:var(--accent);
-  box-shadow:0 0 0 2px rgba(223,3,168,.25), var(--shadow2);
+  box-shadow:0 0 0 3px var(--accent-soft), var(--shadow-soft);
   transform:translateY(-1px);
 }
 
-.quick-pill{
-  display:none;
+.search-note{
+  margin-top:10px;
+  text-align:center;
+  font-size:12.5px;
+  color:var(--muted2);
+  font-variation-settings:"wdth" 106,"wght" 420;
 }
 
-.section{
+.content{
+  margin-top:26px;
+}
+
+.discover{
   width:100%;
-  margin-top:10px;
-  background:var(--panel);
   border:1px solid var(--border);
+  background:linear-gradient(180deg, #151821 0%, #12151d 100%);
   border-radius:var(--radius);
   box-shadow:var(--shadow);
   overflow:hidden;
 }
 
-.section-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:12px;
-  padding:16px 18px;
-  border-bottom:1px solid var(--border);
-  background:linear-gradient(90deg, rgba(223,3,168,.10), transparent 55%);
+.discover[open]{
+  border-color:#2f3445;
 }
 
-.section-head-left{
+.native-toggle{
+  list-style:none;
+  cursor:pointer;
+  padding:15px 18px;
+  border-bottom:1px solid var(--border);
+  background:linear-gradient(180deg, #191d27 0%, #161922 100%);
+  color:var(--text);
+  user-select:none;
+  font-size:14px;
+  font-variation-settings:"wdth" 110,"wght" 560;
+}
+
+.native-toggle::-webkit-details-marker{
+  display:none;
+}
+
+.native-toggle::marker{
+  content:"";
+}
+
+.native-toggle-inner{
   display:flex;
-  flex-direction:column;
-  gap:4px;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+}
+
+.native-toggle-text{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.native-dot{
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  background:var(--accent);
+  box-shadow:0 0 0 4px rgba(223,3,168,.12);
+  flex:0 0 auto;
+}
+
+.native-toggle-arrow{
+  color:var(--muted);
+  transition:transform .18s ease;
+}
+
+.discover[open] .native-toggle-arrow{
+  transform:rotate(180deg);
+}
+
+.js .native-toggle{
+  display:none;
+}
+
+.discover-shell{
+  display:block;
+}
+
+.discover-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:18px 20px;
+  border-bottom:1px solid var(--border);
+  background:
+    linear-gradient(90deg, rgba(223,3,168,.10) 0%, rgba(223,3,168,.04) 26%, rgba(255,255,255,0) 60%),
+    linear-gradient(180deg, #181b25 0%, #151821 100%);
+}
+
+.discover-heading{
   min-width:0;
 }
 
 .section-title{
-  font-size:16px;
-  font-weight:720;
-  letter-spacing:.2px;
+  margin:0;
+  font-size:17px;
+  line-height:1.2;
+  color:var(--text);
+  font-variation-settings:"wdth" 115,"wght" 640;
 }
 
 .section-sub{
+  margin:5px 0 0;
   font-size:13px;
+  line-height:1.45;
   color:var(--muted);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+  font-variation-settings:"wdth" 108,"wght" 430;
 }
 
-.toggle{
-  display:inline-flex;
-  gap:8px;
-  align-items:center;
-  user-select:none;
-  font-size:13px;
-  color:rgba(244,246,255,.78);
-  padding:8px 10px;
+.js-toggle{
+  display:none;
+  flex:0 0 auto;
+  min-width:102px;
+  padding:10px 14px;
   border-radius:999px;
-  background:var(--panel3);
-  border:1px solid var(--border2);
+  border:1px solid var(--border-strong);
+  background:linear-gradient(180deg, #232837 0%, #1b2030 100%);
+  color:var(--text);
   cursor:pointer;
-  transition:border-color .16s ease, transform .16s ease;
+  transition:border-color .18s ease, transform .18s ease, background .18s ease;
+  font-size:13px;
+  line-height:1;
+  font-variation-settings:"wdth" 110,"wght" 560;
 }
 
-.toggle:hover{
-  border-color:rgba(223,3,168,.55);
-  transform:translateY(-1px);
+.js .js-toggle{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
 }
 
-.toggle:active{
-  transform:translateY(0);
+.js-toggle:hover{
+  border-color:var(--accent);
+  background:linear-gradient(180deg, #272d3f 0%, #1f2434 100%);
 }
 
-.chev{
-  width:10px;
-  height:10px;
-  display:inline-block;
-  border-right:2px solid rgba(244,246,255,.7);
-  border-bottom:2px solid rgba(244,246,255,.7);
-  transform:rotate(45deg);
-  margin-top:-2px;
+.js-toggle:focus{
+  outline:none;
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+
+.js-toggle:active{
+  transform:translateY(1px);
+}
+
+.discover-body{
+  padding:16px;
 }
 
 .video-grid{
-  padding:16px;
   display:grid;
-  grid-template-columns:repeat(4, minmax(0, 1fr));
+  grid-template-columns:repeat(4,minmax(0,1fr));
   gap:14px;
-}
-
-@media (max-width: 1100px){
-  .video-grid{grid-template-columns:repeat(3, minmax(0, 1fr));}
-}
-
-@media (max-width: 820px){
-  .video-grid{grid-template-columns:repeat(2, minmax(0, 1fr));}
-}
-
-@media (max-width: 520px){
-  .video-grid{grid-template-columns:1fr;}
-  .toggle{padding:7px 9px}
 }
 
 .video{
   display:block;
-  text-decoration:none;
-  color:inherit;
   border:1px solid var(--border);
-  border-radius:var(--radius2);
-  background:var(--panel2);
+  border-radius:16px;
+  background:linear-gradient(180deg, #1b1f2a 0%, #181c26 100%);
   overflow:hidden;
-  transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease;
-  box-shadow:0 6px 18px rgba(0,0,0,.25);
+  box-shadow:0 6px 18px rgba(0,0,0,.18);
+  transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
 }
 
 .video:hover{
   transform:translateY(-2px);
-  border-color:rgba(223,3,168,.6);
-  box-shadow:0 14px 30px rgba(0,0,0,.35);
+  border-color:rgba(223,3,168,.55);
+  box-shadow:0 14px 28px rgba(0,0,0,.28);
+  background:linear-gradient(180deg, #1d2230 0%, #191e29 100%);
 }
 
 .thumbnail{
@@ -249,13 +365,15 @@ a{color:inherit}
   background-position:center;
   background-size:cover;
   background-repeat:no-repeat;
+  border-bottom:1px solid rgba(255,255,255,.04);
 }
 
 .thumbnail::after{
   content:"";
   position:absolute;
   inset:0;
-  background:linear-gradient(180deg, transparent 62%, rgba(0,0,0,.60) 100%);
+  background:linear-gradient(180deg, rgba(0,0,0,0) 52%, rgba(0,0,0,.40) 100%);
+  pointer-events:none;
 }
 
 .video-length{
@@ -263,15 +381,18 @@ a{color:inherit}
   right:8px;
   bottom:8px;
   z-index:1;
-  font-size:12px;
-  padding:4px 7px;
-  border-radius:6px;
-  background:rgba(0,0,0,.78);
+  font-size:11.5px;
+  line-height:1;
+  padding:5px 7px;
+  border-radius:7px;
+  background:rgba(8,10,14,.86);
+  color:#f6f8ff;
   border:1px solid rgba(255,255,255,.10);
+  font-variation-settings:"wdth" 108,"wght" 540;
 }
 
 .info{
-  padding:10px 12px 12px;
+  padding:12px 12px 13px;
   display:flex;
   flex-direction:column;
   gap:6px;
@@ -279,14 +400,16 @@ a{color:inherit}
 
 .title{
   font-size:14px;
-  font-weight:660;
-  line-height:1.25;
-  letter-spacing:.1px;
+  line-height:1.32;
+  color:var(--text);
+  font-variation-settings:"wdth" 108,"wght" 585;
 }
 
 .byline{
-  font-size:12px;
+  font-size:12.5px;
+  line-height:1.35;
   color:var(--muted);
+  font-variation-settings:"wdth" 106,"wght" 430;
 }
 
 .max-lines-2{
@@ -296,85 +419,85 @@ a{color:inherit}
   overflow:hidden;
 }
 
- #discover-toggle{display:none}
-
- html.js .discover-controls{display:inline-flex}
-html.js .discover-body{display:block}
-html.js .discover-hidden .discover-body{display:none}
-html.js .discover-hidden .toggle .chev{transform:rotate(-135deg); margin-top:2px}
-
- .details-fallback{
+.discover[open] .discover-empty{
   display:none;
 }
 
-noscript .details-fallback{
-  display:block;
-  width:100%;
-}
-
-noscript .section{
-  display:none;
-}
-
-details.details-fallback{
-  width:100%;
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  box-shadow:var(--shadow);
-  overflow:hidden;
-}
-
-details.details-fallback > summary{
-  list-style:none;
-  cursor:pointer;
-  padding:16px 18px;
-  border-bottom:1px solid var(--border);
-  background:linear-gradient(90deg, rgba(223,3,168,.10), transparent 55%);
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:12px;
-}
-
-details.details-fallback > summary::-webkit-details-marker{display:none}
-
-.summary-left{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-  min-width:0;
-}
-
-.summary-title{
-  font-size:16px;
-  font-weight:720;
-  letter-spacing:.2px;
-}
-
-.summary-sub{
-  font-size:13px;
+.discover-empty{
+  padding:16px 18px 18px;
   color:var(--muted);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-
-.summary-right{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 10px;
-  border-radius:999px;
-  background:var(--panel3);
-  border:1px solid var(--border2);
   font-size:13px;
-  color:rgba(244,246,255,.78);
+  border-top:1px solid var(--border);
 }
 
-details.details-fallback[open] .summary-right .chev{
-  transform:rotate(-135deg);
-  margin-top:2px;
+@media (max-width:1100px){
+  .video-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+
+@media (max-width:820px){
+  .page{
+    padding-top:28px;
+  }
+
+  .hero{
+    padding-top:16px;
+  }
+
+  .logo{
+    width:224px;
+  }
+
+  .discover-header{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  .js-toggle{
+    min-width:0;
+  }
+
+  .video-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+@media (max-width:560px){
+  .page{
+    width:min(96vw,1240px);
+    padding-bottom:36px;
+  }
+
+  .hero-title{
+    font-size:16px;
+  }
+
+  .hero-sub{
+    font-size:13px;
+  }
+
+  .search-bar{
+    min-height:52px;
+    font-size:15px;
+  }
+
+  .discover-header{
+    padding:16px;
+  }
+
+  .discover-body{
+    padding:12px;
+  }
+
+  .video-grid{
+    grid-template-columns:1fr;
+    gap:12px;
+  }
+
+  .native-toggle{
+    padding:14px 16px;
+  }
 }
 </style>
 </head>
@@ -382,124 +505,118 @@ details.details-fallback[open] .summary-right .chev{
 <body>
 
 <div class="page">
-
   <div class="hero">
-    <img src="/static/logo-poke.svg" class="logo" alt="Poke Logo">
- 
+    <div class="logo-wrap">
+      <img src="/static/logo-poke.svg" class="logo" alt="Poke Logo">
+    </div>
+
+    <div class="hero-copy">
+      <h1 class="hero-title">Search privately across Poke</h1>
+      <p class="hero-sub">Watch videos, explore trending content, and find things without the usual noise.</p>
+    </div>
+
     <div class="search-wrap">
       <form class="search-form" action="/search" method="get">
-        <input class="search-bar" autocomplete="on" id="fname" name="query" type="text" placeholder="Search...">
+        <div class="search-field">
+          <input class="search-bar" autocomplete="on" id="fname" name="query" type="text" placeholder="Search...">
+        </div>
       </form>
+      <div class="search-note">Type anything to search, or browse trending gaming videos below.</div>
     </div>
   </div>
 
-  <!-- JS / no-JS version (shown when JS is enabled) -->
-  <section class="section" id="discover" aria-label="Discover gaming videos">
-    <div class="section-header">
-      <div class="section-head-left">
-        <div class="section-title">Discover gaming videos</div>
-        <div class="section-sub">These are trending gaming videos</div>
-      </div>
-
-      <button class="toggle discover-controls" id="discoverToggle" type="button" aria-controls="discoverBody" aria-expanded="true">
-        <span id="discoverToggleText">Hide</span>
-        <span class="chev" aria-hidden="true"></span>
-      </button>
-    </div>
-
-    <div class="discover-body" id="discoverBody">
-      <div class="video-grid">
-        <% inv.slice(0,16).forEach(x => { %>
-
-          <a href="/watch?v=<%- x.videoId %>" class="video canloadhd" data-author="<%- x.author %>">
-            <div class="thumbnail" style="background-image:url('/vi/<%= x.videoId %>/hqdefault.jpg?sqp=-oaymwEbCKgBEF5IVfKriqkDDggBFQAAiEIYAXABwAEG&rs=AOn4CLBy_x4UUHLNDZtJtH0PXeQGoRFTgw');">
-              <span class="video-length"><%- turntomins(x.lengthSeconds) %></span>
-            </div>
-            <div class="info">
-              <span class="title max-lines-2" title="<%- x.title %>"><%- x.title %></span>
-              <span class="byline max-lines-2" title="Video By <%- x.author %>">By <%- x.author %></span>
-            </div>
-          </a>
-
-        <% }) %>
-      </div>
-    </div>
-  </section>
-
-  <!-- NO-JS option: collapsible discover section (only appears when JS is disabled) -->
-  <noscript>
-    <details class="details-fallback" open>
-      <summary>
-        <div class="summary-left">
-          <div class="summary-title">Discover gaming videos</div>
-          <div class="summary-sub">These are trending gaming videos</div>
-        </div>
-        <div class="summary-right">
-          <span>Toggle</span>
-          <span class="chev" aria-hidden="true"></span>
-        </div>
+  <div class="content">
+    <details class="discover" id="discover-section" open>
+      <summary class="native-toggle">
+        <span class="native-toggle-inner">
+          <span class="native-toggle-text">
+            <span class="native-dot"></span>
+            <span>Discover gaming videos</span>
+          </span>
+          <span class="native-toggle-arrow">▾</span>
+        </span>
       </summary>
 
-      <div class="video-grid">
-        <% inv.slice(0,16).forEach(x => { %>
+      <div class="discover-shell">
+        <div class="discover-header">
+          <div class="discover-heading">
+            <h2 class="section-title">Discover gaming videos</h2>
+            <p class="section-sub">These are trending gaming videos right now.</p>
+          </div>
 
-          <a href="/watch?v=<%- x.videoId %>" class="video canloadhd" data-author="<%- x.author %>">
-            <div class="thumbnail" style="background-image:url('/vi/<%= x.videoId %>/hqdefault.jpg?sqp=-oaymwEbCKgBEF5IVfKriqkDDggBFQAAiEIYAXABwAEG&rs=AOn4CLBy_x4UUHLNDZtJtH0PXeQGoRFTgw');">
-              <span class="video-length"><%- turntomins(x.lengthSeconds) %></span>
-            </div>
-            <div class="info">
-              <span class="title max-lines-2" title="<%- x.title %>"><%- x.title %></span>
-              <span class="byline max-lines-2" title="Video By <%- x.author %>">By <%- x.author %></span>
-            </div>
-          </a>
+          <button type="button" class="js-toggle" id="discover-toggle" aria-controls="discover-section" aria-expanded="true">
+            Hide videos
+          </button>
+        </div>
 
-        <% }) %>
+        <div class="discover-body">
+          <div class="video-grid">
+            <% inv.slice(0,16).forEach(x => { %>
+              <a href="/watch?v=<%- x.videoId %>" class="video canloadhd" data-author="<%- x.author %>">
+                <div class="thumbnail" style="background-image:url('/vi/<%= x.videoId %>/hqdefault.jpg?sqp=-oaymwEbCKgBEF5IVfKriqkDDggBFQAAiEIYAXABwAEG&rs=AOn4CLBy_x4UUHLNDZtJtH0PXeQGoRFTgw');">
+                  <span class="video-length"><%- turntomins(x.lengthSeconds) %></span>
+                </div>
+
+                <div class="info">
+                  <span class="title max-lines-2" title="<%- x.title %>"><%- x.title %></span>
+                  <span class="byline max-lines-2" title="Video By <%- x.author %>">By <%- x.author %></span>
+                </div>
+              </a>
+            <% }) %>
+          </div>
+        </div>
       </div>
-    </details>
-  </noscript>
 
+      <div class="discover-empty">The trending gaming videos section is hidden.</div>
+    </details>
+  </div>
 </div>
 
 <script>
-(function(){
-  document.documentElement.classList.add("js");
+(function () {
+  var section = document.getElementById("discover-section");
+  var button = document.getElementById("discover-toggle");
+  var storageKey = "poke_discover_videos_open";
 
-  var btn = document.getElementById("discoverToggle");
-  var body = document.getElementById("discoverBody");
-  var txt = document.getElementById("discoverToggleText");
+  if (!section || !button) return;
 
-  if (!btn || !body || !txt) return;
-
-  var key = "poke_discover_hidden";
-  var hidden = false;
-
-  try{
-    hidden = localStorage.getItem(key) === "1";
-  }catch(e){
-    hidden = false;
+  function setButtonState() {
+    var isOpen = section.hasAttribute("open");
+    button.textContent = isOpen ? "Hide videos" : "Show videos";
+    button.setAttribute("aria-expanded", isOpen ? "true" : "false");
   }
 
-  function setHidden(v){
-    hidden = !!v;
-    if (hidden){
-      document.documentElement.classList.add("discover-hidden");
-      btn.setAttribute("aria-expanded","false");
-      txt.textContent = "Show";
-    }else{
-      document.documentElement.classList.remove("discover-hidden");
-      btn.setAttribute("aria-expanded","true");
-      txt.textContent = "Hide";
+  function saveState() {
+    try {
+      localStorage.setItem(storageKey, section.hasAttribute("open") ? "1" : "0");
+    } catch (e) {}
+  }
+
+  try {
+    var saved = localStorage.getItem(storageKey);
+    if (saved === "0") {
+      section.removeAttribute("open");
+    } else if (saved === "1") {
+      section.setAttribute("open", "");
     }
-    try{
-      localStorage.setItem(key, hidden ? "1" : "0");
-    }catch(e){}
-  }
+  } catch (e) {}
 
-  btn.addEventListener("click", function(){
-    setHidden(!hidden);
+  setButtonState();
+
+  button.addEventListener("click", function () {
+    if (section.hasAttribute("open")) {
+      section.removeAttribute("open");
+    } else {
+      section.setAttribute("open", "");
+    }
+    setButtonState();
+    saveState();
   });
 
-  setHidden(hidden);
+  section.addEventListener("toggle", function () {
+    setButtonState();
+    saveState();
+  });
 })();
 </script>
 
