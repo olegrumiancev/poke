@@ -487,7 +487,7 @@ button:hover, a:hover {
   <!-- uses player_ias.vflset/en_US/base.js -->
   <!-- helps with fetching video information too! -->
   <script> window.authorchannelname = "<%- VideoData?.author.replace("- Topic", "") %>" </script>
-  <script src="/static/player-base.js?ver=202604225&videoID=<%=VideoData.videoId%>&lang=en_us&set=player_ias.vflset&fix=fhffv&version=youtbube.player.web_20250917_22_RC00"> </script>
+  <script src="/static/player-base.js?ver=202604225&videoID=<%=VideoData.videoId%>&lang=en_us&set=player_ias.vflset&fix=fhfffv&version=youtbube.player.web_20250917_22_RC00"> </script>
 
   <!-- ICONS -->
   <!-- Font awesome "pro" -->
@@ -2606,7 +2606,7 @@ document.addEventListener('DOMContentLoaded', checkTheaterMode);
 
 <script>
 const AMvideo = document.getElementById("video");
-const canvases = [
+const canvases =[
   document.getElementById("ambient-canvas-1"),
   document.getElementById("ambient-canvas-2")
 ];
@@ -2614,13 +2614,9 @@ const canvases = [
 const contexts = canvases.map(c => c.getContext("2d", { alpha: false, desynchronized: true }));
 
 const CONFIG = {
-  // Use a lower resolution for the ambient light to save CPU. 
-  // Visual difference is negligible with blur, but performance is 10x better.
   internalWidth: 320, 
   internalHeight: 180,
   opacity: "0.4",
-  // Throttle updates based on hardware. 
-  // We cap the speed to prevent overheating on high-end devices (min 60ms).
   interval: Math.max(60, 998 / (navigator.hardwareConcurrency || 4))
 };
 
@@ -2628,57 +2624,51 @@ let activeIndex = 0;
 let animationFrameId = null;
 let lastDrawTime = 0;
 
+// ----- AMBIENT MODE TOGGLE STATE -----
+// Check localStorage (defaults to true if not set)
+let ambientEnabled = localStorage.getItem("ambientState") !== "false"; 
+
 // Initialize Styles & Low-Res Optimization
 canvases.forEach(c => {
-  // Force low internal resolution for performance
   c.width = CONFIG.internalWidth;
   c.height = CONFIG.internalHeight;
-  
-  // CSS handles the visual stretching
   c.style.width = "100%"; 
   c.style.height = "100%";
-  c.style.position = "absolute"; // Ensure they stack
+  c.style.position = "absolute"; 
   c.style.top = "0";
   c.style.left = "0";
-  
-  // Hardware accelerated transitions
   c.style.transition = `opacity ${CONFIG.interval}ms linear`;
-  c.style.willChange = "opacity"; // Hint to browser to optimize layering
+  c.style.willChange = "opacity";
   c.style.opacity = "0";
-  c.style.pointerEvents = "none"; // Let clicks pass through
+  c.style.pointerEvents = "none";
 });
 
 const drawFrame = (timestamp) => {
-  // Stop loop if video is not playing
-  if (AMvideo.paused || AMvideo.ended) {
+  // Stop loop if video is not playing or Ambient Mode is toggled off
+  if (AMvideo.paused || AMvideo.ended || !ambientEnabled) {
     animationFrameId = null; 
     return;
   }
 
-  // Request next frame immediately to keep loop alive
   animationFrameId = requestAnimationFrame(drawFrame);
 
-  // Throttle: Only draw if enough time has passed (controls FPS)
   if (timestamp - lastDrawTime < CONFIG.interval) return;
   lastDrawTime = timestamp;
 
   const currentCtx = contexts[activeIndex];
   const currentCanvas = canvases[activeIndex];
-  const nextCanvas = canvases[activeIndex ^ 1]; // Bitwise XOR (fast toggle 0/1)
+  const nextCanvas = canvases[activeIndex ^ 1];
 
-  // Draw scaled down video frame (Fastest operation)
   currentCtx.drawImage(AMvideo, 0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
 
-  // Cross-fade
   currentCanvas.style.opacity = CONFIG.opacity;
   nextCanvas.style.opacity = "0";
 
-  // Flip index
   activeIndex ^= 1;
 };
 
 const drawStart = () => {
-  if (animationFrameId) return; // Already running
+  if (!ambientEnabled || animationFrameId) return; // Don't start if off or running
   lastDrawTime = performance.now();
   animationFrameId = requestAnimationFrame(drawFrame);
 };
@@ -2690,7 +2680,7 @@ const drawPause = () => {
   }
 };
  
- const AMaudio = document.getElementById("aud");
+const AMaudio = document.getElementById("aud");
 
 let isPlayPending = false;
 let pageFullyLoaded = false;
@@ -2704,11 +2694,11 @@ const pauseIfNotLoaded = () => {
   return false;
 };
 
- window.addEventListener("load", () => {
+window.addEventListener("load", () => {
   pageFullyLoaded = true;
 }, { once: true });
 
- try {
+try {
   AMvideo.addEventListener("play", () => {
     if (!pageFullyLoaded) {
       try { AMvideo.pause(); } catch {}
@@ -2741,8 +2731,7 @@ if (AMaudio) {
 }
 
 const forcePlay = async () => {
-  if (!pageFullyLoaded) return; 
-  if (isPlayPending) return;
+  if (!pageFullyLoaded || isPlayPending) return; 
 
   isPlayPending = true;
 
@@ -2750,7 +2739,7 @@ const forcePlay = async () => {
   if (AMaudio) AMaudio.currentTime = 0;
 
   try {
-    const playPromises = [AMvideo.play()];
+    const playPromises =[AMvideo.play()];
     if (AMaudio) playPromises.push(AMaudio.play());
 
     await Promise.all(playPromises);
@@ -2770,13 +2759,52 @@ const forcePlay = async () => {
   }
 };
 
- window.addEventListener("load", () => {
+window.addEventListener("load", () => {
   forcePlay();
 }, { once: true });
 
 const handleFullscreen = () => {
   const isFullscreen = !!document.fullscreenElement;
-  canvases.forEach(c => c.style.display = isFullscreen ? 'none' : 'block');
+   canvases.forEach(c => c.style.display = (isFullscreen || !ambientEnabled) ? 'none' : 'block');
+};
+
+ const setupAmbientToggle = () => {
+  const toggleBtn = document.querySelector('a[title*="Ambient light mode uses a very cool ahh effect"]');
+  if (!toggleBtn) return;
+
+  const syncUI = () => {
+    if (ambientEnabled) {
+      // Set to ON visuals
+      toggleBtn.innerHTML = `
+        <i class="fa-light fa-lightbulb-on"></i>
+        Ambient Mode • on
+      `;
+      canvases.forEach(c => c.style.display = document.fullscreenElement ? 'none' : 'block');
+      if (!AMvideo.paused) drawStart();
+    } else {
+      // Set to OFF visuals
+      toggleBtn.innerHTML = `
+        <i class="fa-light fa-lightbulb" style="width: 1em;margin-left: 4px;"></i>
+        Ambient Mode • off
+      `;
+      canvases.forEach(c => {
+        c.style.display = 'none';
+        c.style.opacity = '0';
+      });
+      drawPause();
+    }
+  };
+
+  // Intercept the EJS link click
+  toggleBtn.addEventListener("click", (e) => {
+    e.preventDefault(); // Stop normal navigation
+    ambientEnabled = !ambientEnabled;
+    localStorage.setItem("ambientState", ambientEnabled ? "true" : "false");
+    syncUI();
+  });
+
+  // Run on load to ensure JS state overwrites EJS if needed based on localStorage
+  syncUI();
 };
 
 const init = () => {
@@ -2793,6 +2821,9 @@ const init = () => {
     CONFIG.internalHeight = CONFIG.internalWidth / ratio;
     canvases.forEach(c => c.height = CONFIG.internalHeight);
   }, { once: true });
+
+  // Setup the button toggle
+  setupAmbientToggle();
 
   // Initial Kickstart
   forcePlay();
