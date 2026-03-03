@@ -987,7 +987,13 @@ My Poke
                             <i  class="fa-light fa-compass"></i>
 Discover Poke
         </a>
- 
+ <a href="javascript:void(0);" 
+   id="vibeToggle"
+   style="text-decoration:none;" 
+   class="dropdown__item">
+    <i class="fa-light fa-compass"></i>
+    Vibing mode
+</a>
           				<a href="/apps" style="text-decoration: none;" class="dropdown__item">
                             <i  class="fa-light fa-grid-2"></i>
  More From Poke  </a>
@@ -2378,6 +2384,137 @@ VideoData?.recommendedVideos.forEach(video => {
     
 <!-- SCRIPTS -->
 <!-- AUTOPLAY -->
+<script>
+(() => {
+  const audio = document.getElementById("aud");
+  const logo = document.getElementById("pokeLogo");
+  const vibeToggle = document.getElementById("vibeToggle");
+
+  if (!audio || !logo || !vibeToggle) return;
+
+  let vibingEnabled = true;
+
+  let audioCtx = null;
+  let analyser = null;
+  let sourceNode = null;
+  let dataArray = null;
+
+  let rafId = null;
+
+  // Tweak these
+  const MIN_SCALE = 1.0;
+  const MAX_SCALE = 1.18;
+  const SMOOTHING = 0.18; // higher = smoother, lower = snappier
+  const GAIN = 1.35;      // boosts sensitivity
+
+  let smoothed = 0;
+
+  function setLabel() {
+    vibeToggle.innerHTML =
+      '<i class="fa-light fa-compass"></i> Vibing mode (' + (vibingEnabled ? "On" : "Off") + ")";
+  }
+
+  function stopVibe() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    smoothed = 0;
+    logo.style.transform = "scale(1)";
+    logo.style.willChange = "";
+  }
+
+  function ensureAudioGraph() {
+    if (audioCtx) return;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.85;
+
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    sourceNode = audioCtx.createMediaElementSource(audio);
+
+    // Routing: audio -> analyser -> output
+    sourceNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+  }
+
+  function computeEnergy() {
+    analyser.getByteFrequencyData(dataArray);
+
+    // Average frequency energy (0..255)
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+    const avg = sum / dataArray.length;
+
+    // Normalize to 0..1 and boost
+    let level = (avg / 255) * GAIN;
+    if (level > 1) level = 1;
+
+    // Smooth it
+    smoothed = smoothed + (level - smoothed) * SMOOTHING;
+
+    return smoothed;
+  }
+
+  function tick() {
+    if (!vibingEnabled || audio.paused || audio.ended) {
+      stopVibe();
+      return;
+    }
+
+    const energy = computeEnergy();
+
+    // Map energy -> scale
+    const scale = MIN_SCALE + (MAX_SCALE - MIN_SCALE) * energy;
+
+    logo.style.willChange = "transform";
+    logo.style.transform = "scale(" + scale.toFixed(4) + ")";
+
+    rafId = requestAnimationFrame(tick);
+  }
+
+  async function startVibe() {
+    if (!vibingEnabled) return;
+    if (audio.paused || audio.ended) return;
+
+    ensureAudioGraph();
+
+    // Autoplay policies: context may start suspended until a user gesture
+    if (audioCtx.state === "suspended") {
+      try {
+        await audioCtx.resume();
+      } catch (e) {
+        // If resume fails, we just don't vibe yet.
+        return;
+      }
+    }
+
+    if (!rafId) tick();
+  }
+
+  audio.addEventListener("play", startVibe);
+  audio.addEventListener("pause", stopVibe);
+  audio.addEventListener("ended", stopVibe);
+
+  vibeToggle.addEventListener("click", async () => {
+    vibingEnabled = !vibingEnabled;
+    setLabel();
+
+    if (!vibingEnabled) {
+      stopVibe();
+      return;
+    }
+
+    await startVibe();
+  });
+
+  // If audio is already playing on load
+  setLabel();
+  if (!audio.paused && !audio.ended) startVibe();
+})();
+</script>
  <script>
 document.addEventListener("DOMContentLoaded", () => {
   const desc = document.querySelector(".descriptionHtml");
