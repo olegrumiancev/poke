@@ -491,7 +491,7 @@ app.get("/feeds/videos.xml", async (req, res) => {
 
     app.get("/api/innertube.json", async (req, res) => {
       res.json(innertube)
-};
+});
 
   app.get("/api/instances.json", async (req, res) => {
     const { fetch } = await import("undici");
