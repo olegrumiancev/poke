@@ -31,22 +31,21 @@ document.documentElement.className = document.documentElement.className.replace(
 }
 
 :root{
-  --bg:#0a0b10;
-  --bg2:#11131b;
-  --panel:#151821;
-  --panel2:#1a1d26;
-  --panel3:#202433;
+  --bg:#0b0c10;
+  --panel:#141821;
+  --panel2:#191d27;
+  --panel3:#1e2330;
   --text:#f4f6ff;
-  --muted:#9ea6bc;
-  --muted2:#7f879d;
-  --border:#282d3c;
-  --border-strong:#353b4f;
+  --muted:#9fa7bc;
+  --muted2:#7f879b;
+  --border:#2a3040;
+  --border-strong:#394154;
   --accent:#df03a8;
   --accent-soft:rgba(223,3,168,.18);
-  --shadow:0 18px 40px rgba(0,0,0,.40);
-  --shadow-soft:0 10px 24px rgba(0,0,0,.24);
+  --shadow:0 16px 34px rgba(0,0,0,.34);
+  --shadow-soft:0 8px 18px rgba(0,0,0,.18);
   --radius:20px;
-  --radius-sm:14px;
+  --radius-sm:15px;
   --container:min(1240px,92vw);
 }
 
@@ -61,13 +60,10 @@ html{
 body{
   margin:0;
   min-height:100vh;
+  background:var(--bg);
   color:var(--text);
   font-family:"PokeTube Flex",Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
-  font-variation-settings:"wdth" 110,"wght" 420;
-  background:
-    radial-gradient(900px 500px at 50% -120px, rgba(223,3,168,.10), transparent 60%),
-    radial-gradient(800px 420px at 0% 0%, rgba(120,60,255,.08), transparent 58%),
-    linear-gradient(180deg, #0b0d13 0%, #0a0b10 100%);
+  font-variation-settings:"wdth" 118,"wght" 430;
 }
 
 a{
@@ -76,8 +72,8 @@ a{
 }
 
 img{
-  max-width:100%;
   display:block;
+  max-width:100%;
 }
 
 button,
@@ -88,7 +84,7 @@ input{
 .page{
   width:var(--container);
   margin:0 auto;
-  padding:38px 0 56px;
+  padding:42px 0 56px;
 }
 
 .hero{
@@ -97,46 +93,46 @@ input{
   align-items:center;
   justify-content:center;
   text-align:center;
-  padding:30px 0 10px;
+  padding:34px 0 12px;
 }
 
 .logo-wrap{
   display:flex;
   justify-content:center;
   align-items:center;
-  margin-bottom:20px;
+  margin-bottom:18px;
 }
 
 .logo{
   width:252px;
   max-width:74vw;
-  filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,.22));
 }
 
 .hero-copy{
-  max-width:760px;
+  max-width:780px;
   margin-bottom:22px;
 }
 
 .hero-title{
   margin:0 0 8px;
-  font-size:17px;
-  line-height:1.2;
   color:var(--text);
-  font-variation-settings:"wdth" 118,"wght" 620;
+  font-size:18px;
+  line-height:1.2;
   letter-spacing:.1px;
+  font-variation-settings:"wdth" 140,"wght" 640;
 }
 
 .hero-sub{
   margin:0;
+  color:var(--muted);
   font-size:14px;
   line-height:1.5;
-  color:var(--muted);
-  font-variation-settings:"wdth" 108,"wght" 430;
+  font-variation-settings:"wdth" 122,"wght" 430;
 }
 
 .search-wrap{
-  width:min(720px,92vw);
+  width:min(760px,92vw);
   margin:0 auto;
 }
 
@@ -150,26 +146,26 @@ input{
 
 .search-bar{
   width:100%;
-  min-height:56px;
+  min-height:58px;
   padding:15px 20px;
   border-radius:999px;
   border:1px solid var(--border);
-  background:linear-gradient(180deg, #171b25 0%, #141821 100%);
+  background:var(--panel);
   color:var(--text);
   outline:none;
   box-shadow:var(--shadow-soft);
   transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease, background .18s ease;
   font-size:16px;
-  font-variation-settings:"wdth" 108,"wght" 445;
+  font-variation-settings:"wdth" 132,"wght" 455;
 }
 
 .search-bar::placeholder{
-  color:#8d95a9;
+  color:#8c95aa;
 }
 
 .search-bar:hover{
   border-color:var(--border-strong);
-  background:linear-gradient(180deg, #191d28 0%, #151923 100%);
+  background:#171b25;
 }
 
 .search-bar:focus{
@@ -179,40 +175,107 @@ input{
 }
 
 .search-note{
-  margin-top:10px;
+  margin-top:11px;
   text-align:center;
-  font-size:12.5px;
   color:var(--muted2);
-  font-variation-settings:"wdth" 106,"wght" 420;
+  font-size:12.5px;
+  font-variation-settings:"wdth" 126,"wght" 420;
 }
 
 .content{
-  margin-top:26px;
+  margin-top:28px;
 }
 
-.discover{
+.discover-wrap{
   width:100%;
+  background:var(--panel);
   border:1px solid var(--border);
-  background:linear-gradient(180deg, #151821 0%, #12151d 100%);
   border-radius:var(--radius);
   box-shadow:var(--shadow);
   overflow:hidden;
 }
 
-.discover[open]{
-  border-color:#2f3445;
+.discover-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:18px 20px;
+  border-bottom:1px solid var(--border);
+  background:var(--panel2);
+}
+
+.discover-heading{
+  min-width:0;
+}
+
+.section-title{
+  margin:0;
+  color:var(--text);
+  font-size:17px;
+  line-height:1.2;
+  font-variation-settings:"wdth" 138,"wght" 650;
+}
+
+.section-sub{
+  margin:5px 0 0;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.45;
+  font-variation-settings:"wdth" 126,"wght" 430;
+}
+
+.discover-toggle{
+  display:none;
+  flex:0 0 auto;
+  align-items:center;
+  justify-content:center;
+  min-width:108px;
+  padding:10px 14px;
+  border-radius:999px;
+  border:1px solid var(--border-strong);
+  background:var(--panel3);
+  color:var(--text);
+  cursor:pointer;
+  transition:border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
+  font-size:13px;
+  line-height:1;
+  font-variation-settings:"wdth" 132,"wght" 580;
+}
+
+.js .discover-toggle{
+  display:inline-flex;
+}
+
+.discover-toggle:hover{
+  border-color:var(--accent);
+  background:#24293a;
+}
+
+.discover-toggle:focus{
+  outline:none;
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft);
+}
+
+.discover-toggle:active{
+  transform:translateY(1px);
+}
+
+.discover-details{
+  display:block;
 }
 
 .native-toggle{
   list-style:none;
   cursor:pointer;
-  padding:15px 18px;
+  padding:14px 18px;
   border-bottom:1px solid var(--border);
-  background:linear-gradient(180deg, #191d27 0%, #161922 100%);
+  background:#171b25;
   color:var(--text);
   user-select:none;
-  font-size:14px;
-  font-variation-settings:"wdth" 110,"wght" 560;
+  font-size:13px;
+  font-variation-settings:"wdth" 128,"wght" 560;
 }
 
 .native-toggle::-webkit-details-marker{
@@ -230,7 +293,7 @@ input{
   gap:14px;
 }
 
-.native-toggle-text{
+.native-toggle-left{
   display:flex;
   align-items:center;
   gap:10px;
@@ -250,7 +313,7 @@ input{
   transition:transform .18s ease;
 }
 
-.discover[open] .native-toggle-arrow{
+.discover-details[open] .native-toggle-arrow{
   transform:rotate(180deg);
 }
 
@@ -258,81 +321,9 @@ input{
   display:none;
 }
 
-.discover-shell{
-  display:block;
-}
-
-.discover-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:16px;
-  padding:18px 20px;
-  border-bottom:1px solid var(--border);
-  background:
-    linear-gradient(90deg, rgba(223,3,168,.10) 0%, rgba(223,3,168,.04) 26%, rgba(255,255,255,0) 60%),
-    linear-gradient(180deg, #181b25 0%, #151821 100%);
-}
-
-.discover-heading{
-  min-width:0;
-}
-
-.section-title{
-  margin:0;
-  font-size:17px;
-  line-height:1.2;
-  color:var(--text);
-  font-variation-settings:"wdth" 115,"wght" 640;
-}
-
-.section-sub{
-  margin:5px 0 0;
-  font-size:13px;
-  line-height:1.45;
-  color:var(--muted);
-  font-variation-settings:"wdth" 108,"wght" 430;
-}
-
-.js-toggle{
-  display:none;
-  flex:0 0 auto;
-  min-width:102px;
-  padding:10px 14px;
-  border-radius:999px;
-  border:1px solid var(--border-strong);
-  background:linear-gradient(180deg, #232837 0%, #1b2030 100%);
-  color:var(--text);
-  cursor:pointer;
-  transition:border-color .18s ease, transform .18s ease, background .18s ease;
-  font-size:13px;
-  line-height:1;
-  font-variation-settings:"wdth" 110,"wght" 560;
-}
-
-.js .js-toggle{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-}
-
-.js-toggle:hover{
-  border-color:var(--accent);
-  background:linear-gradient(180deg, #272d3f 0%, #1f2434 100%);
-}
-
-.js-toggle:focus{
-  outline:none;
-  border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft);
-}
-
-.js-toggle:active{
-  transform:translateY(1px);
-}
-
 .discover-body{
   padding:16px;
+  background:var(--panel);
 }
 
 .video-grid{
@@ -345,17 +336,17 @@ input{
   display:block;
   border:1px solid var(--border);
   border-radius:16px;
-  background:linear-gradient(180deg, #1b1f2a 0%, #181c26 100%);
+  background:var(--panel2);
   overflow:hidden;
-  box-shadow:0 6px 18px rgba(0,0,0,.18);
+  box-shadow:0 6px 18px rgba(0,0,0,.16);
   transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
 }
 
 .video:hover{
   transform:translateY(-2px);
-  border-color:rgba(223,3,168,.55);
-  box-shadow:0 14px 28px rgba(0,0,0,.28);
-  background:linear-gradient(180deg, #1d2230 0%, #191e29 100%);
+  border-color:rgba(223,3,168,.58);
+  background:#1d2230;
+  box-shadow:0 14px 28px rgba(0,0,0,.24);
 }
 
 .thumbnail{
@@ -365,7 +356,7 @@ input{
   background-position:center;
   background-size:cover;
   background-repeat:no-repeat;
-  border-bottom:1px solid rgba(255,255,255,.04);
+  border-bottom:1px solid rgba(255,255,255,.05);
 }
 
 .thumbnail::after{
@@ -381,14 +372,14 @@ input{
   right:8px;
   bottom:8px;
   z-index:1;
-  font-size:11.5px;
-  line-height:1;
   padding:5px 7px;
   border-radius:7px;
-  background:rgba(8,10,14,.86);
+  background:rgba(9,11,16,.88);
   color:#f6f8ff;
   border:1px solid rgba(255,255,255,.10);
-  font-variation-settings:"wdth" 108,"wght" 540;
+  font-size:11.5px;
+  line-height:1;
+  font-variation-settings:"wdth" 128,"wght" 560;
 }
 
 .info{
@@ -399,17 +390,17 @@ input{
 }
 
 .title{
+  color:var(--text);
   font-size:14px;
   line-height:1.32;
-  color:var(--text);
-  font-variation-settings:"wdth" 108,"wght" 585;
+  font-variation-settings:"wdth" 128,"wght" 590;
 }
 
 .byline{
+  color:var(--muted);
   font-size:12.5px;
   line-height:1.35;
-  color:var(--muted);
-  font-variation-settings:"wdth" 106,"wght" 430;
+  font-variation-settings:"wdth" 122,"wght" 430;
 }
 
 .max-lines-2{
@@ -417,17 +408,6 @@ input{
   -webkit-line-clamp:2;
   -webkit-box-orient:vertical;
   overflow:hidden;
-}
-
-.discover[open] .discover-empty{
-  display:none;
-}
-
-.discover-empty{
-  padding:16px 18px 18px;
-  color:var(--muted);
-  font-size:13px;
-  border-top:1px solid var(--border);
 }
 
 @media (max-width:1100px){
@@ -454,7 +434,7 @@ input{
     align-items:flex-start;
   }
 
-  .js-toggle{
+  .discover-toggle{
     min-width:0;
   }
 
@@ -478,7 +458,7 @@ input{
   }
 
   .search-bar{
-    min-height:52px;
+    min-height:54px;
     font-size:15px;
   }
 
@@ -526,49 +506,47 @@ input{
   </div>
 
   <div class="content">
-    <details class="discover" id="discover-section" open>
-      <summary class="native-toggle">
-        <span class="native-toggle-inner">
-          <span class="native-toggle-text">
-            <span class="native-dot"></span>
-            <span>Discover gaming videos</span>
-          </span>
-          <span class="native-toggle-arrow">▾</span>
-        </span>
-      </summary>
-
-      <div class="discover-shell">
-        <div class="discover-header">
-          <div class="discover-heading">
-            <h2 class="section-title">Discover gaming videos</h2>
-            <p class="section-sub">These are trending gaming videos right now.</p>
-          </div>
-
-          <button type="button" class="js-toggle" id="discover-toggle" aria-controls="discover-section" aria-expanded="true">
-            Hide videos
-          </button>
+    <section class="discover-wrap">
+      <div class="discover-header">
+        <div class="discover-heading">
+          <h2 class="section-title">Discover gaming videos</h2>
+          <p class="section-sub">These are trending gaming videos right now.</p>
         </div>
+
+        <button type="button" class="discover-toggle" id="discover-toggle" aria-controls="discover-section" aria-expanded="true">
+          Hide videos
+        </button>
+      </div>
+
+      <details class="discover-details" id="discover-section" open>
+        <summary class="native-toggle">
+          <span class="native-toggle-inner">
+            <span class="native-toggle-left">
+              <span class="native-dot"></span>
+              <span>Show or hide trending gaming videos</span>
+            </span>
+            <span class="native-toggle-arrow">▾</span>
+          </span>
+        </summary>
 
         <div class="discover-body">
           <div class="video-grid">
-            <% inv.slice(0,16).forEach(x => { %>
-              <a href="/watch?v=<%- x.videoId %>" class="video canloadhd" data-author="<%- x.author %>">
-                <div class="thumbnail" style="background-image:url('/vi/<%= x.videoId %>/hqdefault.jpg?sqp=-oaymwEbCKgBEF5IVfKriqkDDggBFQAAiEIYAXABwAEG&rs=AOn4CLBy_x4UUHLNDZtJtH0PXeQGoRFTgw');">
-                  <span class="video-length"><%- turntomins(x.lengthSeconds) %></span>
+            <% inv.slice(0,16).forEach(item => { %>
+              <a href="/watch?v=<%- item.videoId %>" class="video canloadhd" data-author="<%- item.author %>">
+                <div class="thumbnail" style="background-image:url('/vi/<%= item.videoId %>/hqdefault.jpg?sqp=-oaymwEbCKgBEF5IVfKriqkDDggBFQAAiEIYAXABwAEG&rs=AOn4CLBy_x4UUHLNDZtJtH0PXeQGoRFTgw');">
+                  <span class="video-length"><%- turntomins(item.lengthSeconds) %></span>
                 </div>
 
                 <div class="info">
-                  <span class="title max-lines-2" title="<%- x.title %>"><%- x.title %></span>
-                  <span class="byline max-lines-2" title="Video By <%- x.author %>">By <%- x.author %></span>
+                  <span class="title max-lines-2" title="<%- item.title %>"><%- item.title %></span>
+                  <span class="byline max-lines-2" title="Video By <%- item.author %>">By <%- item.author %></span>
                 </div>
               </a>
             <% }) %>
           </div>
         </div>
-      </div>
-
-      <div class="discover-empty">The trending gaming videos section is hidden.</div>
-    </details>
+      </details>
+    </section>
   </div>
 </div>
 
@@ -580,15 +558,29 @@ input{
 
   if (!section || !button) return;
 
-  function setButtonState() {
-    var isOpen = section.hasAttribute("open");
-    button.textContent = isOpen ? "Hide videos" : "Show videos";
-    button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  function isOpen() {
+    return section.hasAttribute("open");
+  }
+
+  function setOpenState(open) {
+    if (open) {
+      section.setAttribute("open", "");
+    } else {
+      section.removeAttribute("open");
+    }
+    updateButton();
+    saveState();
+  }
+
+  function updateButton() {
+    var open = isOpen();
+    button.textContent = open ? "Hide videos" : "Show videos";
+    button.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
   function saveState() {
     try {
-      localStorage.setItem(storageKey, section.hasAttribute("open") ? "1" : "0");
+      localStorage.setItem(storageKey, isOpen() ? "1" : "0");
     } catch (e) {}
   }
 
@@ -601,20 +593,14 @@ input{
     }
   } catch (e) {}
 
-  setButtonState();
+  updateButton();
 
   button.addEventListener("click", function () {
-    if (section.hasAttribute("open")) {
-      section.removeAttribute("open");
-    } else {
-      section.setAttribute("open", "");
-    }
-    setButtonState();
-    saveState();
+    setOpenState(!isOpen());
   });
 
   section.addEventListener("toggle", function () {
-    setButtonState();
+    updateButton();
     saveState();
   });
 })();
