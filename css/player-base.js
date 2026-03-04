@@ -2844,18 +2844,19 @@ document.addEventListener('keydown', function(event) {
 
 
 // youtube client stuff 
-const YoutubeAPI = {
+ const YoutubeAPI = {
   DEFAULT_API_KEY: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
   ANDROID_API_KEY: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
 
   ANDROID_APP_VERSION: "20.20.41",
-  ANDROID_USER_AGENT:  "com.google.android.youtube/20.20.41 (Linux; U; Android 16; en_US; SM-S908E Build/TP1A.220624.014) gzip",
+  ANDROID_USER_AGENT:
+    "com.google.android.youtube/20.20.41 (Linux; U; Android 16; en_US; SM-S908E Build/TP1A.220624.014) gzip",
   ANDROID_SDK_VERSION: 36,
   ANDROID_VERSION: "16",
 
   ANDROID_TS_APP_VERSION: "1.9",
   ANDROID_TS_USER_AGENT:
-    "com.google.android.youtube/1.9 (Linux; U; Android 1; US) gzip",
+    "com.google.android.youtube/1.9 (Linux; U; Android 16; US) gzip",
 
   IOS_APP_VERSION: "20.11.6",
   IOS_USER_AGENT:
@@ -2914,7 +2915,7 @@ const YoutubeAPI = {
     web_screen_embed: {
       name: "WEB",
       name_proto: "1",
-      version: "2.20250909.02.00",
+      version: "2.20250917.02.00",
       api_key: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
       screen: "EMBED",
       os_name: "Windows",
@@ -3032,16 +3033,17 @@ const YoutubeAPI = {
 
 
 
-
 // player base 
 const base_player_old_old = "https://www.youtube.com/s/player/a87a9450/player_ias.vflset/en_US/base.js"
 const base_player_old = "https://www.youtube.com/s/player/2d24ba15/player_ias.vflset/en_US/base.js";
 const base_player_broken = "https://www.youtube.com/s/player/6740c111/player_ias.vflset/en_US/base.js";
+const base_player_old_old_old_old_old = "https://www.youtube.com/s/player/0004de42/player_ias.vflset/en_US/base.js";
+
 const hey = " please dont use the above player base stuff!! tyyyyyyyy <3 "
 const youtubeobjects = "https://codeberg.org/ashleyirispuppy/poke/raw/branch/main/src/libpoketube/libpoketube-youtubei-objects.json"
 const watchURl = "https://youtube.com/watch"
-const base_player = "https://www.youtube.com/s/player/0004de42/player_ias.vflset/en_US/base.js";
-const base_player_poketube = "https://poketube.fun/s/player/0004de42/player_ias.vflset/en_US/base.js";
+const base_player = "https://www.youtube.com/s/player/140dafda/player_ias.vflset/en_US/base.js";
+const base_player_poketube = "https://poketube.fun/s/player/140dafda/player_ias.vflset/en_US/base.js";
 
 function extractPlayerData(playerUrl) {
     const segments = playerUrl.split('/');
