@@ -1,8 +1,8 @@
 /*
 
-    PokeTube is an Free/Libre youtube front-end. this is our main file.
+    Poke is an Free/Libre youtube front-end. this is our main file.
   
-    Copyright (C) 2021-2024 POKETUBE (https://codeberg.org/ashleyirispuppy/poketube)
+    Copyright (C) 2021-2025 Poke (https://codeberg.org/ashleyirispuppy/poketube)
     
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,7 +17,6 @@
     You should have received a copy of the GNU General Public License
     along with this program. If not, see https://www.gnu.org/licenses/.
   */
-
 (async function () {
   const {
     fetcher,
@@ -42,12 +41,11 @@
       return;
     }
 
-    // Log the ASCII art to the console
     console.log(data);
   });
-  initlog("Loading...");
+  initlog("Loading. everything... ever....");
   initlog(
-    "[Welcome] Welcome To Poke - The ultimate privacy app - :3 " +
+    "[Welcome] Welcome To Poke, where you can LIBERATE THE WEB! - :3 " +
       "Running " +
       `Node ${process.version} - V8 v${
         process.versions.v8
@@ -66,7 +64,7 @@
     getRandomArbitrary,
   } = require("./src/libpoketube/ptutils/libpt-coreutils.js");
   const { ieBlockMiddleware } = require("./src/libpoketube/ptutils/ie-blocker.js");
-  initlog("Loaded libpt-coreutils");
+  initlog("Loaded libpt-coreutils and ieBlockMiddleware");
 
   const templateDir = modules.path.resolve(
     `${process.cwd()}${modules.path.sep}html`
@@ -76,15 +74,17 @@
   const rateLimit = require("express-rate-limit");
 
 const limiter = rateLimit({
-    windowMs: 30 * 1000, // 30 second window
-    max: 200, // limit each IP to 200 requests per 30 seconds
+    windowMs: 15 * 1000, // 25 second window
+    max: 150, // limit each IP to 200 requests per 30 seconds
 });
-
+  initlog("Loaded limitter");
+  
   var app = modules.express();
   app.use(limiter);
   app.use(ieBlockMiddleware);
   initlog("Loaded express.js");
   app.engine("html", require("ejs").renderFile);
+  initlog("Loaded EJS");
   app.use(modules.express.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
   app.use(modules.useragent.express());
   app.use(modules.express.json()); // for parsing application/json
@@ -116,6 +116,8 @@ const limiter = rateLimit({
     process.exit(1);
     console.log("Event loop lag detected! Latency: " + currentLag + "ms");
   });
+  
+    initlog("inited anti ddos");
 
 
   const initPokeTube = function () {
@@ -136,7 +138,7 @@ const limiter = rateLimit({
       }
       res.header("secure-poketube-instance", "1");
 
-      // opt out of googles "FLOC" bullcrap :p See https://spreadprivacy.com/block-floc-with-duckduckgo/
+      // opt out of googles "FLOC" bs :p See https://spreadprivacy.com/block-floc-with-duckduckgo/
       res.header("Permissions-Policy", "interest-cohort=()");
       res.header("software-name", "poke");
       next();
@@ -166,9 +168,8 @@ const limiter = rateLimit({
       );
       res.header(
         "Hey-there",
-        "Do u wanna help poke? contributions are welcome :3 https://codeberg.org/ashleyirispuppy/poke"
+        "Do u wanna help poke? join us :3 https://codeberg.org/ashleyirispuppy/poke"
       );
-     
       res.header(
         "X-PokeTube-Youtube-Client-Version",
         innertube.innertube.CLIENT.clientVersion
@@ -186,9 +187,7 @@ const limiter = rateLimit({
         ); // cache header
         res.setHeader("poketube-cacher", "STATIC_FILES");
       }
-
       const a = 890;
-
       if (!req.url.match(/^\/(css|js|img|font)\/.+/)) {
         res.setHeader("Cache-Control", "public, max-age=" + a); // cache header
         res.setHeader("poketube-cacher", "PAGE");
