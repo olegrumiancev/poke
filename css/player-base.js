@@ -1430,11 +1430,22 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           safeSetAudioTime(cur);
           const audioStarted = await execProgrammaticAudioPlay({ squelchMs: 450, force: true, minGapMs: 0 }).catch(() => false);
           if (!audioStarted && !state.strictBufferHold && !state.videoWaiting && !shouldBlockNewAudioStart()) {
-            execProgrammaticVideoPause();
+            // FIX (background autoplay): The browser is blocking audio autoplay due to tab
+            // visibility/focus policy — NOT because of our own guards. Don't pause the muted
+            // video as a consequence; let it keep playing in the background. Audio will start
+            // naturally once the tab becomes visible and the sync loop retries.
+            if (document.visibilityState !== "hidden" && isWindowFocused()) {
+              execProgrammaticVideoPause();
+            }
           }
         } else if (!shouldBlockNewAudioStart()) {
-          execProgrammaticVideoPause();
-          armResumeAfterBuffer(10000);
+          // FIX (background autoplay): Same reasoning — audio data isn't ready yet but the
+          // video is playing fine. Only stall video if we're actually in the foreground;
+          // in a background tab this would kill playback entirely until the user switches tabs.
+          if (document.visibilityState !== "hidden" && isWindowFocused()) {
+            execProgrammaticVideoPause();
+            armResumeAfterBuffer(10000);
+          }
         }
       }
       if (vp && !ap) {
@@ -2711,7 +2722,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }, 100);
   scheduleSync(0);
 });
-
 
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
