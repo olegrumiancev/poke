@@ -271,7 +271,11 @@ function fetchUrls(urls) {
   
   }
   }
- var popupMenu = document.getElementById("popupMenu");
+ 
+
+
+ 
+var popupMenu = document.getElementById("popupMenu");
 var loopOption = document.getElementById("loopOption");
 var speedOption = document.getElementById("speedOption");
 var boostOption = document.getElementById("boostOption");
@@ -344,7 +348,8 @@ function applyAudioState(isUserInteraction = false) {
         normalizeOption.innerHTML = "<i class='fa-light fa-wave-square'></i> Audio Normalization";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-volume-low'></i> Whisper Mode";
-        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-volume'></i> Normal Audio";
+        // Do not display anything if there is no audio effect applied
+        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "";
     }
 
     localStorage.setItem("audioMode", audioState);
@@ -531,6 +536,7 @@ function getNextSpeed(currentSpeed) {
     } else {
         return maxSpeed;
     }
-} 
+}
+ 
 const GoogleTranslateEndpoint = "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc&rt=c"
 // @license-end
