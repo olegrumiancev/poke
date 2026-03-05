@@ -271,7 +271,7 @@ function fetchUrls(urls) {
   
   }
   }
-var popupMenu = document.getElementById("popupMenu");
+ var popupMenu = document.getElementById("popupMenu");
 var loopOption = document.getElementById("loopOption");
 var speedOption = document.getElementById("speedOption");
 var boostOption = document.getElementById("boostOption");
@@ -322,23 +322,29 @@ function initAudio() {
 }
 
 function applyAudioState(isUserInteraction = false) {
+    let audioStatusDisplay = document.getElementById("audioStatusDisplay");
+
     // 1. Update UI Instantly (Mutually Exclusive)
     if (audioState === "normalize") {
         normalizeOption.innerHTML = "<i class='fa-light fa-check'></i> Normalization On";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-volume-low'></i> Whisper Mode";
+        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-wave-square'></i> Audio Normalized";
     } else if (audioState === "boost") {
         normalizeOption.innerHTML = "<i class='fa-light fa-wave-square'></i> Audio Normalization";
         boostOption.innerHTML = "<i class='fa-light fa-check'></i> Boost On";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-volume-low'></i> Whisper Mode";
+        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-bolt'></i> Audio Boosted";
     } else if (audioState === "whisper") {
         normalizeOption.innerHTML = "<i class='fa-light fa-wave-square'></i> Audio Normalization";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-check'></i> Whisper On";
+        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-ear-listen'></i> Whisper Mode On";
     } else {
         normalizeOption.innerHTML = "<i class='fa-light fa-wave-square'></i> Audio Normalization";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-volume-low'></i> Whisper Mode";
+        if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-volume'></i> Normal Audio";
     }
 
     localStorage.setItem("audioMode", audioState);
@@ -525,6 +531,6 @@ function getNextSpeed(currentSpeed) {
     } else {
         return maxSpeed;
     }
-}
+} 
 const GoogleTranslateEndpoint = "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc&rt=c"
 // @license-end
