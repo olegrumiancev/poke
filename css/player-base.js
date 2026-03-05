@@ -13,7 +13,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */  
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -311,19 +311,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     audioStartupPlayRetries: 0,
     audioForcePlayTimer: null,
     wakeupTimer: null,
-    // FIX (0.175s offset): guard so we only zero both tracks once
     startupZeroed: false,
-    // FIX (startup double-play): guard window that suppresses all pause enforcement
-    // during the very first play attempt, preventing the play→pause→play glitch.
     startupPlaySettleUntil: 0,
     startupPlaySettled: false,
     startupKickAttempts: 0,
-    // FIX (startup pause blocked): true when a real user gesture explicitly requested pause,
-    // which must always be honoured even inside the startup settle window.
     userGesturePauseIntent: false,
-    // FIX (premature autoplay): autoplay is blocked until window "load" fires, ensuring
-    // the page is 100% loaded before we ever attempt to start playback.
-    pageFullyLoaded: document.readyState === "complete"
+    pageFullyLoaded: document.readyState === "complete",
+    // FIX (bg audio on visibility): tracks whether we already queued an audio-start
+    // for when the tab becomes visible after a background startup.
+    bgAudioStartQueued: false
   };
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -357,19 +353,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   const AUDIO_PLAY_ATTEMPT_RESET_MS = 5000;
   const AUDIO_STARTUP_PLAY_RETRY_MS = 300;
   const MAX_AUDIO_STARTUP_RETRIES = 8;
-  // FIX (startup double-play): how long after the first kick we suppress spurious pauses.
-  // Long enough to cover slow-loading streams but short enough not to mask real user pauses.
   const STARTUP_SETTLE_MS = 3500;
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 
-  // FIX (premature autoplay): mark page as fully loaded when window fires "load".
-  // If the page was already complete when this script ran, the flag is already true above.
   if (!state.pageFullyLoaded) {
     window.addEventListener("load", () => {
       state.pageFullyLoaded = true;
-      // Now that the page is fully loaded, kick off the normal startup sequence
-      // exactly as the bottom-of-file bootstrap does.
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
         maybePrimeStartup();
         scheduleStartupAutoplayKick();
@@ -380,7 +370,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }, { once: true, passive: true });
   }
 
-  // Returns true if autoplay is allowed to proceed yet.
   function pageLoadedForAutoplay() {
     return state.pageFullyLoaded;
   }
@@ -421,12 +410,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function clearMediaSessionForcedPause() { state.mediaForcedPauseUntil = 0; }
   function mediaSessionForcedPauseActive() { return now() < state.mediaForcedPauseUntil; }
   function markUserPauseIntent(ms = 1800) {
-    // FIX (startup pause blocked): a real user gesture always overrides the settle window.
-    // Set the flag first so startupSettleActive() returns false for this call and anything
-    // downstream (pauseTogether, queueHardPauseVerification, etc.).
     state.userGesturePauseIntent = true;
-    // Clear after a short window — long enough for all downstream checks to see it,
-    // short enough that a subsequent autoplay retry won't be blocked.
     setTimeout(() => { state.userGesturePauseIntent = false; }, 2000);
     const until = now() + Math.max(0, Number(ms) || 0);
     state.userPauseUntil = Math.max(state.userPauseUntil, until);
@@ -434,7 +418,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.userPlayUntil = 0;
     state.intendedPlaying = false;
     state.bufferHoldIntendedPlaying = false;
-    // Also end the settle window immediately so nothing re-starts playback
     state.startupPlaySettled = true;
     updateMediaSessionPlaybackState();
     if (platform.chromiumOnlyBrowser) {
@@ -539,9 +522,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     return document.visibilityState === "visible" && (userPauseIntentActive() || userPauseLockActive());
   }
 
-  // FIX (startup double-play): returns true during the startup settle window,
-  // blocking all spurious auto-pause logic that causes the play→pause→play glitch.
-  // EXCEPTION: a real user gesture (userGesturePauseIntent) always passes through.
   function startupSettleActive() {
     if (state.startupPlaySettled) return false;
     if (state.userGesturePauseIntent) return false;
@@ -551,8 +531,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function shouldIgnorePauseAsTransient() {
     if (mediaSessionForcedPauseActive()) return false;
     if (userPauseIntentActive() || userPauseLockActive()) return false;
-    // FIX (startup double-play): treat the settle window as a transient state so
-    // no pause path can interrupt the very first play attempt.
     if (startupSettleActive()) return true;
     if (document.visibilityState === "hidden") return true;
     if (!isWindowFocused()) return true;
@@ -609,8 +587,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     cancelActiveFade();
     const from = clamp01(audio.volume);
     const target = clamp01(targetVol);
-    // FIX (audio pop): if audio is paused, just set the target directly — there's no
-    // audible difference and an rAF-driven ramp can outlive the pause, then fire mid-play.
     if (document.visibilityState === "hidden" || ms <= 0 || Math.abs(target - from) < 0.001 || audio.paused) {
       try { audio.volume = target; } catch {}
       return;
@@ -619,7 +595,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.audioFading = true;
     return new Promise(resolve => {
       const step = () => {
-        // FIX (audio pop): abort the ramp if audio got paused mid-fade — set target directly.
         if (audio.paused) {
           try { audio.volume = target; } catch {}
           activeVolumeFade = null;
@@ -647,8 +622,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
     const target = targetVolFromVideo();
-    // FIX (audio pop): skip the fade entirely if we're already at or very near the target.
-    // Re-fading from e.g. 0.98 → 1.0 causes a subtle dip-then-ramp click.
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
     await doVolumeFade(target, ms);
@@ -671,7 +644,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }
   function updateAudioGainImmediate() {
     if (!audio) return;
-    // FIX (audio pop): if a fade is running, don't interrupt it with a hard jump
     if (state.audioFading) return;
     try {
       cancelActiveFade();
@@ -740,8 +712,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.syncConvergenceCount = 0;
     state.lastSyncDrift = 0;
   }
-  // FIX (speed difference): called at the top of every sync loop and after ratechange.
-  // Immediately corrects any playback rate divergence that snuck in between loops.
   function enforcePlaybackRateSync() {
     if (!coupledMode || !audio) return;
     if (state.audioRateNudgeActive && now() < state.audioRateNudgeUntil) return;
@@ -922,9 +892,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.isProgrammaticAudioPause = true;
     try { squelchAudioEvents(ms); } catch {}
     try { resetAudioPlaybackRate(); } catch {}
-    // FIX (audio pop): fade to silence before pausing to avoid hard cuts.
-    // If the audio is already silent or a fade is already running toward 0, just pause now.
-    // Otherwise do a short ramp-down first, then pause.
     const currentVol = !audio.paused ? clamp01(audio.volume) : 0;
     if (currentVol <= 0.01 || state.audioFading) {
       try { audio.pause(); } catch {}
@@ -970,7 +937,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       squelchAudioEvents(squelchMs);
 
-      // FIX (audio pop): Always start audio at volume 0 before play().
       cancelActiveFade();
       audio.volume = 0;
 
@@ -979,10 +945,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + Math.max(400, squelchMs));
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
-      // FIX (bg autoplay): Catch the rejection from audio.play() here rather than
-      // letting it propagate as an unhandled exception through playTogether().
-      // When the browser blocks audio in a hidden tab the promise rejects with
-      // NotAllowedError; we want to return false gracefully, not throw.
       try {
         await state.audioPlayInFlight;
       } catch {
@@ -1277,7 +1239,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       setTimeout(() => {
         if (serial !== state.hardPauseVerifySerial) return;
         if (state.intendedPlaying || userPlayIntentActive()) return;
-        // FIX (startup double-play): never force-pause during startup settle window
         if (startupSettleActive()) return;
         try { if (!getVideoPaused()) execProgrammaticVideoPause(); } catch {}
         try { if (coupledMode && !audio.paused) execProgrammaticAudioPause(500); } catch {}
@@ -1295,7 +1256,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (!state.intendedPlaying) queueHardPauseVerification();
   }
   function pauseTogether() {
-    // FIX (startup double-play): block spurious pauseTogether calls during settle window
     if (startupSettleActive() && !userPauseIntentActive() && !mediaSessionForcedPauseActive()) return;
     state.intendedPlaying = false;
     state.bufferHoldIntendedPlaying = false;
@@ -1307,21 +1267,26 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (!state.syncing && !state.seeking) pauseHard();
     else queueHardPauseVerification();
   }
-  // FIX (0.175s startup offset): Force video.currentTime and audio.currentTime both to
-  // exactly 0.0 before the very first play.
-  function ensureStartupZeroed() {
-    if (state.startupZeroed) return;
-    state.startupZeroed = true;
+
+  // FIX (00:00 start): Force both video and audio to exactly 0.0 right before the
+  // very first play. Unlike the old ensureStartupZeroed(), this does NOT use a
+  // once-only guard so it always runs at the actual moment of play — preventing the
+  // 0.175s offset that appeared when an earlier (ignored) zero got flagged as "done".
+  function forceZeroBeforeFirstPlay() {
+    if (state.firstPlayCommitted) return; // only before first play
+    try { video.currentTime(0); } catch {}
     try {
       safeSetCT(videoEl, 0);
       const v = getVideoNode();
       if (v && v !== videoEl) safeSetCT(v, 0);
-      try { video.currentTime(0); } catch {}
     } catch {}
-    try {
-      if (audio) audio.currentTime = 0;
-    } catch {}
+    try { if (audio) audio.currentTime = 0; } catch {}
+    state.startupZeroed = true;
   }
+
+  // Keep ensureStartupZeroed as a no-op alias so no call-sites need changing.
+  function ensureStartupZeroed() { forceZeroBeforeFirstPlay(); }
+
   async function playTogether() {
     if (!coupledMode) {
       if (getVideoPaused()) {
@@ -1363,7 +1328,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const at = Number(audio.currentTime);
       if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.25) {
         if (state.audioEverStarted) {
-          // AUDIO IS MASTER CLOCK
           safeSetVideoTime(at);
         } else {
           safeSetAudioTime(vt);
@@ -1380,8 +1344,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       }
       if (videoOk) {
         forceUnmuteForPlaybackIfAllowed();
-        // FIX (audio pop): only unmute if audio is actually silent/paused — not on every
-        // playTogether call while audio is already playing at the correct volume.
         if (audio.paused || audio.volume < 0.05) {
           softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
         }
@@ -1422,9 +1384,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (platform.useBgControllerRetry) {
           scheduleBgResumeRetry(500);
         } else {
-          state.intendedPlaying = false;
-          pauseHard();
-          updateMediaSessionPlaybackState();
+          // FIX (bg autoplay / Firefox): Don't kill intendedPlaying when both fail in
+          // a background/hidden tab — the browser is just blocking autoplay due to policy.
+          // Only surrender if we are actually in the foreground with focus.
+          if (document.visibilityState !== "hidden" && isWindowFocused()) {
+            state.intendedPlaying = false;
+            pauseHard();
+            updateMediaSessionPlaybackState();
+          } else {
+            // Background: schedule a retry instead of giving up entirely.
+            scheduleBgResumeRetry(800);
+          }
           return;
         }
       } else if (!videoOk && audioOk && document.visibilityState !== "hidden" && isWindowFocused()) {
@@ -1438,18 +1408,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           safeSetAudioTime(cur);
           const audioStarted = await execProgrammaticAudioPlay({ squelchMs: 450, force: true, minGapMs: 0 }).catch(() => false);
           if (!audioStarted && !state.strictBufferHold && !state.videoWaiting && !shouldBlockNewAudioStart()) {
-            // FIX (background autoplay): The browser is blocking audio autoplay due to tab
-            // visibility/focus policy — NOT because of our own guards. Don't pause the muted
-            // video as a consequence; let it keep playing in the background. Audio will start
-            // naturally once the tab becomes visible and the sync loop retries.
             if (document.visibilityState !== "hidden" && isWindowFocused()) {
               execProgrammaticVideoPause();
             }
           }
         } else if (!shouldBlockNewAudioStart()) {
-          // FIX (background autoplay): Same reasoning — audio data isn't ready yet but the
-          // video is playing fine. Only stall video if we're actually in the foreground;
-          // in a background tab this would kill playback entirely until the user switches tabs.
           if (document.visibilityState !== "hidden" && isWindowFocused()) {
             execProgrammaticVideoPause();
             armResumeAfterBuffer(10000);
@@ -1463,9 +1426,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           execProgrammaticAudioPause(600);
         }
       }
-      // FIX (audio pop): only re-unmute at end of playTogether if volume needs correcting.
-      // Calling softUnmuteAudio unconditionally here causes a dip-ramp click on every
-      // mid-playback sync call when audio is already at the correct volume.
       if (!state.audioFading && audio.volume < 0.05 && !audio.paused) {
         softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
       }
@@ -1592,19 +1552,24 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     return vOk && aOk;
   }
 
-  // FIX (startup double-play): Wait until both video AND audio have enough data
-  // before priming and kicking startup. This prevents the premature play attempt
-  // that the buffer gate then immediately pauses.
+  // FIX (bg autoplay / delay): In a background tab the browser blocks audio autoplay
+  // regardless of readyState, so waiting for audio to reach HAVE_FUTURE_DATA means we
+  // never kick — causing either no playback or a huge retry delay. When hidden, only
+  // require video to be ready; audio will start the moment the tab becomes visible.
   function bothReadyForStartupKick() {
     if (!coupledMode) return true;
     const t0 = Number(video.currentTime()) || 0;
     const vNode = getVideoNode();
     const vRS = Number(vNode.readyState || 0);
     const aRS = Number(audio ? audio.readyState : 0);
-    // Require at least HAVE_FUTURE_DATA (3) on both so the buffer gate won't
-    // immediately stall us and trigger the pause→retry cycle.
+
+    // Background tab: browser blocks audio autoplay — only gate on video readiness.
+    if (document.visibilityState === "hidden") {
+      return vRS >= HAVE_FUTURE_DATA || (vRS >= 2 && canPlayAt(vNode, t0));
+    }
+
+    // Foreground: require both tracks to have data.
     if (vRS >= HAVE_FUTURE_DATA && aRS >= HAVE_FUTURE_DATA) return true;
-    // Looser fallback: both at readyState 2 with buffered data ahead
     if (vRS >= 2 && aRS >= 2 && canPlayAt(vNode, t0) && canStartAudioAt(t0)) return true;
     return false;
   }
@@ -1615,15 +1580,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (!state.startupPrimed) return;
     if (!wantsStartupAutoplay() && !state.intendedPlaying) return;
     if (mediaSessionForcedPauseActive()) return;
-    // FIX (premature autoplay): never kick before the page is fully loaded.
     if (!pageLoadedForAutoplay()) return;
     state.startupKickInFlight = true;
     setTimeout(async () => {
       try {
         if (!state.startupPrimed || mediaSessionForcedPauseActive()) return;
 
-        // FIX (startup double-play): if both tracks aren't ready yet, defer the
-        // kick rather than playing prematurely into the buffer gate.
         if (!bothReadyForStartupKick()) {
           state.startupKickInFlight = false;
           scheduleStartupAutoplayRetry();
@@ -1642,18 +1604,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setMediaPlayTxn(2200);
         setFastSync(2600);
 
-        // FIX (startup double-play): arm the settle guard BEFORE the first play call.
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
 
-        // FIX (0.175s offset): zero both before first play
-        ensureStartupZeroed();
-        const vt = Number(video.currentTime()) || 0;
-        safeSetAudioTime(vt);
+        // FIX (00:00 start): Always force both tracks to exactly 0 right before the
+        // first play call. forceZeroBeforeFirstPlay() has no once-only guard so it
+        // always runs here, preventing any accumulated offset from earlier retries.
+        forceZeroBeforeFirstPlay();
+        safeSetAudioTime(0);
+
         try {
           const vp = execProgrammaticVideoPlay();
           if (coupledMode && audio && audio.paused) {
-            // FIX (audio pop): start silent, fadeAudioIn fires inside execProgrammaticAudioPlay
             audio.volume = 0;
             audio.play().catch(() => {});
           }
@@ -1663,7 +1625,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         await playTogether().catch(() => {});
         if (!getVideoPaused()) {
           state.startupKickDone = true;
-          // Mark settled after a short grace period so normal pause logic re-enables
           setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
         } else {
           scheduleStartupAutoplayRetry();
@@ -1677,13 +1638,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (state.startupKickDone || state.startupKickInFlight) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
-    // FIX (premature autoplay): defer retry until page is fully loaded.
     if (!pageLoadedForAutoplay()) return;
     clearStartupAutoplayRetryTimer();
     const count = state.startupAutoplayRetryCount;
     if (count >= 10) return;
     const isHidden = document.visibilityState === "hidden";
-    const delays = isHidden ? [200, 400, 700, 1000, 1500, 2000, 3000, 4000, 5000, 6000] : [400, 700, 1200, 1800, 2500, 3500, 5000, 7000, 9000, 12000];
+    // FIX (bg autoplay delay): Use much shorter delays for background retries.
+    // The browser will block audio in the background anyway, so we only need video
+    // to be ready — and we want that to happen quickly so video starts without a
+    // noticeable delay when the tab is eventually focused.
+    const delays = isHidden
+      ? [100, 200, 350, 500, 800, 1200, 1800, 2500, 3500, 5000]
+      : [400, 700, 1200, 1800, 2500, 3500, 5000, 7000, 9000, 12000];
     const delay = delays[count] || 6000;
     state.startupAutoplayRetryCount++;
     state.startupAutoplayRetryTimer = setTimeout(async () => {
@@ -1691,7 +1657,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (state.startupKickDone || state.startupKickInFlight) return;
       if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
       if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
-      const hasLooseBuffer = startupBufferReadyLoose();
+
+      // FIX (bg autoplay / delay): When hidden, only require video buffer — audio is
+      // blocked by the browser anyway, so don't stall waiting for audio readyState.
+      const isNowHidden = document.visibilityState === "hidden";
+      const hasLooseBuffer = isNowHidden
+        ? (Number(getVideoNode().readyState || 0) >= 2 || canPlayAt(getVideoNode(), Number(video.currentTime()) || 0))
+        : startupBufferReadyLoose();
+
       if (!hasLooseBuffer) {
         scheduleStartupAutoplayRetry();
         return;
@@ -1711,14 +1684,13 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setMediaPlayTxn(2200);
         setFastSync(2600);
 
-        // FIX (startup double-play): arm settle guard on retry path too
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
 
-        // FIX (0.175s offset): also zero on retry path
-        ensureStartupZeroed();
-        const t0 = Number(video.currentTime()) || 0;
-        safeSetAudioTime(t0);
+        // FIX (00:00 start): Always force both to 0 before play, even on retry path.
+        forceZeroBeforeFirstPlay();
+        safeSetAudioTime(0);
+
         try {
           const vp = execProgrammaticVideoPlay();
           if (vp && vp.then) await vp;
@@ -1740,15 +1712,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function maybePrimeStartup() {
     if (!coupledMode) return;
     if (state.restarting || state.startupPrimed) return;
-    // FIX (premature autoplay): do not prime before page is fully loaded.
     if (!pageLoadedForAutoplay()) return;
     const t0 = Number(video.currentTime()) || 0;
     const primeWait = now() - state.startupPrimeStartedAt;
     if (!bothStartupBufferedAt(t0)) {
       const looseReady = canPlayAt(getVideoNode(), t0) && canStartAudioAt(t0);
-      // FIX (background startup delay): In a background tab, audio autoplay is blocked
-      // by the browser regardless, so don't hold up priming waiting for audio to buffer.
-      // Prime as soon as video has any data; audio will catch up once the tab is visible.
       const bgVideoReady = document.visibilityState === "hidden" &&
                            Number(getVideoNode().readyState || 0) >= 2;
       if (!(looseReady && primeWait > 1800) && !bgVideoReady) {
@@ -1769,8 +1737,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       safeSetAudioTime(t);
     }
     softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
-    // FIX (startup double-play): only kick autoplay if both tracks are truly ready,
-    // otherwise scheduleStartupAutoplayRetry will wait for them.
     if (bothReadyForStartupKick()) {
       scheduleStartupAutoplayKick();
     } else {
@@ -1805,7 +1771,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   async function runSync() {
     state.syncTimer = null;
     state.syncScheduledAt = 0;
-    // FIX (speed difference): enforce rate parity at the top of every sync cycle
     enforcePlaybackRateSync();
     if (!coupledMode) {
       if (state.intendedPlaying && getVideoPaused() && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
@@ -1825,7 +1790,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     let vt = vtRaw;
     let at = atRaw;
     if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing) {
-      // AUDIO IS MASTER CLOCK
       if (state.audioEverStarted && !audio.paused) {
         if (Math.abs(at - vt) > 0.25) {
           safeSetVideoTime(at);
@@ -1886,12 +1850,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             playTogether().catch(() => {});
           }
         } else {
-          // Both playing - handle drift
           const drift = vt - at;
           const absDrift = Math.abs(drift);
           if (absDrift > BIG_DRIFT) {
             resetAudioPlaybackRate();
-            safeSetVideoTime(at); // AUDIO IS MASTER
+            safeSetVideoTime(at);
             setFastSync(1600);
           } else if (absDrift > MICRO_DRIFT) {
             const sameDirection = (drift > 0) === (state.lastDrift > 0);
@@ -1899,7 +1862,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             else state.driftStableFrames = 0;
             state.lastDrift = drift;
             if (state.driftStableFrames >= DRIFT_PERSIST_CYCLES) {
-              // FIX (speed difference): re-enforce base rate before nudging
               enforcePlaybackRateSync();
               const baseRate = Number(video.playbackRate()) || 1;
               const nudge = Math.max(-MAX_RATE_NUDGE, Math.min(MAX_RATE_NUDGE, drift * 0.01));
@@ -1964,9 +1926,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }
     if (state.intendedPlaying && !aPaused && !state.userMutedVideo && !state.userMutedAudio) {
       try { if (audio.muted) audio.muted = false; } catch {}
-      // FIX (audio pop): only rescue volume if truly silent and no fade is already running.
-      // Using a slightly higher threshold (0.05) catches cases where the volume got stuck
-      // near-zero without re-fading audio that's already close to target (which causes clicks).
       if (!state.audioFading && audio.volume < 0.05) {
         softUnmuteAudio(200).catch(() => {});
       }
@@ -2177,7 +2136,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     video.on("ratechange", () => {
       if (!coupledMode) return;
       try {
-        // FIX (speed difference): immediate hard mirror, no tolerance, clear nudge state
         const newRate = Number(video.playbackRate()) || 1;
         audio.playbackRate = newRate;
         state.driftStableFrames = 0;
@@ -2187,9 +2145,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       } catch {}
     });
     video.on("play", () => {
-      // FIX (medium quality): non-coupled mode has its own dedicated play/pause handlers
-      // registered below. Returning here prevents the coupled-mode logic (with its
-      // audio-sync guards and transient-state suppression) from interfering.
       if (!coupledMode) return;
 
       if (state.restarting || state.isProgrammaticVideoPlay) return;
@@ -2222,10 +2177,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       playTogether().catch(() => {});
     });
     video.on("pause", () => {
-      // FIX (medium quality): non-coupled mode has its own dedicated play/pause handlers
-      // registered below. The coupled-mode pause handler uses shouldIgnorePauseAsTransient()
-      // which includes mediaActionRecently("play", 2200) — this would swallow the user's
-      // pause for 2+ seconds in non-coupled mode, making the button appear broken.
       if (!coupledMode) return;
 
       if (state.restarting || state.isProgrammaticVideoPause) return;
@@ -2236,7 +2187,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (isAltTabTransitionActive()) return;
       if (!isVisibilityStable()) return;
       if (!isFocusStable()) return;
-      // FIX (startup double-play): ignore pause events during startup settle window
       if (startupSettleActive()) return;
       if (shouldTreatVisiblePauseAsUserPause()) {
         state.intendedPlaying = false;
@@ -2339,7 +2289,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       if (isAltTabTransitionActive()) return;
       if (!isVisibilityStable()) return;
       if (!isFocusStable()) return;
-      // FIX (startup double-play): ignore audio pause events during startup settle window
       if (startupSettleActive()) return;
       if (shouldTreatVisiblePauseAsUserPause()) {
         state.intendedPlaying = false;
@@ -2530,20 +2479,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         }
         state.rapidToggleDetected = false;
         state.rapidToggleUntil = 0;
-        // FIX (bg autoplay): reset retry counter so tab-switch always gets a fresh attempt.
-        // Without this, 10 background retries can exhaust the counter before the user ever
-        // switches to the tab, leaving nothing to trigger audio on visibility restore.
-        if (!state.startupKickDone) state.startupAutoplayRetryCount = 0;
+
+        // FIX (bg autoplay): Always reset retry counter on tab-visible so we get a
+        // fresh set of attempts regardless of how many fired in the background.
+        state.startupAutoplayRetryCount = 0;
+        state.bgAudioStartQueued = false;
+
         if (state.intendedPlaying) {
           if (platform.useBgControllerRetry) {
             executeSeamlessWakeup();
           } else {
             state.resumeOnVisible = false;
             state.bgHiddenWasPlaying = false;
-            // FIX (bg autoplay): for non-Chromium/non-iOS browsers the sync loop won't
-            // act for VISIBILITY_TRANSITION_MS (3 s) because isTransientState is true.
-            // Call playTogether() directly after a short settle so audio starts immediately
-            // when the tab is switched to, without waiting 3 full seconds.
             setTimeout(() => {
               if (state.intendedPlaying && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
                 playTogether().catch(() => {});
@@ -2551,6 +2498,21 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             }, 150);
             setFastSync(800);
             scheduleSync(0);
+          }
+
+          // FIX (bg audio on visibility): If video started in the background but audio
+          // was blocked by the browser's autoplay policy, kick audio now that the tab is
+          // visible and the policy restriction is lifted.
+          if (coupledMode && !state.audioEverStarted && !getVideoPaused()) {
+            setTimeout(() => {
+              if (!state.intendedPlaying || state.audioEverStarted) return;
+              if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+              const vt = Number(video.currentTime()) || 0;
+              safeSetAudioTime(vt);
+              execProgrammaticAudioPlay({ squelchMs: 600, force: true, minGapMs: 0 })
+                .then(ok => { if (ok) state.audioEverStarted = true; })
+                .catch(() => {});
+            }, 350);
           }
         }
         if (state.startupPhase && !state.startupKickDone && wantsStartupAutoplay() && pageLoadedForAutoplay()) {
@@ -2609,7 +2571,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (!coupledMode || !audio || state.audioStartupPlayAttempted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (state.startupPrimed && state.firstPlayCommitted) return;
-    // FIX (premature autoplay): don't force audio play before page is fully loaded.
     if (!pageLoadedForAutoplay()) return;
     state.audioStartupPlayAttempted = true;
     const tryPlay = () => {
@@ -2626,7 +2587,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return;
       }
       try {
-        // FIX (audio pop): start at 0, fade in after play resolves
         audio.volume = 0;
         const p = audio.play();
         if (p && p.then) {
@@ -2687,7 +2647,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     bindStartupOnce(videoEl, "canplay");
   }
   video.on("volumechange", () => {
-    // FIX (audio pop): skip hard jump if fade is running
     if (!state.audioFading) {
       updateAudioGainImmediate();
     }
@@ -2738,8 +2697,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   state.bgPlaybackAllowed = true;
   state.backgroundAutoplayTriggered = true;
   setTimeout(() => {
-    // Secondary bootstrap: if priming hasn't happened yet (e.g. load event already
-    // fired before we registered), nudge it along. Gated on pageFullyLoaded.
     if (coupledMode && state.startupPhase && !state.startupPrimed && pageLoadedForAutoplay()) {
       maybePrimeStartup();
       scheduleStartupAutoplayKick();
@@ -2748,7 +2705,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }, 100);
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
