@@ -13,6 +13,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */   
+ 
 document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
@@ -1594,7 +1595,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return;
       } else if (!videoOk && audioOk) {
-        if (document.visibilityState !== "hidden" && isWindowFocused()) {
+        if (isHiddenBackground() && state.bgPlaybackAllowed) {
+            // Keep playing audio in the background!
+        } else if (document.visibilityState !== "hidden" && isWindowFocused()) {
           execProgrammaticAudioPause(600);
           state.intendedPlaying = false;
           updateMediaSessionPlaybackState();
@@ -1603,6 +1606,10 @@ document.addEventListener("DOMContentLoaded", () => {
           if (state.startupPhase && !state.firstPlayCommitted) {
             forceZeroBeforeFirstPlay();
           }
+          state.resumeOnVisible = true;
+        }
+      } else if (videoOk && !audioOk) {
+        if (coupledMode && isHiddenBackground()) {
           state.resumeOnVisible = true;
         }
       }
@@ -1715,7 +1722,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       return;
     }
-    const [vReady, aReady] = await Promise.all([
+    const[vReady, aReady] = await Promise.all([
       waitForReadyStateOrCanPlay(v, 3, SEEK_READY_TIMEOUT_MS),
       waitForReadyStateOrCanPlay(audio, 3, SEEK_READY_TIMEOUT_MS)
     ]);
@@ -1883,7 +1890,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         await playTogether().catch(() => {});
         
-        if (getVideoPaused()) {
+        const isEffectivelyPaused = coupledMode ? (getVideoPaused() && !!audio.paused) : getVideoPaused();
+
+        if (isEffectivelyPaused) {
           if (!state.strictBufferHold) {
             state.resumeOnVisible = false;
             scheduleStartupAutoplayRetry();
@@ -1955,7 +1964,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         await playTogether().catch(() => {});
 
-        if (getVideoPaused()) {
+        const isEffectivelyPaused = coupledMode ? (getVideoPaused() && !!audio.paused) : getVideoPaused();
+
+        if (isEffectivelyPaused) {
           if (!state.strictBufferHold) {
             state.resumeOnVisible = false;
             scheduleStartupAutoplayRetry();
@@ -2015,6 +2026,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function evaluateBufferHoldNeed(vt, at) {
     if (!state.intendedPlaying || state.seeking || state.syncing) return false;
     if (!state.audioEverStarted && state.startupPhase) return false;
+    if (startupSettleActive()) return false;
     if (document.visibilityState === "hidden" || !isWindowFocused()) return false;
     const checkTime = Math.max(vt, at || 0);
     const vNode = getVideoNode();
@@ -2618,7 +2630,11 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!state.syncing && !state.seeking && getVideoPaused()) {
-        playTogether().catch(() => {});
+        if (isHiddenBackground() && state.bgPlaybackAllowed) {
+          scheduleSync(0);
+        } else {
+          playTogether().catch(() => {});
+        }
       } else {
         scheduleSync(0);
       }
