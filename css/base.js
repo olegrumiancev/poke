@@ -12,10 +12,17 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Includes vtt.js <https://github.com/mozilla/vtt.js>
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
- */ 
+ */
 
- 
- document.addEventListener("DOMContentLoaded", () => {
+
+
+//this. this is what makes poke, poke.
+/////// POKE                           PLAYER                                           CODE                      BEGINS            HERE /////
+//////////////////////////////
+/////...
+// "It takes a lot of hard work to make something simple." ~ Steve Jobs 
+
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -328,7 +335,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     lastUserActionTime: 0,
     loopPreventionCooldownUntil: 0,
     seekCooldownUntil: 0,
-    volumeSaveScheduled: false
+    volumeSaveScheduled: false,
+    // FIX: track when we last returned from background so pause events don't fire as user-intent
+    lastBgReturnAt: 0,
+    // FIX: track how many consecutive bg suppression cycles we've done (reset on user action)
+    bgSuppressionSessionCount: 0
   };
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -340,18 +351,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   const BIG_DRIFT_BACKGROUND = 6.0;
   const MAX_RATE_NUDGE = 0.001;
   const DRIFT_PERSIST_CYCLES = 8;
-  const AUDIO_FADE_DURATION_MS = 100;
-  const AUDIO_SAFE_FADE_DURATION_MS = 150;
+  const AUDIO_FADE_DURATION_MS = 80;          // FIX: faster fade = less noticeable
+  const AUDIO_SAFE_FADE_DURATION_MS = 100;    // FIX: faster fade = less noticeable
   const MIN_PLAY_PAUSE_GAP_MS = 1000;
   const SEEK_READY_TIMEOUT_MS = 3000;
-  const STATE_CHANGE_COOLDOWN_MS = 800;
-  const CHROMIUM_BG_PAUSE_BLOCK_MS = 4000;
-  const TAB_VISIBILITY_STABLE_MS = 2000;
-  const VISIBILITY_TRANSITION_MS = 3000;
-  const MAX_BG_PAUSE_SUPPRESSIONS = 5;
-  const ALT_TAB_TRANSITION_MS = 2000;
+  const STATE_CHANGE_COOLDOWN_MS = 400;       // FIX: less restrictive
+  const CHROMIUM_BG_PAUSE_BLOCK_MS = 6000;    // FIX: longer block window
+  const TAB_VISIBILITY_STABLE_MS = 3500;      // FIX: longer stability window
+  const VISIBILITY_TRANSITION_MS = 4500;      // FIX: longer transition guard
+  const MAX_BG_PAUSE_SUPPRESSIONS = 200;      // FIX: effectively unlimited per session
+  const ALT_TAB_TRANSITION_MS = 3500;         // FIX: longer alt-tab window
   const FOCUS_LOSS_RESET_MS = 12000;
-  const CHROMIUM_PAUSE_EVENT_SUPPRESS_MS = 6000;
+  const CHROMIUM_PAUSE_EVENT_SUPPRESS_MS = 10000; // FIX: much longer suppress window
   const PAUSE_EVENT_RESET_MS = 15000;
   const MAX_PAUSE_EVENTS_BEFORE_BLOCK = 3;
   const AUDIO_POP_PREVENT_MS = 800;
@@ -367,6 +378,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   const LOOP_DETECTION_WINDOW_MS = 2000;
   const MAX_LOOP_EVENTS = 6;
   const LOOP_COOLDOWN_MS = 4000;
+  // FIX: time window after returning from bg during which we never treat pause as user intent
+  const BG_RETURN_GRACE_MS = 5000;
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 
@@ -409,6 +422,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   function isHiddenBackground() {
     return document.visibilityState === "hidden";
+  }
+
+  // FIX: returns true if we just returned from background and should not treat pauses as user-intent
+  function inBgReturnGrace() {
+    return (now() - state.lastBgReturnAt) < BG_RETURN_GRACE_MS;
   }
 
   if (!state.pageFullyLoaded) {
@@ -472,6 +490,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.playSessionId = (state.playSessionId || 0) + 1;
     clearStartupAutoplayRetryTimer();
     state.lastUserActionTime = now();
+    // FIX: reset bg suppression count on real user action
+    state.bgSuppressionSessionCount = 0;
+    state.bgPauseSuppressionCount = 0;
 
     cancelActiveFade();
     state.audioPlayGeneration++;
@@ -494,6 +515,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
   function markUserPlayIntent(ms = 1800) {
     state.lastUserActionTime = now();
+    // FIX: reset bg suppression on real user action
+    state.bgSuppressionSessionCount = 0;
+    state.bgPauseSuppressionCount = 0;
     const until = now() + Math.max(0, Number(ms) || 0);
     state.userPlayUntil = Math.max(state.userPlayUntil, until);
     state.userPauseUntil = 0;
@@ -544,7 +568,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     state.chromiumBgPauseBlockedUntil = Math.max(state.chromiumBgPauseBlockedUntil, now() + ms);
     state.chromiumBgPauseBlockedUntilExtended = Math.max(state.chromiumBgPauseBlockedUntilExtended, now() + (ms * 1.5));
   }
-  function setChromiumAutoPauseBlock(ms = 6000) {
+  function setChromiumAutoPauseBlock(ms = 8000) {  // FIX: longer default
     if (!platform.chromiumOnlyBrowser) return;
     state.chromiumAutoPauseBlockedUntil = Math.max(state.chromiumAutoPauseBlockedUntil, now() + ms);
   }
@@ -622,6 +646,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     if (detectLoop()) return true;
 
+    // FIX: bg return grace - always suppress during return window
+    if (inBgReturnGrace()) return true;
+
     if (
       document.visibilityState === "visible" &&
       isWindowFocused() &&
@@ -630,7 +657,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       !state.isProgrammaticVideoPause &&
       !state.isProgrammaticAudioPause &&
       !state.seeking &&
-      !state.syncing
+      !state.syncing &&
+      !inBgReturnGrace() &&
+      now() >= state.tabVisibilityChangeUntil
     ) {
       return false;
     }
@@ -654,12 +683,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (inMediaTxnWindow()) return true;
     if (mediaActionRecently("play", 2200)) return true;
     if (shouldIgnorePauseEvents()) return true;
-    if (platform.chromiumOnlyBrowser && state.bgPauseSuppressionCount < MAX_BG_PAUSE_SUPPRESSIONS) {
+    // FIX: unlimited suppression count - never stop suppressing background pauses
+    if (platform.chromiumOnlyBrowser) {
       if (now() > state.bgPauseSuppressionResetAt || (now() - state.bgPauseSuppressionResetAt) > 10000) {
         state.bgPauseSuppressionCount = 0;
         state.bgPauseSuppressionResetAt = now();
       }
       state.bgPauseSuppressionCount++;
+      // FIX: always suppress (removed the MAX_BG_PAUSE_SUPPRESSIONS cap check that was here)
       return true;
     }
     return false;
@@ -819,7 +850,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       safeSetAudioTime(t);
       
       if (wasPlaying && state.intendedPlaying) {
-          softUnmuteAudio(120).catch(() => {});
+          softUnmuteAudio(80).catch(() => {});  // FIX: faster fade back
       }
     } catch {}
   }
@@ -971,14 +1002,15 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const vt = Number(video.currentTime());
       const at = coupledMode && audio ? Number(audio.currentTime) : NaN;
       const bothAtStart = (vt < 0.5) && (!isFinite(at) || at < 0.5);
-      const hasSaved = state.lastKnownGoodVT > 0.5 && (now() - state.lastKnownGoodVTts) < 30000;
-      if (bothAtStart && hasSaved) return state.lastKnownGoodVT;
+      // FIX: only use lastKnownGoodVT if it was set recently (5 sec) AND we're genuinely at start
+      const hasSaved = state.lastKnownGoodVT > 0.5 && (now() - state.lastKnownGoodVTts) < 5000 && bothAtStart;
+      if (hasSaved) return state.lastKnownGoodVT;
       if (isFinite(at) && at > 0.5 && (!isFinite(vt) || at > vt + 0.3)) return at;
       if (isFinite(vt) && vt > 0) return vt;
       if (isFinite(at) && at > 0) return at;
-      return state.lastKnownGoodVT || 0;
+      return 0; // FIX: default to 0 not stale lastKnownGoodVT
     } catch {
-      return state.lastKnownGoodVT || 0;
+      return 0;
     }
   }
   function execProgrammaticVideoPause() {
@@ -1034,6 +1066,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     const myGeneration = state.audioPlayGeneration;
     const mySession = state.playSessionId;
     
+    // FIX: isAlreadyPlaying must be checked before any volume operations
     const isAlreadyPlaying = !audio.paused && audio.volume > 0.05 && !state.audioFading;
 
     if (!force && checkRapidPlayPause()) return !audio.paused;
@@ -1042,7 +1075,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     
     const timeSinceLastPlayPause = now() - state.audioLastPlayPauseTs;
     if (!force && timeSinceLastPlayPause < MIN_PLAY_PAUSE_GAP_MS) {
-      if (!audio.paused) softUnmuteAudio(150).catch(() => {});
+      if (!audio.paused) softUnmuteAudio(80).catch(() => {});
       return !audio.paused;
     }
     if (now() < state.stateChangeCooldownUntil && !force) return !audio.paused;
@@ -1062,9 +1095,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     try {
       squelchAudioEvents(squelchMs);
 
-      if (audio.paused || audio.volume < 0.05) {
-          cancelActiveFade();
-          audio.volume = 0;
+      // FIX: Only zero volume if audio is actually paused (anti-pop for fresh starts).
+      // Never zero volume on playing audio - that creates the audible dropout.
+      const audioActuallyPaused = audio.paused;
+      if (audioActuallyPaused) {
+        cancelActiveFade();
+        audio.volume = 0;
       }
 
       const p = audio.play();
@@ -1073,10 +1109,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
       
-      if (!isAlreadyPlaying) {
-          fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+      // FIX: Only fade in if we actually zeroed volume (audio was paused)
+      if (audioActuallyPaused) {
+        fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
       } else {
-          updateAudioGainImmediate();
+        updateAudioGainImmediate();
       }
 
       try {
@@ -1285,16 +1322,19 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       const aPausedNow = !!audio.paused;
       const vPausedNow = getVideoPaused();
 
+      // FIX: If both already playing and in sync, don't touch anything - just verify sync
       if (!aPausedNow && !vPausedNow && isFinite(atNow) && isFinite(vtNow)) {
         const drift = Math.abs(vtNow - atNow);
         if (drift < 2.0) {
           state.bgHiddenWasPlaying = false;
           state.resumeOnVisible = false;
+          // FIX: Just schedule a sync check - don't call playTogether unnecessarily
           setFastSync(1500);
           scheduleSync(0);
           return;
         }
-        safeSetVideoTime(atNow);
+        // Drift too large - correct it gently
+        quietSeekAudio(vtNow);
         state.bgHiddenWasPlaying = false;
         state.resumeOnVisible = false;
         setFastSync(1500);
@@ -1302,6 +1342,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return;
       }
 
+      // FIX: Audio playing, video paused - sync and resume video
       if (!aPausedNow && isFinite(atNow)) {
         if (isFinite(vtNow) && Math.abs(vtNow - atNow) > 2.0) {
           safeSetVideoTime(atNow);
@@ -1316,6 +1357,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return;
       }
 
+      // Both paused - full restart
       state.bgHiddenWasPlaying = false;
       state.resumeOnVisible = false;
       if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
@@ -1421,7 +1463,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 1600);
     }
   }
-  function queueHardPauseVerification(msList =[0, 120, 300, 600, 1000]) {
+  function queueHardPauseVerification(msList = [0, 120, 300, 600, 1000]) {
     const serial = ++state.hardPauseVerifySerial;
     for (const delay of msList) {
       setTimeout(() => {
@@ -1490,14 +1532,18 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       clearStartupAutoplayRetryTimer();
       return;
     }
-    try { video.currentTime(0); } catch {}
-    try {
-      safeSetCT(videoEl, 0);
-      const v = getVideoNode();
-      if (v && v !== videoEl) safeSetCT(v, 0);
-    } catch {}
-    if (coupledMode && audio) {
-      try { audio.currentTime = 0; } catch {}
+    // FIX: Always zero out position on first play, even tiny offsets (0.01-0.5s from preload)
+    const needsZero = (vt > 0.001 || at > 0.001);
+    if (needsZero) {
+      try { video.currentTime(0); } catch {}
+      try {
+        safeSetCT(videoEl, 0);
+        const v = getVideoNode();
+        if (v && v !== videoEl) safeSetCT(v, 0);
+      } catch {}
+      if (coupledMode && audio) {
+        try { audio.currentTime = 0; } catch {}
+      }
     }
     state.startupZeroed = true;
     state.lastKnownGoodVT = 0;
@@ -1600,6 +1646,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             force: true
           });
         }
+      } else if (coupledMode && audio && !audio.paused) {
+        // FIX: Audio already playing - just ensure volume is correct, don't restart it
+        if (!state.audioFading) {
+          const targetVol = targetVolFromVideo();
+          if (Math.abs(audio.volume - targetVol) > 0.02) {
+            softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+          }
+        }
       }
 
       if (vPlayP && vPlayP.then) await vPlayP.catch(() => {});
@@ -1642,7 +1696,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return;
       } else if (!videoOk && audioOk) {
         if (isHiddenBackground() && state.bgPlaybackAllowed) {
-            // Keep playing audio in the background!
+            // Keep playing audio in the background
         } else if (document.visibilityState !== "hidden" && isWindowFocused()) {
           execProgrammaticAudioPause(600);
           state.intendedPlaying = false;
@@ -1772,7 +1826,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       }
       return;
     }
-    const[vReady, aReady] = await Promise.all([
+    const [vReady, aReady] = await Promise.all([
       waitForReadyStateOrCanPlay(v, 3, SEEK_READY_TIMEOUT_MS),
       waitForReadyStateOrCanPlay(audio, 3, SEEK_READY_TIMEOUT_MS)
     ]);
@@ -1969,7 +2023,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     clearStartupAutoplayRetryTimer();
     const count = state.startupAutoplayRetryCount;
     if (count >= 20) return;
-    const delays =[150, 300, 500, 900, 1500, 2000, 2500, 3000, 4000, 5000];
+    const delays = [150, 300, 500, 900, 1500, 2000, 2500, 3000, 4000, 5000];
     const delay = delays[count] || 5000;
     state.startupAutoplayRetryCount++;
     state.startupAutoplayRetryTimer = setTimeout(async () => {
@@ -2401,12 +2455,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       navigator.mediaSession.metadata = new MediaMetadata({
         title: document.title || "Video",
         artist: typeof authorchannelname !== "undefined" ? authorchannelname : "",
-        artwork: vidKey ?[
+        artwork: vidKey ? [
           { src: `https://i.ytimg.com/vi/${vidKey}/default.jpg`, sizes: "120x90", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/mqdefault.jpg`, sizes: "320x180", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/hqdefault.jpg`, sizes: "480x360", type: "image/jpeg" },
           { src: `https://i.ytimg.com/vi/${vidKey}/maxresdefault.jpg`, sizes: "1280x720", type: "image/jpeg" }
-        ] :[]
+        ] : []
       });
     } catch {}
     updateMediaSessionPlaybackState();
@@ -2587,6 +2641,30 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       requestAnimationFrame(() => {
         if (state.seeking || state.restarting || state.isProgrammaticVideoPause) return;
         if (!getVideoPaused()) return;
+
+        // FIX: CRITICAL - check visibility/focus stability BEFORE treating as user pause.
+        // A background pause event can arrive AFTER we return to the tab (visible+focused),
+        // causing a false user-pause detection. These guards must come first.
+        if (isVisibilityTransitionActive()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (!isVisibilityStable() || !isFocusStable()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (now() < state.tabVisibilityChangeUntil) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (inBgReturnGrace()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (isAltTabTransitionActive()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
         
         trackPauseEvent();
         
@@ -2609,10 +2687,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         }
 
         if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-        if (isVisibilityTransitionActive()) return;
-        if (isAltTabTransitionActive()) return;
-        if (!isVisibilityStable()) return;
-        if (!isFocusStable()) return;
         if (startupSettleActive() && document.visibilityState === "visible" && isWindowFocused()) return;
         
         if (shouldIgnorePauseAsTransient()) {
@@ -2760,6 +2834,28 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (state.seeking || state.restarting || state.isProgrammaticAudioPause) return;
         if (audio && !audio.paused) return;
 
+        // FIX: CRITICAL - same as video pause handler - visibility guards FIRST
+        if (isVisibilityTransitionActive()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (!isVisibilityStable() || !isFocusStable()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (now() < state.tabVisibilityChangeUntil) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (inBgReturnGrace()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        if (isAltTabTransitionActive()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+
         trackPauseEvent();
         
         if (document.visibilityState === "visible" && isWindowFocused()) {
@@ -2781,10 +2877,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         }
 
         if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-        if (isVisibilityTransitionActive()) return;
-        if (isAltTabTransitionActive()) return;
-        if (!isVisibilityStable()) return;
-        if (!isFocusStable()) return;
         if (startupSettleActive() && document.visibilityState === "visible" && isWindowFocused()) return;
         
         if (shouldIgnorePauseAsTransient()) {
@@ -2959,6 +3051,22 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     if (state.intendedPlaying) {
       clearTimeout(state.wakeupTimer);
       state.wakeupTimer = setTimeout(() => {
+        if (!state.intendedPlaying) return;
+        // FIX: Check if both already playing before disturbing playback
+        if (coupledMode) {
+          const vPaused = getVideoPaused();
+          const aPaused = audio ? !!audio.paused : true;
+          if (!vPaused && !aPaused) {
+            // Both playing - just verify sync, don't call seamlessBgCatchUp
+            const vtNow = Number(video.currentTime());
+            const atNow = Number(audio ? audio.currentTime : vtNow);
+            if (isFinite(vtNow) && isFinite(atNow) && Math.abs(vtNow - atNow) < 2.0) {
+              setFastSync(1500);
+              scheduleSync(0);
+              return;
+            }
+          }
+        }
         seamlessBgCatchUp().catch(() => {});
       }, 50);
     }
@@ -2996,14 +3104,28 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       state.visibilityStableUntil = now() + VISIBILITY_TRANSITION_MS;
       state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
       if (newState === "visible") {
+        // FIX: Record the exact moment we returned from bg - used as a hard grace period
+        state.lastBgReturnAt = now();
+
         clearHiddenMediaSessionPlay();
         state.bgAutoResumeSuppressed = false;
         state.startupAudioHoldUntil = 0;
         state.bgTransitionInProgress = false;
+        // FIX: reset suppression counters on tab return so bg pauses keep getting blocked
+        state.bgPauseSuppressionCount = 0;
+        state.bgPauseSuppressionResetAt = now();
+        state.pauseEventCount = 0;
+        state.pauseEventResetAt = now();
+
         if (platform.chromiumOnlyBrowser) {
-          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 1200);
-          state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 700);
-          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 2500);
+          // FIX: Extended settling windows on tab return
+          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 2000);
+          state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 1200);
+          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 3000);
+          // FIX: Set chromium pause event suppression for the full return grace period
+          setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
+          setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
+          setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
         }
         state.rapidToggleDetected = false;
         state.rapidToggleUntil = 0;
@@ -3077,16 +3199,23 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       }
       if (state.focusLossCount >= 1 && state.intendedPlaying) {
         state.altTabTransitionActive = true;
-        state.altTabTransitionUntil = now() + 2000;
-        state.focusStableUntil = now() + 2000;
-        setChromiumAutoPauseBlock(3200);
+        state.altTabTransitionUntil = now() + ALT_TAB_TRANSITION_MS;
+        state.focusStableUntil = now() + ALT_TAB_TRANSITION_MS;
+        setChromiumAutoPauseBlock(ALT_TAB_TRANSITION_MS + 2000);
         setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
         setChromiumPauseEventSuppress(CHROMIUM_PAUSE_EVENT_SUPPRESS_MS);
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
       if (!platform.chromiumOnlyBrowser) return;
+      // FIX: Mark return from bg on focus too
+      state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
       state.focusStableUntil = now() + 300;
+      // FIX: Reset pause event counters on focus return
+      state.pauseEventCount = 0;
+      state.pauseEventResetAt = now();
+      setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
+      setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
       setTimeout(() => {
         state.altTabTransitionActive = false;
         if (document.visibilityState === "visible") {
@@ -3248,6 +3377,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         requestAnimationFrame(() => {
           if (state.seeking || state.restarting || state.isProgrammaticVideoPause) return;
           if (!getVideoPaused()) return;
+
+          // FIX: visibility guards first
+          if (isVisibilityTransitionActive() || !isVisibilityStable() || !isFocusStable()) return;
+          if (now() < state.tabVisibilityChangeUntil) return;
+          if (inBgReturnGrace()) return;
+          if (isAltTabTransitionActive()) return;
           
           if (document.visibilityState === "visible" && isWindowFocused()) {
               state.intendedPlaying = false;
@@ -3268,10 +3403,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (startupAutoplayPauseGraceActive()) return;
           trackPauseEvent();
           if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-          if (isVisibilityTransitionActive()) return;
-          if (isAltTabTransitionActive()) return;
-          if (!isVisibilityStable()) return;
-          if (!isFocusStable()) return;
           
           state.intendedPlaying = false;
           state.bufferHoldIntendedPlaying = false;
@@ -3291,8 +3422,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     }
   }, 100);
   scheduleSync(0);
-});
-   
+});   
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
