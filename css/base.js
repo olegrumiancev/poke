@@ -13,8 +13,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */   
- 
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -368,6 +367,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const clamp01 = v => Math.max(0, Math.min(1, Number(v)));
 
+  function clearStartupAutoplayRetryTimer() {
+    if (state.startupAutoplayRetryTimer) {
+      clearTimeout(state.startupAutoplayRetryTimer);
+      state.startupAutoplayRetryTimer = null;
+    }
+  }
+
   const VOLUME_STORAGE_KEY = 'videoPlayerVolume';
   const MUTED_STORAGE_KEY = 'videoPlayerMuted';
   function loadSavedVolume() {
@@ -457,8 +463,10 @@ document.addEventListener("DOMContentLoaded", () => {
   
   function markUserPauseIntent(ms = 1800) {
     state.userGesturePauseIntent = true;
-    state.startupPhase = false;
     state.firstPlayCommitted = true;
+    state.startupKickDone = true;
+    state.startupPhase = false;
+    clearStartupAutoplayRetryTimer();
     state.lastUserActionTime = now();
 
     cancelActiveFade();
@@ -489,6 +497,10 @@ document.addEventListener("DOMContentLoaded", () => {
     clearMediaSessionForcedPause();
     state.intendedPlaying = true;
     state.bufferHoldIntendedPlaying = true;
+    state.firstPlayCommitted = true;
+    state.startupKickDone = true;
+    state.startupPhase = false;
+    clearStartupAutoplayRetryTimer();
     markMediaAction("play");
     setFastSync(1800);
     setMediaPlayTxn(900);
@@ -1114,12 +1126,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.seekFinalizeTimer = null;
     }
   }
-  function clearStartupAutoplayRetryTimer() {
-    if (state.startupAutoplayRetryTimer) {
-      clearTimeout(state.startupAutoplayRetryTimer);
-      state.startupAutoplayRetryTimer = null;
-    }
-  }
+
   function cancelBackgroundResumeState() {
     state.resumeOnVisible = false;
     state.bgAutoResumeSuppressed = false;
@@ -1305,8 +1312,6 @@ document.addEventListener("DOMContentLoaded", () => {
       state.resumeOnVisible = false;
       if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
         forceZeroBeforeFirstPlay();
-        safeSetAudioTime(0);
-        safeSetVideoTime(0);
       }
       await playTogether().catch(() => {});
     } finally {
@@ -1446,6 +1451,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function forceZeroBeforeFirstPlay() {
     if (state.firstPlayCommitted) return;
+    const vt = Number(video.currentTime()) || 0;
+    const at = coupledMode && audio ? (Number(audio.currentTime) || 0) : 0;
+    // If the stream has genuinely progressed, do not forcefully zero.
+    // Commit the play and cancel all retries instead.
+    if (vt > 0.5 || at > 0.5) {
+      state.firstPlayCommitted = true;
+      state.startupKickDone = true;
+      clearStartupAutoplayRetryTimer();
+      return;
+    }
     try { video.currentTime(0); } catch {}
     try {
       safeSetCT(videoEl, 0);
@@ -1484,9 +1499,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.intendedPlaying) return;
       
       if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
-        safeSetVideoTime(0);
-        safeSetAudioTime(0);
-        state.startupZeroed = true;
+        forceZeroBeforeFirstPlay();
       }
 
       const vtStart = Number(video.currentTime()) || 0;
@@ -1677,6 +1690,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!getVideoPaused() && (!coupledMode || !audio.paused)) {
           state.startupKickDone = true;
           state.firstPlayCommitted = true;
+          clearStartupAutoplayRetryTimer();
           setTimeout(() => { state.startupPhase = false; }, 1200);
           setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
         }
@@ -1850,7 +1864,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function scheduleStartupAutoplayKick() {
     if (!coupledMode) return;
-    if (state.startupKickDone || state.startupKickInFlight) return;
+    if (state.startupKickDone || state.startupKickInFlight || state.firstPlayCommitted) return;
     if (!state.startupPrimed) return;
     if (!wantsStartupAutoplay() && !state.intendedPlaying) return;
     if (mediaSessionForcedPauseActive()) return;
@@ -1861,7 +1875,7 @@ document.addEventListener("DOMContentLoaded", () => {
     clearStartupAutoplayRetryTimer();
     setTimeout(async () => {
       try {
-        if (!state.startupPrimed || mediaSessionForcedPauseActive()) return;
+        if (!state.startupPrimed || mediaSessionForcedPauseActive() || state.firstPlayCommitted) return;
 
         if (!bothReadyForStartupKick()) {
           state.startupKickInFlight = false;
@@ -1885,8 +1899,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.startupPlaySettled = false;
 
         forceZeroBeforeFirstPlay();
-        safeSetAudioTime(0);
-        safeSetVideoTime(0);
 
         await playTogether().catch(() => {});
         
@@ -1913,7 +1925,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function scheduleStartupAutoplayRetry() {
-    if (state.startupKickDone || state.startupKickInFlight) return;
+    if (state.startupKickDone || state.startupKickInFlight || state.firstPlayCommitted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
     if (!pageLoadedForAutoplay()) return;
@@ -1926,7 +1938,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.startupAutoplayRetryCount++;
     state.startupAutoplayRetryTimer = setTimeout(async () => {
       state.startupAutoplayRetryTimer = null;
-      if (state.startupKickDone || state.startupKickInFlight) return;
+      if (state.startupKickDone || state.startupKickInFlight || state.firstPlayCommitted) return;
       if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
       if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
       if (state.bgResumeInFlight) {
@@ -1959,8 +1971,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.startupPlaySettled = false;
 
         forceZeroBeforeFirstPlay();
-        safeSetAudioTime(0);
-        safeSetVideoTime(0);
 
         await playTogether().catch(() => {});
 
@@ -2068,10 +2078,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     let vt = vtRaw;
     let at = atRaw;
+    const vPaused = getVideoPaused();
+    const aPaused = !!audio.paused;
 
     const inBgDrift = document.visibilityState === "hidden" || !isWindowFocused();
-
     const skipDrift = now() < state.seekCooldownUntil;
+
+    if (state.intendedPlaying && !vPaused && vt > 0.5) {
+      if (!state.firstPlayCommitted) {
+        state.firstPlayCommitted = true;
+        state.startupKickDone = true;
+        clearStartupAutoplayRetryTimer();
+        setTimeout(() => { state.startupPhase = false; }, 1200);
+      }
+    }
 
     if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing && !skipDrift) {
       if (state.audioEverStarted && !audio.paused && !inBgDrift) {
@@ -2102,8 +2122,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    const vPaused = getVideoPaused();
-    const aPaused = !!audio.paused;
     const needsHold = evaluateBufferHoldNeed(vt, at);
     if (needsHold && !state.strictBufferHold) {
       state.strictBufferHold = true;
@@ -2479,6 +2497,14 @@ document.addEventListener("DOMContentLoaded", () => {
       clearMediaSessionForcedPause();
       state.intendedPlaying = true;
       state.bufferHoldIntendedPlaying = true;
+      
+      if (!state.firstPlayCommitted && !state.startupKickInFlight) {
+        state.firstPlayCommitted = true;
+        state.startupKickDone = true;
+        clearStartupAutoplayRetryTimer();
+        setTimeout(() => { state.startupPhase = false; }, 1200);
+      }
+
       markMediaAction("play");
       setFastSync(2200);
       forceUnmuteForPlaybackIfAllowed();
@@ -2569,6 +2595,14 @@ document.addEventListener("DOMContentLoaded", () => {
     video.on("playing", () => {
       state.videoWaiting = false;
       state.startupAudioHoldUntil = 0;
+
+      if (!state.firstPlayCommitted && !state.startupKickInFlight) {
+        state.firstPlayCommitted = true;
+        state.startupKickDone = true;
+        clearStartupAutoplayRetryTimer();
+        setTimeout(() => { state.startupPhase = false; }, 1200);
+      }
+
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
         if (wantsStartupAutoplay() || (now() - state.startupPrimeStartedAt) < 2600) {
           clearMediaSessionForcedPause();
@@ -2611,7 +2645,15 @@ document.addEventListener("DOMContentLoaded", () => {
         try { audio.pause(); } catch {}
         return;
       }
+      
       state.audioEverStarted = true;
+      if (!state.firstPlayCommitted && !state.startupKickInFlight) {
+        state.firstPlayCommitted = true;
+        state.startupKickDone = true;
+        clearStartupAutoplayRetryTimer();
+        setTimeout(() => { state.startupPhase = false; }, 1200);
+      }
+
       clearMediaSessionForcedPause();
       state.intendedPlaying = true;
       state.bufferHoldIntendedPlaying = true;
@@ -2747,6 +2789,15 @@ document.addEventListener("DOMContentLoaded", () => {
       state.seekWantedPlaying = state.intendedPlaying;
       state.playRequestedDuringSeek = state.intendedPlaying;
       state.seekCompleted = false;
+      state.firstSeekDone = true;
+
+      if (!state.firstPlayCommitted) {
+         state.firstPlayCommitted = true;
+         state.startupKickDone = true;
+         clearStartupAutoplayRetryTimer();
+         setTimeout(() => { state.startupPhase = false; }, 1200);
+      }
+
       clearSeekSyncFinalizeTimer();
       const seekTime = Number(video.currentTime());
       state.pendingSeekTarget = seekTime;
@@ -3083,6 +3134,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (userPlayIntentActive()) state.userPlayUntil = 0;
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
+        
+        if (!state.firstPlayCommitted && !state.startupKickInFlight) {
+          state.firstPlayCommitted = true;
+          state.startupKickDone = true;
+          clearStartupAutoplayRetryTimer();
+          setTimeout(() => { state.startupPhase = false; }, 1200);
+        }
+        
         updateMediaSessionPlaybackState();
       });
       video.on("pause", () => {
