@@ -13,15 +13,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */
-
-
-
-//this. this is what makes poke, poke.
-/////// POKE                           PLAYER                                           CODE                      BEGINS            HERE /////
-//////////////////////////////
-/////...
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
-
+// this combines audio+video to make them seemless.
 document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
