@@ -1474,7 +1474,13 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       if (!state.intendedPlaying) return;
       
-      if (state.startupPhase && !state.firstPlayCommitted && !state.firstSeekDone && wantsStartupAutoplay()) {
+      // FIX: Removed !state.firstSeekDone guard. firstSeekDone is set true by
+      // maybePrimeStartup() before the startup kick fires, so the old condition
+      // silently skipped zeroing when playTogether() was called by the browser's
+      // autoplay "play" event (which fires synchronously before the kick's
+      // setTimeout(0) callback). Now we always zero to 00:00 during the startup
+      // phase as long as firstPlayCommitted hasn't been set by a successful start.
+      if (state.startupPhase && !state.firstPlayCommitted && wantsStartupAutoplay()) {
         safeSetVideoTime(0);
         safeSetAudioTime(0);
         state.startupZeroed = true;
@@ -2451,6 +2457,15 @@ document.addEventListener("DOMContentLoaded", () => {
         scheduleSync(0);
         return;
       }
+      // FIX: The startup kick sets positions to 00:00 before calling playTogether().
+      // If a browser-autoplay "play" event fires before the kick's setTimeout(0)
+      // callback runs, calling playTogether() here would commit playback from a
+      // non-zero position (firstSeekDone=true disables zeroing once primed).
+      // Yield back to the kick by only scheduling a sync instead.
+      if (coupledMode && state.startupKickInFlight && !state.startupKickDone) {
+        scheduleSync(0);
+        return;
+      }
       if (coupledMode && !audio.paused && state.audioEverStarted) {
         const vt = Number(video.currentTime());
         const at = Number(audio.currentTime);
@@ -2541,7 +2556,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       setFastSync(2000);
       if (coupledMode && state.intendedPlaying && audio.paused && !state.seeking && !state.syncing && !state.strictBufferHold && !shouldBlockNewAudioStart()) {
-        playTogether().catch(() => {});
+        // FIX: Same as video.on("play") — don't let a "playing" event trigger
+        // playTogether() before the startup kick has had a chance to zero the time.
+        if (state.startupKickInFlight && !state.startupKickDone) {
+          scheduleSync(0);
+        } else {
+          playTogether().catch(() => {});
+        }
       } else {
         scheduleSync(0);
       }
@@ -2571,6 +2592,13 @@ document.addEventListener("DOMContentLoaded", () => {
       updateMediaSessionPlaybackState();
       if (!state.startupPrimed) {
         maybePrimeStartup();
+        scheduleSync(0);
+        return;
+      }
+      // FIX: Same guard as video.on("play") — if the startup kick is already
+      // scheduled (startupKickInFlight=true, set before its setTimeout(0)), yield
+      // to it so it can zero the position before committing playback.
+      if (state.startupKickInFlight && !state.startupKickDone) {
         scheduleSync(0);
         return;
       }
@@ -3047,7 +3075,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
