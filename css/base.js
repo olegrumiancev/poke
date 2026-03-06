@@ -13,7 +13,9 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
  */ 
-document.addEventListener("DOMContentLoaded", () => {
+
+ 
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -2302,6 +2304,97 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     scheduleSync();
   }
+  function setupUserPauseIntentDetection() {
+    const root = video?.el?.() || videoEl || document;
+    let pendingTechTogglePausedState = null;
+    const getTargetEl = target => {
+      try { return target && target.nodeType === 1 ? target : null; } catch {}
+      return null;
+    };
+    const isPrimaryActivation = event => {
+      try {
+        if (event?.type === "pointerdown") {
+          if (event.isPrimary === false) return false;
+          if (event.pointerType === "mouse" && typeof event.button === "number" && event.button !== 0) return false;
+        } else if (event?.type === "mousedown") {
+          if (typeof event.button === "number" && event.button !== 0) return false;
+        }
+      } catch {}
+      return true;
+    };
+    const isPlayControlTarget = target => {
+      try {
+        const el = getTargetEl(target);
+        return !!el?.closest?.(".vjs-play-control, .vjs-big-play-button");
+      } catch {}
+      return false;
+    };
+    const isTechSurfaceTarget = target => {
+      try {
+        const el = getTargetEl(target);
+        if (!el) return false;
+        if (el.closest?.(".vjs-control-bar, .vjs-menu, .vjs-menu-content, .vjs-slider, .vjs-control")) return false;
+        return !!el.closest?.(".vjs-tech, video");
+      } catch {}
+      return false;
+    };
+    const onPressStart = event => {
+      if (!isPrimaryActivation(event)) return;
+      if (isPlayControlTarget(event.target)) {
+        pendingTechTogglePausedState = null;
+        if (getVideoPaused()) markUserPlayIntent();
+        else {
+          markUserPauseIntent();
+          clearPendingPlayResumesForPause();
+        }
+        return;
+      }
+      if (isTechSurfaceTarget(event.target)) {
+        pendingTechTogglePausedState = getVideoPaused();
+        return;
+      }
+      pendingTechTogglePausedState = null;
+    };
+    const onClick = event => {
+      if (isPlayControlTarget(event.target)) { pendingTechTogglePausedState = null; return; }
+      if (!isTechSurfaceTarget(event.target)) { pendingTechTogglePausedState = null; return; }
+      const wasPaused = pendingTechTogglePausedState;
+      pendingTechTogglePausedState = null;
+      if (typeof wasPaused !== "boolean") return;
+      requestAnimationFrame(() => {
+        const paused = getVideoPaused();
+        if (wasPaused && !paused) {
+          markUserPlayIntent(1200);
+        } else if (!wasPaused && paused) {
+          markUserPauseIntent(1200);
+          clearPendingPlayResumesForPause();
+        }
+      });
+    };
+    const onKeyDown = event => {
+      const code = event.code || event.key || "";
+      if (code === "Space" || code === "KeyK" || code === "MediaPlayPause") {
+        if (getVideoPaused()) markUserPlayIntent();
+        else {
+          markUserPauseIntent();
+          clearPendingPlayResumesForPause();
+        }
+      } else if (code === "MediaPause" || code === "MediaStop") {
+        markUserPauseIntent();
+        clearPendingPlayResumesForPause();
+      }
+    };
+    try {
+      if ("PointerEvent" in window) {
+        root.addEventListener("pointerdown", onPressStart, { capture: true, passive: true });
+      } else {
+        root.addEventListener("mousedown", onPressStart, { capture: true, passive: true });
+        root.addEventListener("touchstart", onPressStart, { capture: true, passive: true });
+      }
+    } catch {}
+    try { root.addEventListener("click", onClick, { capture: true, passive: true }); } catch {}
+    try { document.addEventListener("keydown", onKeyDown, true); } catch {}
+  }
   function setupMediaSession() {
     if (!("mediaSession" in navigator)) return;
     try {
@@ -3064,6 +3157,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   
+  setupUserPauseIntentDetection();
   setupMediaSession();
   bindCommonMediaEvents();
   setupVisibilityLifecycle();
@@ -3198,7 +3292,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
-
+   
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
