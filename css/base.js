@@ -12,9 +12,8 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  * Includes vtt.js <https://github.com/mozilla/vtt.js>
  * Available under Apache License Version 2.0
  * <https://github.com/mozilla/vtt.js/blob/main/LICENSE>
- */   
- 
-document.addEventListener("DOMContentLoaded", () => {
+ */    
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -501,6 +500,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.firstPlayCommitted = true;
     state.startupKickDone = true;
     state.startupPhase = false;
+    state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
     clearStartupAutoplayRetryTimer();
     markMediaAction("play");
     setFastSync(1800);
@@ -1075,8 +1075,6 @@ document.addEventListener("DOMContentLoaded", () => {
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
       
-      // Do not await the play promise before triggering the fade,
-      // guaranteeing volume immediately rises once it actually plays.
       if (!isAlreadyPlaying) {
           fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
       } else {
@@ -1707,7 +1705,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.firstPlayCommitted = true;
           clearStartupAutoplayRetryTimer();
           setTimeout(() => { state.startupPhase = false; }, 1200);
-          setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
+          state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         }
       }
       updateMediaSessionPlaybackState();
@@ -1733,7 +1731,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const vt = Number(video.currentTime());
     if (isFinite(vt)) {
       const at = Number(audio.currentTime);
-      if (Math.abs(at - vt) > 0.05) quietSeekAudio(vt);
+      if (Math.abs(at - vt) > 0.05) safeSetAudioTime(vt);
       state.seekAudioSyncTime = vt;
       state.seekAudioSyncPending = true;
       state.seekAudioSyncUntil = now() + SEEK_AUDIO_SYNC_DELAY_MS;
@@ -1802,7 +1800,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const vt2 = Number(video.currentTime());
     if (isFinite(vt2)) {
       const at2 = Number(audio.currentTime);
-      if (Math.abs(at2 - vt2) > 0.05) quietSeekAudio(vt2);
+      if (Math.abs(at2 - vt2) > 0.05) safeSetAudioTime(vt2);
     }
     state.seekCooldownUntil = now() + 1000;
     setFastSync(2600);
@@ -1932,7 +1930,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.firstPlayCommitted = true;
           setTimeout(() => { state.startupPhase = false; }, 1200);
         }
-        setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
       } finally {
         state.startupKickInFlight = false;
       }
@@ -2004,7 +2002,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.firstPlayCommitted = true;
           setTimeout(() => { state.startupPhase = false; }, 1200);
         }
-        setTimeout(() => { state.startupPlaySettled = true; }, STARTUP_SETTLE_MS);
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
       } finally {
         state.startupKickInFlight = false;
       }
@@ -2107,6 +2105,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         clearStartupAutoplayRetryTimer();
         setTimeout(() => { state.startupPhase = false; }, 1200);
       }
@@ -2457,7 +2456,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.pendingSeekTarget = newTime;
         state.seekWantedPlaying = state.intendedPlaying;
         video.currentTime(newTime);
-        if (coupledMode && audio) quietSeekAudio(newTime);
       });
       navigator.mediaSession.setActionHandler("seekbackward", d => {
         const dec = Number(d?.seekOffset) || 10;
@@ -2465,7 +2463,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.pendingSeekTarget = newTime;
         state.seekWantedPlaying = state.intendedPlaying;
         video.currentTime(newTime);
-        if (coupledMode && audio) quietSeekAudio(newTime);
       });
       navigator.mediaSession.setActionHandler("seekto", d => {
         if (!d || typeof d.seekTime !== "number") return;
@@ -2473,7 +2470,6 @@ document.addEventListener("DOMContentLoaded", () => {
         state.pendingSeekTarget = newTime;
         state.seekWantedPlaying = state.intendedPlaying;
         video.currentTime(newTime);
-        if (coupledMode && audio) quietSeekAudio(newTime);
       });
     } catch {}
   }
@@ -2512,6 +2508,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         clearStartupAutoplayRetryTimer();
         setTimeout(() => { state.startupPhase = false; }, 1200);
       }
@@ -2612,6 +2609,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         clearStartupAutoplayRetryTimer();
         setTimeout(() => { state.startupPhase = false; }, 1200);
       }
@@ -2665,6 +2663,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         clearStartupAutoplayRetryTimer();
         setTimeout(() => { state.startupPhase = false; }, 1200);
       }
@@ -2811,6 +2810,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted) {
          state.firstPlayCommitted = true;
          state.startupKickDone = true;
+         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
          clearStartupAutoplayRetryTimer();
          setTimeout(() => { state.startupPhase = false; }, 1200);
       }
@@ -2821,17 +2821,23 @@ document.addEventListener("DOMContentLoaded", () => {
       state.lastKnownGoodVT = seekTime;
       state.lastKnownGoodVTts = now();
       state.seekCooldownUntil = now() + 2000;
-      if (isFinite(seekTime) && coupledMode && audio) {
-        const at = Number(audio.currentTime);
-        if (Math.abs(at - seekTime) > 0.05) {
-          squelchAudioEvents(400);
-          quietSeekAudio(seekTime);
+      
+      if (coupledMode && audio) {
+        squelchAudioEvents(400);
+        try { 
+          cancelActiveFade();
+          audio.volume = 0; 
+          if (!audio.paused) audio.pause(); 
+        } catch {}
+        if (isFinite(seekTime)) {
+          safeSetAudioTime(seekTime);
         }
       }
+      
       if (!state.intendedPlaying) {
         execProgrammaticVideoPause();
-        execProgrammaticAudioPause(500);
       }
+      
       state.driftStableFrames = 0;
       state.lastDrift = 0;
       setFastSync(2600);
@@ -2843,11 +2849,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.lastKnownGoodVT = newTime;
       state.lastKnownGoodVTts = now();
       if (coupledMode && audio) {
-        const at = Number(audio.currentTime);
-        if (Math.abs(at - newTime) > 0.05) {
-          squelchAudioEvents(300);
-          quietSeekAudio(newTime);
-        }
+        squelchAudioEvents(300);
+        safeSetAudioTime(newTime);
       }
       state.driftStableFrames = 0;
       state.lastDrift = 0;
@@ -2871,7 +2874,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.lastKnownGoodVT = 0;
       state.lastKnownGoodVTts = now();
       safeSetCT(videoEl, startAt);
-      if (coupledMode) await softAlignAudioTo(startAt);
+      if (coupledMode) safeSetAudioTime(startAt);
       state.intendedPlaying = true;
       state.bufferHoldIntendedPlaying = true;
       markMediaAction("play");
@@ -3161,6 +3164,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!state.firstPlayCommitted && !state.startupKickInFlight) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
+          state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
           clearStartupAutoplayRetryTimer();
           setTimeout(() => { state.startupPhase = false; }, 1200);
         }
