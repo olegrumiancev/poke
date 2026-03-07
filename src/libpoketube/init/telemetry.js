@@ -166,49 +166,49 @@ module.exports = function (app, config, renderTemplate) {
     :visited { color: #00c0ff; }
     a { color: #0ab7f0; }
     .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
-    p {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    p{
+      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
       line-height: 1.6;
     }
-    ul {
-      font-family: "poketube flex";
-      font-weight: 500;
-      font-stretch: extra-expanded;
-      padding-left: 1.2rem;
+    ul{
+      font-family:"poketube flex";
+      font-weight:500;
+      font-stretch:extra-expanded;
+      padding-left:1.2rem;
     }
-    h2 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 700;
-      font-stretch: extra-expanded;
-      margin-top: 1.5rem;
-      margin-bottom: .3rem;
+    h2{
+      font-family:"poketube flex",sans-serif;
+      font-weight:700;
+      font-stretch:extra-expanded;
+      margin-top:1.5rem;
+      margin-bottom:.3rem;
     }
-    h1 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 1000;
-      font-stretch: ultra-expanded;
-      margin-top: 0;
-      margin-bottom: .3rem;
+    h1{
+      font-family:"poketube flex",sans-serif;
+      font-weight:1000;
+      font-stretch:ultra-expanded;
+      margin-top:0;
+      margin-bottom:.3rem;
     }
-    .note { color: #bbb; font-size: .95rem; }
-    .btn {
-      display: inline-block;
-      margin-top: 1rem;
-      padding: .5rem 1rem;
-      border-radius: 999px;
-      border: 1px solid #2a2a35;
-      background: #252432;
-      color: #fff;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-      text-decoration: none;
-      font-size: .95rem;
+    .note{color:#bbb;font-size:.95rem;}
+    .btn{
+      display:inline-block;
+      margin-top:1rem;
+      padding:.5rem 1rem;
+      border-radius:999px;
+      border:1px solid #2a2a35;
+      background:#252432;
+      color:#fff;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      text-decoration:none;
+      font-size:.95rem;
     }
-    .btn:hover {
-      background: #2f2e3d;
+    .btn:hover{
+      background:#2f2e3d;
     }
-    .status {
-      margin-top: .5rem;
-      font-size: .95rem;
+    .status{
+      margin-top:.5rem;
+      font-size:.95rem;
     }
   </style>
 </head>
@@ -328,402 +328,478 @@ module.exports = function (app, config, renderTemplate) {
       font-stretch: 1% 800%;
       font-display: swap;
     }
-    :root { color-scheme: dark; }
-    body { color: #fff; }
-    body {
-      background: #1c1b22;
-      margin: 0;
+    :root{color-scheme:dark}
+    body{color:#fff}
+    body{
+      background:#1c1b22;
+      margin:0;
     }
-    img.logo {
-      float: right;
-      margin: .3em 0 1em 2em;
+    img.logo{
+      float:right;
+      margin:.3em 0 1em 2em;
     }
-    :visited { color: #00c0ff; }
-    a { color: #0ab7f0; }
-    .app { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    p {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-      line-height: 1.6;
+    :visited{color:#00c0ff}
+    a{color:#0ab7f0}
+    .app{
+      max-width:1100px;
+      margin:0 auto;
+      padding:24px;
     }
-    ul {
-      font-family: "poketube flex";
-      font-weight: 500;
-      font-stretch: extra-expanded;
-      padding-left: 1.2rem;
+    p{
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      line-height:1.6;
     }
-    h2 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 700;
-      font-stretch: extra-expanded;
-      margin-top: 1.5rem;
-      margin-bottom: .3rem;
+    h2{
+      font-family:"poketube flex",sans-serif;
+      font-weight:700;
+      font-stretch:extra-expanded;
+      margin-top:0;
+      margin-bottom:.4rem;
     }
-    h1 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 1000;
-      font-stretch: ultra-expanded;
-      margin-top: 0;
-      margin-bottom: .3rem;
+    h1{
+      font-family:"poketube flex",sans-serif;
+      font-weight:1000;
+      font-stretch:ultra-expanded;
+      margin-top:0;
+      margin-bottom:.35rem;
     }
-    .toc { margin: 1rem 0 2rem; }
-    .toc li { margin: .25rem 0; }
-    pre.license {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      background: #111;
-      padding: 14px 16px;
-      border-radius: 12px;
-      overflow-x: auto;
-      line-height: 1.45;
-      border: 1px solid #222;
+    h3{
+      font-family:"poketube flex",sans-serif;
+      font-weight:700;
+      font-stretch:extra-expanded;
+      margin:0 0 .75rem 0;
+      font-size:1.02rem;
     }
-    hr { border: 0; border-top: 1px solid #222; margin: 28px 0; }
-    .note { color: #bbb; font-size: .95rem; }
-    .muted { opacity: .8; font-size: .95rem; }
-
-    .user-count-line {
-      margin-top: .55rem;
-      color: #bbb;
-      font-size: .95rem;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    hr{
+      border:0;
+      border-top:1px solid #222;
+      margin:28px 0;
+    }
+    .note{
+      color:#bbb;
+      font-size:.95rem;
     }
 
-    .explain-box {
-      margin-top: 1rem;
-      margin-bottom: 1.25rem;
-      background: #252432;
-      border: 1px solid #2a2a35;
-      border-radius: 16px;
-      padding: 16px;
+    .hero{
+      display:grid;
+      grid-template-columns:1.5fr .9fr;
+      gap:16px;
+      align-items:start;
+      margin-bottom:18px;
     }
-    .explain-box p {
-      margin: 0 0 .9rem 0;
+    .hero-main,
+    .hero-side{
+      background:#252432;
+      border:1px solid #2a2a35;
+      border-radius:18px;
+      padding:18px;
     }
-    .explain-box p:last-child {
-      margin-bottom: 0;
+    .hero-main p,
+    .hero-side p{
+      margin:.4rem 0 0 0;
     }
-
-    .breakdown-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-      margin-top: 1rem;
-      margin-bottom: 1.25rem;
+    .mini-stat{
+      display:flex;
+      flex-direction:column;
+      gap:.15rem;
     }
-    .breakdown-card {
-      background: #252432;
-      border: 1px solid #2a2a35;
-      border-radius: 16px;
-      padding: 16px;
+    .mini-stat-label{
+      color:#bbb;
+      font-size:.92rem;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
     }
-    .breakdown-card h3 {
-      margin: 0 0 .85rem 0;
-      font-family: "poketube flex", sans-serif;
-      font-weight: 700;
-      font-stretch: extra-expanded;
-      font-size: 1.05rem;
-    }
-    .breakdown-empty {
-      color: #bbb;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    }
-    .breakdown-list {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .breakdown-item {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    }
-    .breakdown-topline {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: baseline;
-      margin-bottom: .4rem;
-    }
-    .breakdown-label {
-      font-weight: 600;
-      min-width: 0;
-      word-break: break-word;
-    }
-    .breakdown-count {
-      color: #bbb;
-      white-space: nowrap;
-      font-size: .92rem;
-    }
-    .breakdown-bar-wrap {
-      width: 100%;
-      height: 12px;
-      background: #17161d;
-      border: 1px solid #2a2a35;
-      border-radius: 999px;
-      overflow: hidden;
-    }
-    .breakdown-bar {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, #0ab7f0 0%, #52d3ff 100%);
-      border-radius: 999px;
-    }
-    .breakdown-sub {
-      margin-top: .35rem;
-      color: #bbb;
-      font-size: .9rem;
-      line-height: 1.45;
+    .mini-stat-value{
+      font-size:1.55rem;
+      font-weight:700;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
     }
 
-    .controls {
-      display: flex;
-      align-items: center;
-      gap: .75rem;
-      flex-wrap: wrap;
-      margin: .75rem 0 1rem 0;
+    .segmented{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin:0 0 18px 0;
     }
-    .controls label {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    .seg-btn{
+      background:#252432;
+      color:#fff;
+      border:1px solid #2a2a35;
+      border-radius:999px;
+      padding:.58rem .9rem;
+      font:inherit;
+      cursor:pointer;
     }
-    .controls select {
-      background: #252432;
-      color: #fff;
-      border: 1px solid #2a2a35;
-      border-radius: 10px;
-      padding: .45rem .7rem;
-      font: inherit;
-    }
-    .limit-warning {
-      width: 100%;
-      color: #bbb;
-      font-size: .95rem;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    .seg-btn.active{
+      border-color:#0ab7f0;
+      box-shadow:inset 0 0 0 1px #0ab7f0;
+      background:#1f1e29;
     }
 
-    .recent-grid {
-      list-style: none;
-      padding-left: 0;
-      margin: 0 0 1.25rem 0;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
+    .panel{
+      display:none;
     }
-    .recent-card {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      background: #252432;
-      border: 1px solid #2a2a35;
-      border-radius: 16px;
-      padding: 12px;
-      min-width: 0;
+    .panel.active{
+      display:block;
     }
 
-    .video-grid {
-      list-style: none;
-      padding-left: 0;
-      margin: 0;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-    }
-    .video-card {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      background: #252432;
-      border: 1px solid #2a2a35;
-      border-radius: 16px;
-      padding: 12px;
-      min-width: 0;
-    }
-    .video-thumb-link {
-      display: block;
-      width: 100%;
-    }
-    .video-thumb {
-      display: block;
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      object-fit: cover;
-      border-radius: 12px;
-      background: #111;
-    }
-    .video-meta {
-      min-width: 0;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    }
-    .video-title {
-      display: inline-block;
-      font-weight: 700;
-      line-height: 1.35;
-      text-decoration: none;
-      word-break: break-word;
-    }
-    .video-id {
-      color: #bbb;
-      font-size: .9rem;
-      margin-top: .4rem;
-      word-break: break-all;
-    }
-    .video-views {
-      margin-top: .5rem;
-      font-size: .95rem;
-      color: #fff;
-    }
-    .video-note {
-      margin-top: .45rem;
-      color: #bbb;
-      font-size: .9rem;
-      line-height: 1.45;
-    }
-    .video-rank {
-      margin-top: .45rem;
-      color: #bbb;
-      font-size: .9rem;
+    .section-card{
+      background:#252432;
+      border:1px solid #2a2a35;
+      border-radius:18px;
+      padding:18px;
+      margin-bottom:16px;
     }
 
-    .pagination-wrap {
-      margin-top: 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: .75rem;
-    }
-    .pagination-info {
-      color: #bbb;
-      font-size: .95rem;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    }
-    .pagination-controls {
-      display: flex;
-      align-items: center;
-      gap: .5rem;
-      flex-wrap: wrap;
-    }
-    .page-btn {
-      background: #252432;
-      color: #fff;
-      border: 1px solid #2a2a35;
-      border-radius: 10px;
-      padding: .5rem .8rem;
-      font: inherit;
-      cursor: pointer;
-    }
-    .page-btn[disabled] {
-      opacity: .5;
-      cursor: not-allowed;
-    }
-    .page-number {
-      min-width: 2.2rem;
-      text-align: center;
-      background: #1f1e29;
-    }
-    .page-number.active {
-      border-color: #0ab7f0;
-      box-shadow: inset 0 0 0 1px #0ab7f0;
+    .overview-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:16px;
     }
 
-    @media (max-width: 1000px) {
-      .video-grid,
-      .recent-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+    .breakdown-empty{
+      color:#bbb;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .breakdown-list{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .breakdown-item{
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .breakdown-topline{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:baseline;
+      margin-bottom:.4rem;
+    }
+    .breakdown-label{
+      font-weight:600;
+      min-width:0;
+      word-break:break-word;
+    }
+    .breakdown-count{
+      color:#bbb;
+      white-space:nowrap;
+      font-size:.92rem;
+    }
+    .breakdown-bar-wrap{
+      width:100%;
+      height:12px;
+      background:#17161d;
+      border:1px solid #2a2a35;
+      border-radius:999px;
+      overflow:hidden;
+    }
+    .breakdown-bar{
+      height:100%;
+      width:0%;
+      background:linear-gradient(90deg,#0ab7f0 0%,#52d3ff 100%);
+      border-radius:999px;
+    }
+    .breakdown-sub{
+      margin-top:.35rem;
+      color:#bbb;
+      font-size:.9rem;
+      line-height:1.45;
+    }
+
+    .controls{
+      display:flex;
+      align-items:center;
+      gap:.75rem;
+      flex-wrap:wrap;
+      margin:.25rem 0 1rem 0;
+    }
+    .controls label{
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .controls select{
+      background:#252432;
+      color:#fff;
+      border:1px solid #2a2a35;
+      border-radius:10px;
+      padding:.45rem .7rem;
+      font:inherit;
+    }
+    .limit-warning{
+      width:100%;
+      color:#bbb;
+      font-size:.95rem;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      margin-top:-.15rem;
+    }
+
+    .compact-head{
+      display:flex;
+      justify-content:space-between;
+      gap:16px;
+      align-items:flex-start;
+      flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+
+    .recent-grid,
+    .video-grid{
+      list-style:none;
+      padding-left:0;
+      margin:0;
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:14px;
+    }
+
+    .recent-card,
+    .video-card{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      background:#252432;
+      border:1px solid #2a2a35;
+      border-radius:16px;
+      padding:12px;
+      min-width:0;
+    }
+
+    .video-thumb-link{
+      display:block;
+      width:100%;
+    }
+    .video-thumb{
+      display:block;
+      width:100%;
+      aspect-ratio:16 / 9;
+      object-fit:cover;
+      border-radius:12px;
+      background:#111;
+    }
+    .video-meta{
+      min-width:0;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .video-title{
+      display:inline-block;
+      font-weight:700;
+      line-height:1.35;
+      text-decoration:none;
+      word-break:break-word;
+    }
+    .video-id{
+      color:#bbb;
+      font-size:.9rem;
+      margin-top:.4rem;
+      word-break:break-all;
+    }
+    .video-views{
+      margin-top:.5rem;
+      font-size:.95rem;
+      color:#fff;
+    }
+    .video-note{
+      margin-top:.45rem;
+      color:#bbb;
+      font-size:.9rem;
+      line-height:1.45;
+    }
+    .video-rank{
+      margin-top:.45rem;
+      color:#bbb;
+      font-size:.9rem;
+    }
+
+    .pagination-wrap{
+      margin-top:1rem;
+      display:flex;
+      flex-direction:column;
+      gap:.75rem;
+    }
+    .pagination-info{
+      color:#bbb;
+      font-size:.95rem;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .pagination-controls{
+      display:flex;
+      align-items:center;
+      gap:.5rem;
+      flex-wrap:wrap;
+    }
+    .page-btn{
+      background:#252432;
+      color:#fff;
+      border:1px solid #2a2a35;
+      border-radius:10px;
+      padding:.5rem .8rem;
+      font:inherit;
+      cursor:pointer;
+    }
+    .page-btn[disabled]{
+      opacity:.5;
+      cursor:not-allowed;
+    }
+    .page-number{
+      min-width:2.2rem;
+      text-align:center;
+      background:#1f1e29;
+    }
+    .page-number.active{
+      border-color:#0ab7f0;
+      box-shadow:inset 0 0 0 1px #0ab7f0;
+    }
+
+    .api-lines code{
+      white-space:nowrap;
+    }
+
+    @media (max-width: 1000px){
+      .recent-grid,
+      .video-grid{
+        grid-template-columns:repeat(3,minmax(0,1fr));
       }
     }
 
-    @media (max-width: 860px) {
-      .breakdown-grid {
-        grid-template-columns: 1fr;
+    @media (max-width: 900px){
+      .hero{
+        grid-template-columns:1fr;
       }
-      .video-grid,
-      .recent-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      .overview-grid{
+        grid-template-columns:1fr;
       }
     }
 
-    @media (max-width: 640px) {
-      .video-grid,
-      .recent-grid {
-        grid-template-columns: 1fr;
+    @media (max-width: 860px){
+      .recent-grid,
+      .video-grid{
+        grid-template-columns:repeat(2,minmax(0,1fr));
       }
-      .breakdown-topline {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: .2rem;
+    }
+
+    @media (max-width: 640px){
+      .recent-grid,
+      .video-grid{
+        grid-template-columns:1fr;
+      }
+      .breakdown-topline{
+        flex-direction:column;
+        align-items:flex-start;
+        gap:.2rem;
       }
     }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>Anonymous stats</h1>
-    <p class="note">
-      These stats are aggregated locally on this Poke instance. For what is collected (and what is not),
-      see <a href="/policies/privacy#stats">privacy policy</a>.
-      <br>
-      user id count: <span id="user-id-count">Loading…</span>
-    </p>
-
-    <div class="explain-box">
-      <p><strong>Important:</strong> the numbers shown on this page are <strong>not</strong> the public video view counts from YouTube or any other upstream site.</p>
-      <p>They only show views recorded on this specific Poke instance.</p>
-      <p>If a video says <strong>27 local Poke instance views</strong>, that means this instance recorded 27 anonymous views for it here.</p>
-    </div>
-
-    <div class="breakdown-grid">
-      <div class="breakdown-card">
-        <h3>Operating systems</h3>
-        <div id="os-breakdown" class="breakdown-list"></div>
+    <div class="hero">
+      <div class="hero-main">
+        <h1>Anonymous stats</h1>
+        <p class="note">
+          These stats are aggregated locally on this Poke instance. For what is collected (and what is not),
+          see <a href="/policies/privacy#stats">privacy policy</a>.
+        </p>
+        <p class="note" style="margin-top:.7rem;">
+          <strong>Important:</strong> these are local Poke instance numbers, not public YouTube view counts.
+        </p>
       </div>
 
-      <div class="breakdown-card">
-        <h3>Browsers</h3>
-        <div id="browser-breakdown" class="breakdown-list"></div>
+      <div class="hero-side">
+        <div class="mini-stat">
+          <div class="mini-stat-label">user id count</div>
+          <div id="user-id-count" class="mini-stat-value">Loading…</div>
+        </div>
       </div>
     </div>
 
-    <h2>Recently viewed video IDs</h2>
-    <p class="note">
-      These are the most recently viewed video IDs recorded by this Poke instance.
-    </p>
+    <div class="segmented">
+      <button type="button" class="seg-btn active" data-panel="overview-panel">Overview</button>
+      <button type="button" class="seg-btn" data-panel="recent-panel">Recent</button>
+      <button type="button" class="seg-btn" data-panel="top-panel">Top videos</button>
+      <button type="button" class="seg-btn" data-panel="api-panel">API</button>
+    </div>
 
-    <ul id="recent-videos" class="recent-grid"></ul>
-
-    <h2>Top videos (local-only)</h2>
-    <p class="note">
-      This section ranks videos by <strong>local Poke instance views</strong> only.
-      It does <strong>not</strong> show YouTube public view totals.
-    </p>
-
-    <div class="controls">
-      <label for="video-limit">Show top videos:</label>
-      <select id="video-limit">
-        <option value="8">8</option>
-        <option value="20">20</option>
-        <option value="100" selected>100</option>
-        <option value="200">200</option>
-        <option value="500">500</option>
-        <option value="1000">1000</option>
-        <option value="3000">3000</option>
-      </select>
-      <div id="limit-warning" class="limit-warning" style="display:none;">
-        Warning: this mode may have a lot of pages.
+    <section id="overview-panel" class="panel active">
+      <div class="section-card">
+        <h2>How to read this page</h2>
+        <p class="note" style="margin:0;">
+          If a video shows <strong>27 local Poke instance views</strong>, it means this Poke instance recorded 27 anonymous views for that video here.
+          It does not reflect the public upstream platform counter.
+        </p>
       </div>
-    </div>
 
-    <ul id="top-videos" class="video-grid"></ul>
+      <div class="overview-grid">
+        <div class="section-card">
+          <h3>Operating systems</h3>
+          <div id="os-breakdown" class="breakdown-list"></div>
+        </div>
 
-    <div id="pagination-wrap" class="pagination-wrap" style="display:none;">
-      <div id="pagination-info" class="pagination-info"></div>
-      <div id="pagination-controls" class="pagination-controls"></div>
-    </div>
+        <div class="section-card">
+          <h3>Browsers</h3>
+          <div id="browser-breakdown" class="breakdown-list"></div>
+        </div>
+      </div>
+    </section>
 
-    <hr>
+    <section id="recent-panel" class="panel">
+      <div class="section-card">
+        <div class="compact-head">
+          <div>
+            <h2>Recently viewed video IDs</h2>
+            <p class="note" style="margin:0;">The most recently viewed IDs recorded by this Poke instance.</p>
+          </div>
+        </div>
+        <ul id="recent-videos" class="recent-grid"></ul>
+      </div>
+    </section>
 
-    <h2>API usage</h2>
-    <p class="note">
-      • Human view (this page): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
-      • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
-      • JSON default limit: <code><a href="/api/stats?view=json">/api/stats?view=json</a></code> (8 videos)<br>
-      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=3000">/api/stats?view=json&limit=3000</a></code><br>
-      • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
-    </p>
+    <section id="top-panel" class="panel">
+      <div class="section-card">
+        <div class="compact-head">
+          <div>
+            <h2>Top videos (local-only)</h2>
+            <p class="note" style="margin:0;">
+              Ranked by <strong>local Poke instance views</strong> only, not public YouTube totals.
+            </p>
+          </div>
+        </div>
+
+        <div class="controls">
+          <label for="video-limit">Show top videos:</label>
+          <select id="video-limit">
+            <option value="8">8</option>
+            <option value="20">20</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="3000">3000</option>
+          </select>
+          <div id="limit-warning" class="limit-warning" style="display:none;">
+            Warning: this mode may have a lot of pages.
+          </div>
+        </div>
+
+        <ul id="top-videos" class="video-grid"></ul>
+
+        <div id="pagination-wrap" class="pagination-wrap" style="display:none;">
+          <div id="pagination-info" class="pagination-info"></div>
+          <div id="pagination-controls" class="pagination-controls"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="api-panel" class="panel">
+      <div class="section-card api-lines">
+        <h2>API usage</h2>
+        <p class="note">
+          • Human view (this page): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
+          • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
+          • JSON default limit: <code><a href="/api/stats?view=json">/api/stats?view=json</a></code> (8 videos)<br>
+          • JSON with custom limit: <code><a href="/api/stats?view=json&limit=3000">/api/stats?view=json&limit=3000</a></code><br>
+          • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
+        </p>
+      </div>
+    </section>
   </div>
 
   <script>
@@ -741,10 +817,28 @@ module.exports = function (app, config, renderTemplate) {
     const browserBreakdown = document.getElementById("browser-breakdown");
     const userIdCount = document.getElementById("user-id-count");
     const limitWarning = document.getElementById("limit-warning");
+    const segButtons = document.querySelectorAll(".seg-btn");
+    const panels = document.querySelectorAll(".panel");
 
     var allVideos = {};
     var recentVideoIds = [];
     var currentPage = 1;
+
+    function setActivePanel(panelId) {
+      panels.forEach(function (panel) {
+        panel.classList.toggle("active", panel.id === panelId);
+      });
+
+      segButtons.forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-panel") === panelId);
+      });
+    }
+
+    segButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setActivePanel(btn.getAttribute("data-panel"));
+      });
+    });
 
     function getThumbnailUrl(videoId) {
       return "https://i.ytimg.com/vi/" + encodeURIComponent(videoId) + "/hqdefault.jpg";
@@ -1012,11 +1106,11 @@ module.exports = function (app, config, renderTemplate) {
           "Recently viewed on this Poke instance. Position #" + (index + 1) + " in the recent list.",
           "Thumbnail for recent video " + videoId,
           "/watch?v=" + encodeURIComponent(videoId)
-        )
+        );
 
-        card.className = "recent-card"
-        recentVideos.appendChild(card)
-      })
+        card.className = "recent-card";
+        recentVideos.appendChild(card);
+      });
     }
 
     function renderTopVideos() {
@@ -1191,57 +1285,54 @@ module.exports = function (app, config, renderTemplate) {
       font-stretch: 1% 800%;
       font-display: swap;
     }
-    :root { color-scheme: dark; }
-    body { color: #fff; }
-    body {
-      background: #1c1b22;
-      margin: 0;
+    :root{color-scheme:dark}
+    body{color:#fff}
+    body{
+      background:#1c1b22;
+      margin:0;
     }
-    img {
-      float: right;
-      margin: .3em 0 1em 2em;
+    img{
+      float:right;
+      margin:.3em 0 1em 2em;
     }
-    :visited { color: #00c0ff; }
-    a { color: #0ab7f0; }
-    .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
-    p {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-      line-height: 1.6;
+    :visited{color:#00c0ff}
+    a{color:#0ab7f0}
+    .app{
+      max-width:1000px;
+      margin:0 auto;
+      padding:24px;
     }
-    ul {
-      font-family: "poketube flex";
-      font-weight: 500;
-      font-stretch: extra-expanded;
-      padding-left: 1.2rem;
+    p{
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      line-height:1.6;
     }
-    h2 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 700;
-      font-stretch: extra-expanded;
-      margin-top: 1.5rem;
-      margin-bottom: .3rem;
+    ul{
+      font-family:"poketube flex";
+      font-weight:500;
+      font-stretch:extra-expanded;
+      padding-left:1.2rem;
     }
-    h1 {
-      font-family: "poketube flex", sans-serif;
-      font-weight: 1000;
-      font-stretch: ultra-expanded;
-      margin-top: 0;
-      margin-bottom: .3rem;
+    h2{
+      font-family:"poketube flex",sans-serif;
+      font-weight:700;
+      font-stretch:extra-expanded;
+      margin-top:1.5rem;
+      margin-bottom:.3rem;
     }
-    .toc { margin: 1rem 0 2rem; }
-    .toc li { margin: .25rem 0; }
-    pre.license {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      background: #111;
-      padding: 14px 16px;
-      border-radius: 12px;
-      overflow-x: auto;
-      line-height: 1.45;
-      border: 1px solid #222;
+    h1{
+      font-family:"poketube flex",sans-serif;
+      font-weight:1000;
+      font-stretch:ultra-expanded;
+      margin-top:0;
+      margin-bottom:.3rem;
     }
-    hr { border: 0; border-top: 1px solid #222; margin: 28px 0; }
-    .note { color: #bbb; font-size: .95rem; }
-    .muted { opacity: .8; font-size: .95rem; }
+    hr{
+      border:0;
+      border-top:1px solid #222;
+      margin:28px 0;
+    }
+    .note{color:#bbb;font-size:.95rem;}
+    .muted{opacity:.8;font-size:.95rem;}
   </style>
 </head>
 <body>
