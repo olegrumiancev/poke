@@ -1,13 +1,15 @@
+//  At Poke, we do not collect or share any personal information. That's our privacy promise in a nutshell. To improve Poke we use a completely anonymous, local-only way to figure out how the site is being used. 
+//Any anonymous stats recorded by this instance come from the /api/stats system. You can read exactly what is measured (and what is not) in our privacy policy.
+
+
 const fs = require("fs")
 const path = require("path")
 
 const telemetryConfig = { telemetry: true }
 
-// Define file paths
-const statsFile = path.join(__dirname, "stats.json")
+ const statsFile = path.join(__dirname, "stats.json")
 const statsFileV2 = path.join(__dirname, "stats-v2.json")
 
-// Helper for empty structure
 const getEmptyStats = () => ({
   videos: {},
   browsers: {},
@@ -34,8 +36,7 @@ function parseUA(ua) {
   return { browser, os }
 }
 
-// Helper: Safely read a JSON file, returning null if missing or corrupt
-function safeRead(filePath) {
+ function safeRead(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null
     return JSON.parse(fs.readFileSync(filePath, "utf8"))
