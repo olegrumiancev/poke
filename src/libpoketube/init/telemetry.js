@@ -373,6 +373,76 @@ module.exports = function (app, config, renderTemplate) {
       margin-bottom: 0;
     }
 
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .breakdown-card {
+      background: #252432;
+      border: 1px solid #2a2a35;
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .breakdown-card h3 {
+      margin: 0 0 .85rem 0;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 700;
+      font-stretch: extra-expanded;
+      font-size: 1.05rem;
+    }
+    .breakdown-empty {
+      color: #bbb;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    }
+    .breakdown-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .breakdown-item {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    }
+    .breakdown-topline {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin-bottom: .4rem;
+    }
+    .breakdown-label {
+      font-weight: 600;
+      min-width: 0;
+      word-break: break-word;
+    }
+    .breakdown-count {
+      color: #bbb;
+      white-space: nowrap;
+      font-size: .92rem;
+    }
+    .breakdown-bar-wrap {
+      width: 100%;
+      height: 12px;
+      background: #17161d;
+      border: 1px solid #2a2a35;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .breakdown-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #0ab7f0 0%, #52d3ff 100%);
+      border-radius: 999px;
+    }
+    .breakdown-sub {
+      margin-top: .35rem;
+      color: #bbb;
+      font-size: .9rem;
+      line-height: 1.45;
+    }
+
     .controls {
       display: flex;
       align-items: center;
@@ -492,9 +562,20 @@ module.exports = function (app, config, renderTemplate) {
       box-shadow: inset 0 0 0 1px #0ab7f0;
     }
 
+    @media (max-width: 860px) {
+      .breakdown-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     @media (max-width: 640px) {
       .video-card {
         grid-template-columns: 1fr;
+      }
+      .breakdown-topline {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: .2rem;
       }
     }
   </style>
@@ -511,13 +592,24 @@ module.exports = function (app, config, renderTemplate) {
       <p><strong>Important:</strong> the numbers shown on this page are <strong>not</strong> the public video view counts from YouTube or any other upstream site.</p>
       <p>They only represent how many times a video was viewed <strong>through this specific Poke instance</strong>, based on the local anonymous stats system used here.</p>
       <p>So if a video card says <strong>27 local Poke instance views</strong>, that means this Poke server recorded 27 anonymous view events for that video on this instance only. It does <strong>not</strong> mean the video has 27 total platform views, and it does <strong>not</strong> reflect the public view counter shown on the original video platform.</p>
-      <p>These numbers are useful for understanding which videos are popular <strong>inside this instance</strong>. They are basically an instance-local popularity signal, not a global audience metric.</p>
-      <p>In other words: this page measures <strong>traffic on Poke</strong>, not <strong>traffic on YouTube</strong>. Please do not read these counts as the real public video view totals.</p>
-    </div>
+      <p>These numbers are useful for understanding which videos are popular <strong>inside this instance</strong>.  
+     </div>
 
     <h2>Current anonymous stats</h2>
     <p id="stats-note" class="note">Loading…</p>
     <ul id="stats-list" class="stats-list"></ul>
+
+    <div class="breakdown-grid">
+      <div class="breakdown-card">
+        <h3>Operating systems</h3>
+        <div id="os-breakdown" class="breakdown-list"></div>
+      </div>
+
+      <div class="breakdown-card">
+        <h3>Browsers</h3>
+        <div id="browser-breakdown" class="breakdown-list"></div>
+      </div>
+    </div>
 
     <h2>Top videos (local-only)</h2>
     <p class="note">
@@ -568,6 +660,8 @@ module.exports = function (app, config, renderTemplate) {
     const paginationWrap = document.getElementById("pagination-wrap");
     const paginationInfo = document.getElementById("pagination-info");
     const paginationControls = document.getElementById("pagination-controls");
+    const osBreakdown = document.getElementById("os-breakdown");
+    const browserBreakdown = document.getElementById("browser-breakdown");
 
     var allVideos = {};
     var currentPage = 1;
@@ -668,6 +762,98 @@ module.exports = function (app, config, renderTemplate) {
       );
     }
 
+    function formatPercent(part, total) {
+      if (!total) return "0.00";
+      return ((part / total) * 100).toFixed(2);
+    }
+
+    function sumValues(obj) {
+      return Object.values(obj || {}).reduce(function (sum, value) {
+        return sum + value;
+      }, 0)
+    }
+
+    function humanizeOsName(name) {
+      if (name === "windows") return "Windows"
+      if (name === "android") return "Android"
+      if (name === "unknown") return "Unknown"
+      if (name === "macos") return "macOS"
+      if (name === "gnu-linux") return "GNU/Linux"
+      if (name === "ios") return "iOS"
+      return name
+    }
+
+    function humanizeBrowserName(name) {
+      if (name === "firefox") return "Firefox"
+      if (name === "chrome") return "Chromium browser"
+      if (name === "safari") return "Safari"
+      if (name === "edge") return "Edge"
+      if (name === "unknown") return "Unknown"
+      return name
+    }
+
+    function renderBreakdown(targetEl, data, kind) {
+      targetEl.innerHTML = "";
+
+      var entries = Object.entries(data || {}).sort(function (a, b) {
+        return b[1] - a[1];
+      });
+
+      if (entries.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "breakdown-empty";
+        empty.textContent = "No data recorded yet.";
+        targetEl.appendChild(empty);
+        return;
+      }
+
+      var total = sumValues(data);
+
+      entries.forEach(function (entry) {
+        var key = entry[0];
+        var count = entry[1];
+        var percent = formatPercent(count, total);
+        var label = kind === "os" ? humanizeOsName(key) : humanizeBrowserName(key);
+
+        var item = document.createElement("div");
+        item.className = "breakdown-item";
+
+        var topLine = document.createElement("div");
+        topLine.className = "breakdown-topline";
+
+        var labelEl = document.createElement("div");
+        labelEl.className = "breakdown-label";
+        labelEl.textContent = label + " — " + percent + "% of total " + (kind === "os" ? "OS detections" : "browser detections");
+
+        var countEl = document.createElement("div");
+        countEl.className = "breakdown-count";
+        countEl.textContent = count + " detections";
+
+        var barWrap = document.createElement("div");
+        barWrap.className = "breakdown-bar-wrap";
+
+        var bar = document.createElement("div");
+        bar.className = "breakdown-bar";
+        bar.style.width = percent + "%";
+
+        var sub = document.createElement("div");
+        sub.className = "breakdown-sub";
+        sub.textContent =
+          label + " was detected " + count + " times out of " + total + " total " +
+          (kind === "os" ? "OS detections" : "browser detections") + " on this Poke instance.";
+
+        barWrap.appendChild(bar);
+        topLine.appendChild(labelEl);
+        topLine.appendChild(countEl);
+
+        item.appendChild(topLine);
+        item.appendChild(barWrap);
+        item.appendChild(sub);
+
+        targetEl.appendChild(item);
+      });
+    }
+
     function renderTopVideos() {
       var entries = getLimitedEntries();
       var totalPages = getTotalPages(entries);
@@ -758,6 +944,8 @@ module.exports = function (app, config, renderTemplate) {
       topVideos.innerHTML = "<li>No data (telemetry disabled).</li>";
       videoLimitSelect.disabled = true;
       paginationWrap.style.display = "none";
+      osBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
+      browserBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
     } else {
       var optedOut = false;
       try {
@@ -771,6 +959,8 @@ module.exports = function (app, config, renderTemplate) {
         topVideos.innerHTML = "<li>Opt-out active (no stats loaded).</li>";
         videoLimitSelect.disabled = true;
         paginationWrap.style.display = "none";
+        osBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
+        browserBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
       } else {
         fetch("/api/stats?view=json&limit=500")
           .then(function (res) { return res.json(); })
@@ -781,6 +971,8 @@ module.exports = function (app, config, renderTemplate) {
             var totalUsers = data.totalUsers || 0;
             var totalLocalVideoEntries = Object.keys(videos).length;
             var selectedLimit = getSelectedLimit();
+            var totalBrowserDetections = sumValues(browsers);
+            var totalOsDetections = sumValues(os);
 
             allVideos = videos;
 
@@ -791,8 +983,8 @@ module.exports = function (app, config, renderTemplate) {
               "Anonymous users (unique local IDs): " + totalUsers,
               "Videos available in this local response: " + totalLocalVideoEntries,
               "Current selected ranking size: top " + selectedLimit,
-              "Browser types seen: " + Object.keys(browsers).length,
-              "OS families seen: " + Object.keys(os).length,
+              "Total browser detections recorded: " + totalBrowserDetections,
+              "Total OS detections recorded: " + totalOsDetections,
               "Important: all video counts on this page are local Poke instance view totals, not YouTube public view totals"
             ];
 
@@ -801,6 +993,9 @@ module.exports = function (app, config, renderTemplate) {
               li.textContent = text;
               statsList.appendChild(li);
             });
+
+            renderBreakdown(osBreakdown, os, "os");
+            renderBreakdown(browserBreakdown, browsers, "browser");
 
             currentPage = 1;
             renderTopVideos();
@@ -817,6 +1012,8 @@ module.exports = function (app, config, renderTemplate) {
             topVideos.innerHTML = "<li>Error loading data.</li>";
             videoLimitSelect.disabled = true;
             paginationWrap.style.display = "none";
+            osBreakdown.innerHTML = '<div class="breakdown-empty">Error loading OS data.</div>';
+            browserBreakdown.innerHTML = '<div class="breakdown-empty">Error loading browser data.</div>';
           });
       }
     }
