@@ -5,7 +5,7 @@ const telemetryConfig = { telemetry: true }
 
 // Define file paths
 const statsFile = path.join(__dirname, "stats.json")
-const statsFileV2 = path.join(__dirname, "stats-v2.json") 
+const statsFileV2 = path.join(__dirname, "stats-v2.json")
 
 // Helper for empty structure
 const getEmptyStats = () => ({ videos: {}, browsers: {}, os: {}, users: {} })
@@ -39,30 +39,33 @@ function safeRead(filePath) {
 }
 
 module.exports = function (app, config, renderTemplate) {
-  
-   let memoryStats = getEmptyStats()
+  let memoryStats = getEmptyStats()
   let needsSave = false
 
-   const v1 = safeRead(statsFile)
+  const v1 = safeRead(statsFile)
   const v2 = safeRead(statsFileV2)
 
   const mergeData = (source) => {
     if (!source) return
+
     if (source.videos) {
       for (const [id, count] of Object.entries(source.videos)) {
         memoryStats.videos[id] = (memoryStats.videos[id] || 0) + count
       }
     }
+
     if (source.browsers) {
       for (const [name, count] of Object.entries(source.browsers)) {
         memoryStats.browsers[name] = (memoryStats.browsers[name] || 0) + count
       }
     }
+
     if (source.os) {
       for (const [name, count] of Object.entries(source.os)) {
         memoryStats.os[name] = (memoryStats.os[name] || 0) + count
       }
     }
+
     if (source.users) {
       Object.assign(memoryStats.users, source.users)
     }
@@ -71,9 +74,9 @@ module.exports = function (app, config, renderTemplate) {
   mergeData(v1)
   mergeData(v2)
 
-   fs.writeFileSync(statsFile, JSON.stringify(memoryStats, null, 2))
+  fs.writeFileSync(statsFile, JSON.stringify(memoryStats, null, 2))
 
-   if (fs.existsSync(statsFileV2)) {
+  if (fs.existsSync(statsFileV2)) {
     try {
       fs.unlinkSync(statsFileV2)
     } catch (e) {
@@ -81,10 +84,10 @@ module.exports = function (app, config, renderTemplate) {
     }
   }
 
-  // 4. Periodically save to disk (every 5 seconds)
-  // This asynchronous buffer prevents event loop blocking and file wipes.
+  // Periodically save to disk
   setInterval(() => {
     if (!needsSave) return
+
     fs.writeFile(statsFile, JSON.stringify(memoryStats, null, 2), (err) => {
       if (err) {
         console.error("Failed to save stats", err)
@@ -95,8 +98,8 @@ module.exports = function (app, config, renderTemplate) {
   }, 5000)
 
   // POST: Write stats
-app.post(["/api/stats", "/api/nexus"], (req, res) => {
-  if (!telemetryConfig.telemetry) return res.status(200).json({ ok: true })
+  app.post(["/api/stats", "/api/nexus"], (req, res) => {
+    if (!telemetryConfig.telemetry) return res.status(200).json({ ok: true })
 
     const { videoId, userId } = req.body
     if (!videoId) return res.status(400).json({ error: "missing videoId" })
@@ -105,13 +108,12 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
     const ua = req.headers["user-agent"] || ""
     const { browser, os } = parseUA(ua)
 
-    // Update the in-memory cache instantly
     memoryStats.videos[videoId] = (memoryStats.videos[videoId] || 0) + 1
     memoryStats.browsers[browser] = (memoryStats.browsers[browser] || 0) + 1
     memoryStats.os[os] = (memoryStats.os[os] || 0) + 1
     memoryStats.users[userId] = true
 
-    needsSave = true // Flag for the interval to pick up
+    needsSave = true
 
     res.json({ ok: true })
   })
@@ -127,64 +129,64 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
   <link rel="icon" href="/favicon.ico">
   <style>
     @font-face {
-  font-family: "PokeTube Flex";
-  src: url("/static/robotoflex.ttf");
-  font-style: normal;
-  font-stretch: 1% 800%;
-  font-display: swap;
-}
-    :root{color-scheme:dark}
-    body{color:#fff}
+      font-family: "PokeTube Flex";
+      src: url("/static/robotoflex.ttf");
+      font-style: normal;
+      font-stretch: 1% 800%;
+      font-display: swap;
+    }
+    :root { color-scheme: dark; }
+    body { color: #fff; }
     body {
-      background:#1c1b22;
-      margin:0;
+      background: #1c1b22;
+      margin: 0;
     }
-    :visited{color:#00c0ff}
-    a{color:#0ab7f0}
-    .app{max-width:1000px;margin:0 auto;padding:24px}
-    p{
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans", sans-serif;
-      line-height:1.6;
+    :visited { color: #00c0ff; }
+    a { color: #0ab7f0; }
+    .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    p {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      line-height: 1.6;
     }
-    ul{
-      font-family:"poketube flex";
-      font-weight:500;
-      font-stretch:extra-expanded;
-      padding-left:1.2rem;
+    ul {
+      font-family: "poketube flex";
+      font-weight: 500;
+      font-stretch: extra-expanded;
+      padding-left: 1.2rem;
     }
     h2 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:700;
-      font-stretch:extra-expanded;
-      margin-top:1.5rem;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 700;
+      font-stretch: extra-expanded;
+      margin-top: 1.5rem;
+      margin-bottom: .3rem;
     }
     h1 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:1000;
-      font-stretch:ultra-expanded;
-      margin-top:0;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 1000;
+      font-stretch: ultra-expanded;
+      margin-top: 0;
+      margin-bottom: .3rem;
     }
-    .note{color:#bbb;font-size:.95rem}
-    .btn{
-      display:inline-block;
-      margin-top:1rem;
-      padding:.5rem 1rem;
-      border-radius:999px;
-      border:1px solid #2a2a35;
-      background:#252432;
-      color:#fff;
-      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans", sans-serif;
-      text-decoration:none;
-      font-size:.95rem;
+    .note { color: #bbb; font-size: .95rem; }
+    .btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: .5rem 1rem;
+      border-radius: 999px;
+      border: 1px solid #2a2a35;
+      background: #252432;
+      color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      text-decoration: none;
+      font-size: .95rem;
     }
-    .btn:hover{
-      background:#2f2e3d;
+    .btn:hover {
+      background: #2f2e3d;
     }
-    .status{
-      margin-top:.5rem;
-      font-size:.95rem;
+    .status {
+      margin-top: .5rem;
+      font-size: .95rem;
     }
   </style>
 </head>
@@ -261,13 +263,17 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
 
     if (view === "json") {
       if (!telemetryConfig.telemetry) {
-        return res.json({ videos: {}, browsers: {}, os: {}, totalUsers: 0 })
+        return res.json({ videos: {}, browsers: {}, os: {}, totalUsers: 0, limit: 0 })
       }
 
-      // Read directly from the in-memory stats! (Much faster than file merges)
+      const rawLimit = parseInt((req.query.limit || "100").toString(), 10)
+      const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(rawLimit, 100))
+        : 100
+
       const sortedVideos = Object.entries(memoryStats.videos)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
+        .slice(0, limit)
 
       const topVideos = Object.fromEntries(sortedVideos)
 
@@ -275,7 +281,8 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
         videos: topVideos,
         browsers: memoryStats.browsers,
         os: memoryStats.os,
-        totalUsers: Object.keys(memoryStats.users).length
+        totalUsers: Object.keys(memoryStats.users).length,
+        limit
       })
     }
 
@@ -291,56 +298,79 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
   <link rel="icon" href="/favicon.ico">
   <style>
     @font-face {
-  font-family: "PokeTube Flex";
-  src: url("/static/robotoflex.ttf");
-  font-style: normal;
-  font-stretch: 1% 800%;
-  font-display: swap;
-}
-    :root{color-scheme:dark}
-    body{color:#fff}
+      font-family: "PokeTube Flex";
+      src: url("/static/robotoflex.ttf");
+      font-style: normal;
+      font-stretch: 1% 800%;
+      font-display: swap;
+    }
+    :root { color-scheme: dark; }
+    body { color: #fff; }
     body {
-      background:#1c1b22;
-      margin:0;
+      background: #1c1b22;
+      margin: 0;
     }
-    img{float:right;margin:.3em 0 1em 2em}
-    :visited{color:#00c0ff}
-    a{color:#0ab7f0}
-    .app{max-width:1000px;margin:0 auto;padding:24px}
-    p{
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans", sans-serif;
-      line-height:1.6;
+    img { float: right; margin: .3em 0 1em 2em; }
+    :visited { color: #00c0ff; }
+    a { color: #0ab7f0; }
+    .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    p {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      line-height: 1.6;
     }
-    ul{
-      font-family:"poketube flex";
-      font-weight:500;
-      font-stretch:extra-expanded;
-      padding-left:1.2rem;
+    ul {
+      font-family: "poketube flex";
+      font-weight: 500;
+      font-stretch: extra-expanded;
+      padding-left: 1.2rem;
     }
     h2 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:700;
-      font-stretch:extra-expanded;
-      margin-top:1.5rem;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 700;
+      font-stretch: extra-expanded;
+      margin-top: 1.5rem;
+      margin-bottom: .3rem;
     }
     h1 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:1000;
-      font-stretch:ultra-expanded;
-      margin-top:0;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 1000;
+      font-stretch: ultra-expanded;
+      margin-top: 0;
+      margin-bottom: .3rem;
     }
-    .toc{margin:1rem 0 2rem}
-    .toc li{margin:.25rem 0}
-    pre.license{
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      background:#111;padding:14px 16px;border-radius:12px;overflow-x:auto;line-height:1.45;border:1px solid #222
+    .toc { margin: 1rem 0 2rem; }
+    .toc li { margin: .25rem 0; }
+    pre.license {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      background: #111;
+      padding: 14px 16px;
+      border-radius: 12px;
+      overflow-x: auto;
+      line-height: 1.45;
+      border: 1px solid #222;
     }
-    hr{border:0;border-top:1px solid #222;margin:28px 0}
-    .note{color:#bbb;font-size:.95rem}
-    .stats-list li{margin:.15rem 0;}
-    .muted{opacity:.8;font-size:.95rem;}
+    hr { border: 0; border-top: 1px solid #222; margin: 28px 0; }
+    .note { color: #bbb; font-size: .95rem; }
+    .stats-list li { margin: .15rem 0; }
+    .muted { opacity: .8; font-size: .95rem; }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin: .75rem 0 1rem 0;
+    }
+    .controls label {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    }
+    .controls select {
+      background: #252432;
+      color: #fff;
+      border: 1px solid #2a2a35;
+      border-radius: 10px;
+      padding: .45rem .7rem;
+      font: inherit;
+    }
   </style>
 </head>
 <body>
@@ -356,7 +386,18 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
     <ul id="stats-list" class="stats-list"></ul>
 
     <h2>Top videos (local-only)</h2>
-    <p class="note">Up to 10 most watched videos on this instance.</p>
+    <p class="note">You can choose how many of the top videos to display below.</p>
+
+    <div class="controls">
+      <label for="video-limit">Show top videos:</label>
+      <select id="video-limit">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+
     <ul id="top-videos" class="stats-list"></ul>
 
     <hr>
@@ -365,6 +406,7 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
     <p class="note">
       • Human view (this page): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
       • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
+      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=100">/api/stats?view=json&limit=100</a></code><br>
       • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
     </p>
   </div>
@@ -376,12 +418,41 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
     const statsNote = document.getElementById("stats-note");
     const statsList = document.getElementById("stats-list");
     const topVideos = document.getElementById("top-videos");
+    const videoLimitSelect = document.getElementById("video-limit");
+
+    var allVideos = {};
+
+    function renderTopVideos(limit) {
+      var entries = Object.entries(allVideos).slice(0, limit);
+
+      if (entries.length === 0) {
+        topVideos.innerHTML = "<li>No stats recorded yet.</li>";
+        return;
+      }
+
+      topVideos.innerHTML = "";
+
+      entries.forEach(function (entry) {
+        var id = entry[0];
+        var views = entry[1];
+
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = "/watch?v=" + encodeURIComponent(id);
+        a.textContent = id;
+
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(" – " + views + " views"));
+        topVideos.appendChild(li);
+      });
+    }
 
     if (!TELEMETRY_ON) {
       statsNote.textContent =
         "Anonymous usage statistics are disabled on this instance. No stats are being collected.";
       statsList.innerHTML = "";
       topVideos.innerHTML = "<li>No data (telemetry disabled).</li>";
+      videoLimitSelect.disabled = true;
     } else {
       var optedOut = false;
       try {
@@ -393,8 +464,9 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
           "You have opted out of anonymous stats in this browser. Poke will not load stats for you here.";
         statsList.innerHTML = "";
         topVideos.innerHTML = "<li>Opt-out active (no stats loaded).</li>";
+        videoLimitSelect.disabled = true;
       } else {
-        fetch("/api/stats?view=json")
+        fetch("/api/stats?view=json&limit=100")
           .then(function (res) { return res.json(); })
           .then(function (data) {
             var videos = data.videos || {};
@@ -402,14 +474,14 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
             var os = data.os || {};
             var totalUsers = data.totalUsers || 0;
 
-            var videoCount = Object.keys(videos).length;
+            allVideos = videos;
 
             statsNote.textContent = "";
             statsList.innerHTML = "";
 
             var summaryItems = [
               "Anonymous users (unique local IDs): " + totalUsers,
-              "Videos with recorded views: " + videoCount,
+              "Videos with recorded views in current response: " + Object.keys(videos).length,
               "Browser types seen: " + Object.keys(browsers).length,
               "OS families seen: " + Object.keys(os).length
             ];
@@ -420,27 +492,18 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
               statsList.appendChild(li);
             });
 
-            var videoKeys = Object.keys(videos);
-            if (videoKeys.length === 0) {
-              topVideos.innerHTML = "<li>No stats recorded yet.</li>";
-            } else {
-              topVideos.innerHTML = "";
-              videoKeys.forEach(function (id) {
-                var li = document.createElement("li");
-                var a = document.createElement("a");
-                a.href = "/watch?v=" + encodeURIComponent(id);
-                a.textContent = id;
-                li.appendChild(a);
-                li.appendChild(document.createTextNode(" – " + videos[id] + " views"));
-                topVideos.appendChild(li);
-              });
-            }
+            renderTopVideos(parseInt(videoLimitSelect.value, 10) || 10);
+
+            videoLimitSelect.addEventListener("change", function () {
+              renderTopVideos(parseInt(videoLimitSelect.value, 10) || 10);
+            });
           })
           .catch(function () {
             statsNote.textContent =
               "Could not load stats (maybe they are disabled or there was an error).";
             statsList.innerHTML = "";
             topVideos.innerHTML = "<li>Error loading data.</li>";
+            videoLimitSelect.disabled = true;
           });
       }
     }
@@ -458,56 +521,61 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
   <link rel="icon" href="/favicon.ico">
   <style>
     @font-face {
-  font-family: "PokeTube Flex";
-  src: url("/static/robotoflex.ttf");
-  font-style: normal;
-  font-stretch: 1% 800%;
-  font-display: swap;
-}
-    :root{color-scheme:dark}
-    body{color:#fff}
+      font-family: "PokeTube Flex";
+      src: url("/static/robotoflex.ttf");
+      font-style: normal;
+      font-stretch: 1% 800%;
+      font-display: swap;
+    }
+    :root { color-scheme: dark; }
+    body { color: #fff; }
     body {
-      background:#1c1b22;
-      margin:0;
+      background: #1c1b22;
+      margin: 0;
     }
-    img{float:right;margin:.3em 0 1em 2em}
-    :visited{color:#00c0ff}
-    a{color:#0ab7f0}
-    .app{max-width:1000px;margin:0 auto;padding:24px}
-    p{
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans", sans-serif;
-      line-height:1.6;
+    img { float: right; margin: .3em 0 1em 2em; }
+    :visited { color: #00c0ff; }
+    a { color: #0ab7f0; }
+    .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    p {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      line-height: 1.6;
     }
-    ul{
-      font-family:"poketube flex";
-      font-weight:500;
-      font-stretch:extra-expanded;
-      padding-left:1.2rem;
+    ul {
+      font-family: "poketube flex";
+      font-weight: 500;
+      font-stretch: extra-expanded;
+      padding-left: 1.2rem;
     }
     h2 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:700;
-      font-stretch:extra-expanded;
-      margin-top:1.5rem;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 700;
+      font-stretch: extra-expanded;
+      margin-top: 1.5rem;
+      margin-bottom: .3rem;
     }
     h1 {
-      font-family:"poketube flex", sans-serif;
-      font-weight:1000;
-      font-stretch:ultra-expanded;
-      margin-top:0;
-      margin-bottom:.3rem;
+      font-family: "poketube flex", sans-serif;
+      font-weight: 1000;
+      font-stretch: ultra-expanded;
+      margin-top: 0;
+      margin-bottom: .3rem;
     }
-    .toc{margin:1rem 0 2rem}
-    .toc li{margin:.25rem 0}
-    pre.license{
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      background:#111;padding:14px 16px;border-radius:12px;overflow-x:auto;line-height:1.45;border:1px solid #222
+    .toc { margin: 1rem 0 2rem; }
+    .toc li { margin: .25rem 0; }
+    pre.license {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      background: #111;
+      padding: 14px 16px;
+      border-radius: 12px;
+      overflow-x: auto;
+      line-height: 1.45;
+      border: 1px solid #222;
     }
-    hr{border:0;border-top:1px solid #222;margin:28px 0}
-    .note{color:#bbb;font-size:.95rem}
-    .stats-list li{margin:.15rem 0;}
-    .muted{opacity:.8;font-size:.95rem;}
+    hr { border: 0; border-top: 1px solid #222; margin: 28px 0; }
+    .note { color: #bbb; font-size: .95rem; }
+    .stats-list li { margin: .15rem 0; }
+    .muted { opacity: .8; font-size: .95rem; }
   </style>
 </head>
 <body>
@@ -534,6 +602,7 @@ app.post(["/api/stats", "/api/nexus"], (req, res) => {
     <p class="note">
       • Human view (stats UI): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
       • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
+      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=100">/api/stats?view=json&limit=100</a></code><br>
       • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
     </p>
   </div>
