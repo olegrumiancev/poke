@@ -240,6 +240,7 @@ document.addEventListener("DOMContentLoaded", () => {
     bgResumeInFlight: false,
     seekResumeInFlight: false,
     seekFinalizeTimer: null,
+    seekWatchdogTimer: null,
     lastAT: 0,
     audioLastProgressTs: 0,
     lastVT: 0,
@@ -362,6 +363,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const AUDIO_SAFE_FADE_DURATION_MS = 150;
   const MIN_PLAY_PAUSE_GAP_MS = 150;
   const SEEK_READY_TIMEOUT_MS = 3000;
+  const SEEK_WATCHDOG_MS = 6000; // max time to wait for seeked event before force-finalizing
   const STATE_CHANGE_COOLDOWN_MS = 100;
   const CHROMIUM_BG_PAUSE_BLOCK_MS = 6000;
   const TAB_VISIBILITY_STABLE_MS = 3500;
@@ -385,7 +387,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const LOOP_DETECTION_WINDOW_MS = 2000;
   const MAX_LOOP_EVENTS = 6;
   const LOOP_COOLDOWN_MS = 4000;
-  const BG_RETURN_GRACE_MS = 5000;
+  const BG_RETURN_GRACE_MS = 8000;
+  const TAB_RETURN_AUDIO_RETRY_DELAY_MS = 300; // Retry audio on tab-return instead of pausing video
   // NEW constants
   const HEARTBEAT_INTERVAL_MS = 1500;
   const AUDIO_STALL_TIMEOUT_MS = 4500;
@@ -1179,7 +1182,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const p = audio.play();
-      state.audioPlayInFlight = Promise.resolve(p);
+      // FIX: Race audio.play() against a 4s timeout — some browsers hang the play() promise
+      // indefinitely (e.g. network stall during autoplay), which would block all future audio starts.
+      const playTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error("audio-play-timeout")), 4000));
+      state.audioPlayInFlight = Promise.race([Promise.resolve(p), playTimeout]);
       state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + Math.max(400, squelchMs));
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
@@ -1249,6 +1255,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.seekFinalizeTimer) {
       clearTimeout(state.seekFinalizeTimer);
       state.seekFinalizeTimer = null;
+    }
+  }
+  function clearSeekWatchdog() {
+    if (state.seekWatchdogTimer) {
+      clearTimeout(state.seekWatchdogTimer);
+      state.seekWatchdogTimer = null;
     }
   }
 
@@ -1624,28 +1636,20 @@ document.addEventListener("DOMContentLoaded", () => {
     else queueHardPauseVerification();
   }
 
-  // FIX: No longer zeros out purely because document is hidden; that was incorrect
+  // FIX: Always seek both tracks to 0 before first play, unconditionally.
+  // The browser can pre-buffer a background tab's video at a non-zero position;
+  // the old "give up if vt > 0.5" logic caused autoplay to start mid-video.
   function forceZeroBeforeFirstPlay() {
     if (state.firstPlayCommitted) return;
-    const vt = Number(video.currentTime()) || 0;
-    const at = coupledMode && audio ? (Number(audio.currentTime) || 0) : 0;
-    if (vt > 0.5 || at > 0.5) {
-      state.firstPlayCommitted = true;
-      state.startupKickDone = true;
-      clearStartupAutoplayRetryTimer();
-      return;
-    }
-    const needsZero = (vt > 0.001 || at > 0.001);
-    if (needsZero) {
-      try { video.currentTime(0); } catch {}
-      try {
-        safeSetCT(videoEl, 0);
-        const v = getVideoNode();
-        if (v && v !== videoEl) safeSetCT(v, 0);
-      } catch {}
-      if (coupledMode && audio) {
-        try { audio.currentTime = 0; } catch {}
-      }
+    // Always force both tracks to 0 — never skip based on current position.
+    try { video.currentTime(0); } catch {}
+    try {
+      safeSetCT(videoEl, 0);
+      const v = getVideoNode();
+      if (v && v !== videoEl) safeSetCT(v, 0);
+    } catch {}
+    if (coupledMode && audio) {
+      try { audio.currentTime = 0; } catch {}
     }
     state.startupZeroed = true;
     state.lastKnownGoodVT = 0;
@@ -1691,7 +1695,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       forceUnmuteForPlaybackIfAllowed();
       const inBackground = document.visibilityState === "hidden" || !isWindowFocused();
+      // On tab return, don't apply strict buffer gate — video was playing in background and has buffer
+      const bypassBufferForBgReturn = inBgReturnGrace();
       const blockOnBuffer =
+        !bypassBufferForBgReturn &&
         !inBackground &&
         !startupSettleActive() &&
         (state.startupPrimed || state.audioEverStarted) &&
@@ -1801,7 +1808,15 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       } else if (!videoOk && audioOk) {
         if (isHiddenBackground() && state.bgPlaybackAllowed) {
-          // ok
+          // ok — audio-only background playback is allowed
+        } else if (inBgReturnGrace() && !isHiddenBackground()) {
+          // Tab return: audio is going, video just needs a moment — retry video instead of stopping audio
+          const retrySession = mySession;
+          setTimeout(() => {
+            if (!state.intendedPlaying || retrySession !== state.playSessionId) return;
+            if (!getVideoPaused()) return;
+            execProgrammaticVideoPlay();
+          }, TAB_RETURN_AUDIO_RETRY_DELAY_MS);
         } else if (document.visibilityState !== "hidden" && isWindowFocused()) {
           execProgrammaticAudioPause(600);
           state.intendedPlaying = false;
@@ -1836,16 +1851,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
           if (!audioStarted && !state.strictBufferHold && !state.videoWaiting && !shouldBlockNewAudioStart()) {
             if (coupledMode) {
-              execProgrammaticVideoPause();
-              if (state.startupPhase && !state.firstPlayCommitted) {
-                forceZeroBeforeFirstPlay();
-              }
-              if (isHiddenBackground()) {
-                state.resumeOnVisible = true;
+              if (inBgReturnGrace() && !isHiddenBackground()) {
+                // Tab return: video is playing fine — just retry audio after a brief delay
+                // Never pause video or abandon intendedPlaying during bg return grace
+                const retrySession = mySession;
+                setTimeout(() => {
+                  if (!state.intendedPlaying || retrySession !== state.playSessionId) return;
+                  if (getVideoPaused()) return;
+                  execProgrammaticAudioPlay({ force: true, squelchMs: 500, minGapMs: 0 }).catch(() => {});
+                  softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+                }, TAB_RETURN_AUDIO_RETRY_DELAY_MS);
               } else {
-                state.intendedPlaying = false;
-                state.playSessionId = (state.playSessionId || 0) + 1;
-                updateMediaSessionPlaybackState();
+                execProgrammaticVideoPause();
+                if (state.startupPhase && !state.firstPlayCommitted) {
+                  forceZeroBeforeFirstPlay();
+                }
+                if (isHiddenBackground()) {
+                  state.resumeOnVisible = true;
+                } else {
+                  state.intendedPlaying = false;
+                  state.playSessionId = (state.playSessionId || 0) + 1;
+                  updateMediaSessionPlaybackState();
+                }
               }
             } else if (document.visibilityState !== "hidden" && isWindowFocused()) {
               execProgrammaticVideoPause();
@@ -2291,8 +2318,12 @@ document.addEventListener("DOMContentLoaded", () => {
       state.videoWaiting = false;
     }
 
+    // FIX: Guard with !state.startupKickInFlight so this path never races with
+    // forceZeroBeforeFirstPlay() inside the startup kick — if the kick is still
+    // in flight and the video somehow shows vt > 0.5 (pre-buffered by browser),
+    // we must not commit firstPlayCommitted before the kick has a chance to zero it.
     if (state.intendedPlaying && !vPaused && vt > 0.5) {
-      if (!state.firstPlayCommitted) {
+      if (!state.firstPlayCommitted && !state.startupKickInFlight) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
@@ -2363,7 +2394,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           } else {
             if (!state.bgResumeInFlight) {
-              scheduleBgResumeRetry(400);
+              // On tab return, recover immediately instead of waiting 400ms
+              scheduleBgResumeRetry(inBgReturnGrace() ? 80 : 400);
             }
           }
         }
@@ -2861,7 +2893,30 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!coupledMode) return;
+      if (!coupledMode) {
+        // Non-coupled mode (muxed video+audio, e.g. quality=medium)
+        // Handle entirely here — DO NOT register a separate handler at the bottom (causes double-increment)
+        if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) &&
+            !userPlayIntentActive() && !wantsStartupAutoplay()) {
+          execProgrammaticVideoPause();
+          return;
+        }
+        if (userPlayIntentActive()) state.userPlayUntil = 0;
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+        if (!state.firstPlayCommitted && !state.startupKickInFlight) {
+          state.firstPlayCommitted = true;
+          state.startupKickDone = true;
+          state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
+          clearStartupAutoplayRetryTimer();
+          setTimeout(() => { state.startupPhase = false; }, 1200);
+        }
+        markMediaAction("play");
+        updateMediaSessionPlaybackState();
+        setFastSync(1600);
+        scheduleSync(0);
+        return;
+      }
       if (state.restarting || state.isProgrammaticVideoPlay) return;
 
       state.intendedPlaying = true;
@@ -2920,7 +2975,46 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!coupledMode) return;
+      if (!coupledMode) {
+        // Non-coupled mode — handle entirely here (no duplicate handler below)
+        requestAnimationFrame(() => {
+          if (state.seeking || state.restarting || state.isProgrammaticVideoPause) return;
+          if (!getVideoPaused()) return;
+          if (isVisibilityTransitionActive() || !isVisibilityStable() || !isFocusStable()) return;
+          if (now() < state.tabVisibilityChangeUntil) return;
+          if (inBgReturnGrace()) return;
+          if (isAltTabTransitionActive()) return;
+          if (document.visibilityState === "visible" && isWindowFocused()) {
+            if (!userPauseIntentActive() && !userPauseLockActive() &&
+                (state.isProgrammaticVideoPlay || state.seekResumeInFlight || state.bgResumeInFlight ||
+                 mediaPlayTxnActive() || fastSyncActive() || state.videoWaiting ||
+                 (platform.chromiumOnlyBrowser && chromiumPauseEventSuppressed()))) {
+              scheduleSync(200);
+              return;
+            }
+            state.intendedPlaying = false;
+            state.bufferHoldIntendedPlaying = false;
+            updateMediaSessionPlaybackState();
+            pauseHard();
+            return;
+          }
+          if (shouldTreatVisiblePauseAsUserPause()) {
+            state.intendedPlaying = false;
+            state.bufferHoldIntendedPlaying = false;
+            updateMediaSessionPlaybackState();
+            pauseHard();
+            return;
+          }
+          if (startupAutoplayPauseGraceActive()) return;
+          trackPauseEvent();
+          if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
+          state.intendedPlaying = false;
+          state.bufferHoldIntendedPlaying = false;
+          updateMediaSessionPlaybackState();
+          queueHardPauseVerification();
+        });
+        return;
+      }
       if (state.restarting || state.isProgrammaticVideoPause || state.seeking) return;
 
       requestAnimationFrame(() => {
@@ -3274,11 +3368,22 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       clearSeekSyncFinalizeTimer();
+      clearSeekWatchdog();
       const seekTime = Number(video.currentTime());
       state.pendingSeekTarget = seekTime;
       state.lastKnownGoodVT = seekTime;
       state.lastKnownGoodVTts = now();
       state.seekCooldownUntil = now() + 2000;
+
+      // Safety watchdog: if seeked event never fires (slow network, rapid seeks),
+      // force-finalize after SEEK_WATCHDOG_MS to prevent state.seeking staying true forever.
+      const watchdogSeekId = state.seekId;
+      state.seekWatchdogTimer = setTimeout(() => {
+        state.seekWatchdogTimer = null;
+        if (state.seeking && state.seekId === watchdogSeekId) {
+          scheduleSeekFinalize(0, watchdogSeekId);
+        }
+      }, SEEK_WATCHDOG_MS);
 
       if (coupledMode && audio) {
         squelchAudioEvents(400);
@@ -3303,6 +3408,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     video.on("seeked", () => {
       if (state.restarting) return;
+      clearSeekWatchdog();
       const newTime = Number(video.currentTime());
       state.lastKnownGoodVT = newTime;
       state.lastKnownGoodVTts = now();
@@ -3368,7 +3474,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
         seamlessBgCatchUp().catch(() => {});
-      }, 50);
+      }, 200);  // 200ms: let spurious pause events fully settle before recovery
     }
   }
 
@@ -3437,9 +3543,10 @@ document.addEventListener("DOMContentLoaded", () => {
         state.mediaErrorCount = 0;
 
         if (platform.chromiumOnlyBrowser) {
-          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 2000);
-          state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 1200);
-          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 3000);
+          // Extended settling windows on tab return to absorb Chromium's spurious pause burst
+          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 3500);
+          state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 2000);
+          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 4000);
           setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
           setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
           setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
@@ -3543,6 +3650,7 @@ document.addEventListener("DOMContentLoaded", () => {
       clearBgResumeRetryTimer();
       clearResumeAfterBufferTimer();
       clearSeekSyncFinalizeTimer();
+      clearSeekWatchdog();
       clearStartupAutoplayRetryTimer();
       clearAudioForcePlayTimer();
       clearTimeout(state.wakeupTimer);
@@ -3612,6 +3720,28 @@ document.addEventListener("DOMContentLoaded", () => {
       videoEl.currentTime = 0;
       if (audio) audio.currentTime = 0;
     } catch {}
+
+    // Continuously enforce t=0 while loading in background — browsers can buffer/seek
+    // to non-zero keyframes before we start playing. Remove once first play committed.
+    const enforceStartAtZero = () => {
+      if (state.firstPlayCommitted) {
+        try { videoEl.removeEventListener("timeupdate", enforceStartAtZero); } catch {}
+        return;
+      }
+      const vt = Number(videoEl.currentTime) || 0;
+      if (vt > 0.5) {
+        try { video.currentTime(0); } catch {}
+        try { videoEl.currentTime = 0; } catch {}
+        if (audio) try { audio.currentTime = 0; } catch {}
+      }
+    };
+    try { videoEl.addEventListener("timeupdate", enforceStartAtZero, { passive: true }); } catch {}
+    // Also clean up if user manually seeks before playing
+    try {
+      videoEl.addEventListener("seeking", () => {
+        try { videoEl.removeEventListener("timeupdate", enforceStartAtZero); } catch {}
+      }, { once: true, passive: true });
+    } catch {}
   }
 
   setupUserPauseIntentDetection();
@@ -3668,85 +3798,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }, { passive: true });
     } catch {}
   }
-  if (!coupledMode) {
-    try {
-      video.on("play", () => {
-        if (!state.isProgrammaticVideoPlay) incrementRapidPlayPause();
-        if (detectLoop()) {
-          state.intendedPlaying = false;
-          pauseHard();
-          return;
-        }
-        if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) &&
-          !userPlayIntentActive() && !wantsStartupAutoplay()) {
-          execProgrammaticVideoPause();
-          return;
-        }
-        if (userPlayIntentActive()) state.userPlayUntil = 0;
-        state.intendedPlaying = true;
-        state.bufferHoldIntendedPlaying = true;
-
-        if (!state.firstPlayCommitted && !state.startupKickInFlight) {
-          state.firstPlayCommitted = true;
-          state.startupKickDone = true;
-          state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
-          clearStartupAutoplayRetryTimer();
-          setTimeout(() => { state.startupPhase = false; }, 1200);
-        }
-
-        updateMediaSessionPlaybackState();
-      });
-      video.on("pause", () => {
-        if (!state.isProgrammaticVideoPause) incrementRapidPlayPause();
-        if (detectLoop()) {
-          state.intendedPlaying = false;
-          pauseHard();
-          return;
-        }
-
-        requestAnimationFrame(() => {
-          if (state.seeking || state.restarting || state.isProgrammaticVideoPause) return;
-          if (!getVideoPaused()) return;
-
-          if (isVisibilityTransitionActive() || !isVisibilityStable() || !isFocusStable()) return;
-          if (now() < state.tabVisibilityChangeUntil) return;
-          if (inBgReturnGrace()) return;
-          if (isAltTabTransitionActive()) return;
-
-          if (document.visibilityState === "visible" && isWindowFocused()) {
-            if (!userPauseIntentActive() && !userPauseLockActive() &&
-                (state.isProgrammaticVideoPlay || state.seekResumeInFlight || state.bgResumeInFlight ||
-                 mediaPlayTxnActive() || fastSyncActive() || state.videoWaiting)) {
-              scheduleSync(200);
-              return;
-            }
-            state.intendedPlaying = false;
-            state.bufferHoldIntendedPlaying = false;
-            updateMediaSessionPlaybackState();
-            pauseHard();
-            return;
-          }
-
-          if (shouldTreatVisiblePauseAsUserPause()) {
-            state.intendedPlaying = false;
-            state.bufferHoldIntendedPlaying = false;
-            updateMediaSessionPlaybackState();
-            pauseHard();
-            return;
-          }
-
-          if (startupAutoplayPauseGraceActive()) return;
-          trackPauseEvent();
-          if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-
-          state.intendedPlaying = false;
-          state.bufferHoldIntendedPlaying = false;
-          updateMediaSessionPlaybackState();
-          queueHardPauseVerification();
-        });
-      });
-    } catch {}
-  }
   state.bgPlaybackAllowed = true;
   state.backgroundAutoplayTriggered = true;
   setTimeout(() => {
@@ -3758,6 +3809,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
