@@ -266,10 +266,11 @@ module.exports = function (app, config, renderTemplate) {
         return res.json({ videos: {}, browsers: {}, os: {}, totalUsers: 0, limit: 0 })
       }
 
-      const rawLimit = parseInt((req.query.limit || "100").toString(), 10)
+      const hasLimit = typeof req.query.limit !== "undefined"
+      const rawLimit = parseInt((hasLimit ? req.query.limit : "10").toString(), 10)
       const limit = Number.isFinite(rawLimit)
-        ? Math.max(1, Math.min(rawLimit, 100))
-        : 100
+        ? Math.max(1, Math.min(rawLimit, 200))
+        : 10
 
       const sortedVideos = Object.entries(memoryStats.videos)
         .sort((a, b) => b[1] - a[1])
@@ -310,7 +311,10 @@ module.exports = function (app, config, renderTemplate) {
       background: #1c1b22;
       margin: 0;
     }
-    img { float: right; margin: .3em 0 1em 2em; }
+    img.logo {
+      float: right;
+      margin: .3em 0 1em 2em;
+    }
     :visited { color: #00c0ff; }
     a { color: #0ab7f0; }
     .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
@@ -371,6 +375,64 @@ module.exports = function (app, config, renderTemplate) {
       padding: .45rem .7rem;
       font: inherit;
     }
+    .video-grid {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    .video-card {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 14px;
+      background: #252432;
+      border: 1px solid #2a2a35;
+      border-radius: 16px;
+      padding: 12px;
+      align-items: start;
+    }
+    .video-thumb {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #111;
+    }
+    .video-meta {
+      min-width: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    }
+    .video-title {
+      display: inline-block;
+      font-weight: 700;
+      line-height: 1.35;
+      text-decoration: none;
+      word-break: break-word;
+    }
+    .video-id {
+      color: #bbb;
+      font-size: .9rem;
+      margin-top: .4rem;
+      word-break: break-all;
+    }
+    .video-views {
+      margin-top: .5rem;
+      font-size: .95rem;
+      color: #fff;
+    }
+    .video-rank {
+      margin-top: .45rem;
+      color: #bbb;
+      font-size: .9rem;
+    }
+    @media (max-width: 640px) {
+      .video-card {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -395,10 +457,11 @@ module.exports = function (app, config, renderTemplate) {
         <option value="20">20</option>
         <option value="50">50</option>
         <option value="100">100</option>
+        <option value="200">200</option>
       </select>
     </div>
 
-    <ul id="top-videos" class="stats-list"></ul>
+    <ul id="top-videos" class="video-grid"></ul>
 
     <hr>
 
@@ -406,7 +469,7 @@ module.exports = function (app, config, renderTemplate) {
     <p class="note">
       • Human view (this page): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
       • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
-      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=100">/api/stats?view=json&limit=100</a></code><br>
+      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=200">/api/stats?view=json&limit=200</a></code><br>
       • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
     </p>
   </div>
@@ -422,6 +485,10 @@ module.exports = function (app, config, renderTemplate) {
 
     var allVideos = {};
 
+    function getThumbnailUrl(videoId) {
+      return "https://i.ytimg.com/vi/" + encodeURIComponent(videoId) + "/hqdefault.jpg";
+    }
+
     function renderTopVideos(limit) {
       var entries = Object.entries(allVideos).slice(0, limit);
 
@@ -432,17 +499,57 @@ module.exports = function (app, config, renderTemplate) {
 
       topVideos.innerHTML = "";
 
-      entries.forEach(function (entry) {
+      entries.forEach(function (entry, index) {
         var id = entry[0];
         var views = entry[1];
 
         var li = document.createElement("li");
-        var a = document.createElement("a");
-        a.href = "/watch?v=" + encodeURIComponent(id);
-        a.textContent = id;
+        li.className = "video-card";
 
-        li.appendChild(a);
-        li.appendChild(document.createTextNode(" – " + views + " views"));
+        var thumbLink = document.createElement("a");
+        thumbLink.href = "/watch?v=" + encodeURIComponent(id);
+        thumbLink.setAttribute("aria-label", "Open video " + id);
+
+        var img = document.createElement("img");
+        img.className = "video-thumb";
+        img.src = getThumbnailUrl(id);
+        img.alt = "Thumbnail for video " + id;
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.onerror = function () {
+          this.style.display = "none";
+        };
+
+        thumbLink.appendChild(img);
+
+        var meta = document.createElement("div");
+        meta.className = "video-meta";
+
+        var titleLink = document.createElement("a");
+        titleLink.className = "video-title";
+        titleLink.href = "/watch?v=" + encodeURIComponent(id);
+        titleLink.textContent = id;
+
+        var rank = document.createElement("div");
+        rank.className = "video-rank";
+        rank.textContent = "Rank #" + (index + 1);
+
+        var idEl = document.createElement("div");
+        idEl.className = "video-id";
+        idEl.textContent = "Video ID: " + id;
+
+        var viewsEl = document.createElement("div");
+        viewsEl.className = "video-views";
+        viewsEl.textContent = views + " views";
+
+        meta.appendChild(titleLink);
+        meta.appendChild(rank);
+        meta.appendChild(idEl);
+        meta.appendChild(viewsEl);
+
+        li.appendChild(thumbLink);
+        li.appendChild(meta);
+
         topVideos.appendChild(li);
       });
     }
@@ -466,7 +573,7 @@ module.exports = function (app, config, renderTemplate) {
         topVideos.innerHTML = "<li>Opt-out active (no stats loaded).</li>";
         videoLimitSelect.disabled = true;
       } else {
-        fetch("/api/stats?view=json&limit=100")
+        fetch("/api/stats?view=json&limit=200")
           .then(function (res) { return res.json(); })
           .then(function (data) {
             var videos = data.videos || {};
@@ -533,7 +640,10 @@ module.exports = function (app, config, renderTemplate) {
       background: #1c1b22;
       margin: 0;
     }
-    img { float: right; margin: .3em 0 1em 2em; }
+    img {
+      float: right;
+      margin: .3em 0 1em 2em;
+    }
     :visited { color: #00c0ff; }
     a { color: #0ab7f0; }
     .app { max-width: 1000px; margin: 0 auto; padding: 24px; }
@@ -602,7 +712,8 @@ module.exports = function (app, config, renderTemplate) {
     <p class="note">
       • Human view (stats UI): <code><a href="/api/stats?view=human">/api/stats?view=human</a></code><br>
       • JSON view (for scripts/tools): <code><a href="/api/stats?view=json">/api/stats?view=json</a></code><br>
-      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=100">/api/stats?view=json&limit=100</a></code><br>
+      • JSON default limit: <code><a href="/api/stats?view=json">/api/stats?view=json</a></code> (10 videos)<br>
+      • JSON with custom limit: <code><a href="/api/stats?view=json&limit=200">/api/stats?view=json&limit=200</a></code><br>
       • Opt out for this browser: <code><a href="/api/stats/optout">/api/stats/optout</a></code>
     </p>
   </div>
