@@ -385,6 +385,26 @@
     Instead, it records only high-level technical counts needed to maintain and improve the software.
   </p>
 
+  <h3>Why we need this</h3>
+
+  <p>
+    Running a video front-end requires making practical decisions about performance, compatibility,
+    bug fixes, and which features should be prioritized. Anonymous usage counts help us understand
+    how the software is used in the real world without relying on invasive analytics systems.
+  </p>
+
+  <p>
+    For example, video ID counts help show which parts of the platform are most actively used,
+    browser and operating system totals help us decide what environments to test against,
+    and the anonymous viewer count helps estimate how widely an instance is being used.
+    These signals allow maintainers to focus development effort where it matters most.
+  </p>
+
+  <p>
+    Importantly, this approach relies only on <strong>aggregate technical signals</strong> rather than
+    tracking individual people. The goal is to improve the software while respecting user privacy.
+  </p>
+
   <ul>
     <li><strong>Enabled by default.</strong> Instance operators may disable the stats system entirely in the server configuration.</li>
 
@@ -451,11 +471,21 @@
   </p>
 
   <p>
-    Poke is free software. The full implementation of the stats system is available in the source code,
-    so anyone can inspect exactly what is collected, verify the privacy design, or disable the feature
-    when running their own Poke instance.
+    Poke is free software and fully transparent. The implementation of the telemetry system is available in the source code.
+    You can inspect exactly how the statistics system works here:
+    <br>
+    <code>
+      <a href="https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/init/telemetry.js">
+        src/libpoketube/init/telemetry.js
+      </a>
+    </code>
   </p>
-</section> 
+
+  <p>
+    Anyone can audit this code, verify what data is collected, fork the project,
+    or disable the stats system when running their own Poke instance.
+  </p>
+</section>
 <section id="cookies" aria-labelledby="cookies-heading">
   <h2 id="cookies-heading" class="section">Cookies &amp; Local Storage</h2>
   <ul>
