@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  */
 
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -1178,7 +1178,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
 
     // These checks must run BEFORE the bgPlaybackAllowed early-return (bgPlaybackAllowed is always true).
     // Block audio when video is actively buffering/stalled.
-    if (state.videoWaiting && document.visibilityState === "visible") return true;
+    if (state.videoWaiting) return true; // block audio while video is buffering regardless of visibility
     if (state.videoStallAudioPaused) return true;
     if (now() < state.stallAudioResumeHoldUntil) return true;
 
@@ -2597,7 +2597,10 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     const inBgDrift = document.visibilityState === "hidden" || !isWindowFocused();
     const skipDrift = now() < state.seekCooldownUntil;
 
-    if (!vPaused && vt > 0) {
+    if (!vPaused && vt > 0 && getVideoReadyState() >= HAVE_FUTURE_DATA) {
+      // Only clear videoWaiting when the browser has decoded enough to sustain playback.
+      // readyState < 3 means the browser is running on fumes — clearing here would let
+      // audio restart before video re-fires "waiting", causing the audio-while-buffering gap.
       state.videoWaiting = false;
     }
 
@@ -2728,6 +2731,22 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
             enforceAudioPlayback();
           }
         } else if (!vPaused && !aPaused) {
+          // Catch audio playing while video is buffering (videoWaiting set between runSync cycles).
+          // This is a safety net — the waiting handler is the primary fix, but runSync
+          // provides a ~500ms backstop for any edge case that slips through.
+          if (state.videoWaiting && coupledMode && !aPaused) {
+            state.videoStallAudioPaused = true;
+            state.stallAudioPausedSince = now();
+            state.audioPausedSince = 0;
+            state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
+            cancelActiveFade();
+            state.isProgrammaticAudioPause = true;
+            state.audioPlayGeneration++;
+            squelchAudioEvents(5200);
+            state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 5000);
+            try { audio.volume = 0; audio.pause(); } catch {}
+            setTimeout(() => { state.isProgrammaticAudioPause = false; }, 500);
+          }
           state.audioPausedSince = 0;
           state.videoSyncRetryTs = 0;
         } else if (vPaused && !aPaused) {
@@ -3482,16 +3501,25 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       // Freeze audio immediately when video stalls.
       // Audio must not play ahead of the stall point — when video resumes it will need
       // to seek audio back, causing the audible "replay last 0.5s" artifact.
-      if (coupledMode && audio && !audio.paused &&
-          document.visibilityState === "visible" && isWindowFocused() &&
-          !state.seeking && !state.syncing && !state.bgResumeInFlight) {
+      if (coupledMode && audio && !audio.paused && !state.seeking) {
+        // INSTANT STOP — no fade. The 120ms fade in execProgrammaticAudioPause was the
+        // "audio audible while video buffers" artifact: audio played at full volume for
+        // the duration of the fade, which is exactly what the user sees/hears.
+        // Also removed isWindowFocused() and !bgResumeInFlight guards — audio must stop
+        // when video buffers regardless of window focus or in-flight resume state.
         state.videoStallAudioPaused = true;
         state.stallAudioPausedSince = now();
-        state.audioPausedSince = 0; // legit stall, not a bug
-        // Short hold so we don't immediately re-trigger if "playing" fires with thin buffer
+        state.audioPausedSince = 0; // legit stall, not a watchdog case
         state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
         state.bufferHoldIntendedPlaying = true;
-        execProgrammaticAudioPause(5000); // long fence — watchdog or armResumeAfterBuffer clears this
+        // Cancel any fade in progress, silence immediately, then arm the long pause fence.
+        cancelActiveFade();
+        state.isProgrammaticAudioPause = true;
+        state.audioPlayGeneration++;
+        squelchAudioEvents(5200);
+        state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 5000);
+        try { audio.volume = 0; audio.pause(); } catch {}
+        setTimeout(() => { state.isProgrammaticAudioPause = false; }, 500);
       }
 
       if (platform.useBgControllerRetry) {
@@ -3500,7 +3528,12 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       scheduleSync(0);
     });
     video.on("playing", () => {
-      state.videoWaiting = false;
+      // Only clear videoWaiting when the browser truly has enough data (readyState >= 3).
+      // playing can fire with readyState=2 during thin-buffer situations; clearing here
+      // would allow audio to restart before the next "waiting" arrives.
+      if (getVideoReadyState() >= HAVE_FUTURE_DATA) {
+        state.videoWaiting = false;
+      }
       state.startupAudioHoldUntil = 0;
       state.videoStallSince = 0;
 
@@ -3753,6 +3786,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     audio.addEventListener("canplaythrough", onReadyish, { passive: true });
     audio.addEventListener("loadeddata", onReadyish, { passive: true });
     videoEl.addEventListener("canplay", () => {
+      // canplay fires at readyState >= HAVE_FUTURE_DATA — safe to clear the stall flag.
       state.videoWaiting = false;
       state.videoStallSince = 0;
       onReadyish();
@@ -4274,7 +4308,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }, 100);
   scheduleSync(0);
 });
- document.addEventListener('keydown', function(event) {
+document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
         return;
