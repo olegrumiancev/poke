@@ -363,8 +363,7 @@
           </p>
         </details>
       </section>
-
- <section id="stats" aria-labelledby="stats-heading">
+<section id="stats" aria-labelledby="stats-heading">
   <h2 id="stats-heading" class="section">How we improve Poke <code>/api/stats</code></h2>
 
   <p>
@@ -404,6 +403,53 @@
     Importantly, this approach relies only on <strong>aggregate technical signals</strong> rather than
     tracking individual people. The goal is to improve the software while respecting user privacy.
   </p>
+
+  <details>
+    <summary><strong>Why this is not user tracking</strong></summary>
+
+    <p>
+      Traditional tracking systems try to follow a person across time, pages, sessions, or even across multiple websites.
+      Their goal is usually to build a profile: what someone watches, what they click, what device they use,
+      how often they return, what interests they may have, and sometimes even how to target or influence them later.
+      Poke’s telemetry system is not built for that purpose and does not operate that way.
+    </p>
+
+    <p>
+      Poke does <strong>not</strong> use third-party analytics, ad-tech scripts, invisible pixels, account-based profiling,
+      or cross-site identifiers. It does not collect IP addresses as part of the telemetry data described here,
+      does not store personal names or email addresses, does not tie these events to a login account,
+      and does not expose individual anonymous viewer IDs through the public API.
+      That matters because those are the ingredients normally used to turn “usage data” into actual user surveillance.
+    </p>
+
+    <p>
+      What Poke keeps instead is a very small local count of anonymous events. The point is not
+      “who is this person?” or “what is this person’s private browsing history?”
+      The point is only “what is happening on this instance in the aggregate?”
+      Those are very different goals. Aggregate operational statistics are about maintaining software.
+      Tracking is about following people.
+    </p>
+
+    <p>
+      Another important difference is that this telemetry system stays <strong>local to the instance</strong>.
+      The counts are stored on the same server running Poke and are not sent to outside analytics providers.
+      That means there is no external company receiving a stream of behavioral data, combining it with other websites,
+      or attempting to build a larger identity graph around users.
+    </p>
+
+    <p>
+      The anonymous viewer ID used here is also intentionally limited in purpose.
+      It exists only so the instance can avoid treating the same browser like a brand new user every single time.
+      It is not public, it is not shared with third parties, and it is not used to create a personal profile.
+      In other words, it is a small anti-overcounting tool, not a surveillance tool.
+    </p>
+
+    <p>
+      That is why we consider this kind of telemetry a good thing when done carefully:
+      it lets free software improve itself using broad technical patterns without resorting to invasive analytics.
+      It is a privacy-preserving compromise between learning absolutely nothing and collecting far too much.
+    </p>
+  </details>
 
   <ul>
     <li><strong>Enabled by default.</strong> Instance operators may disable the stats system entirely in the server configuration.</li>
@@ -457,6 +503,136 @@
     </li>
   </ul>
 
+  <details>
+    <summary><strong>Why the video ID is recorded</strong></summary>
+
+    <p>
+      The video ID is recorded because without it, the server would have no idea what content is actually being used.
+      This is one of the most basic signals needed to understand whether the instance is functioning well.
+      For example, knowing which video IDs are requested most often can help instance operators understand
+      what content paths are under the most load, what features matter most to real users,
+      and what parts of the software deserve the most testing and optimization.
+    </p>
+
+    <p>
+      Recording the video ID does <strong>not</strong> mean Poke is trying to create a personal watch history for a person.
+      In this telemetry system, the video ID is used as a counted event inside an aggregate total.
+      The important question is not “what did this specific person watch over time?”
+      but rather “what content is this instance serving most often overall?”
+      That distinction is very important.
+    </p>
+
+    <p>
+      This also helps the project remain practical. A video front-end without any aggregate usage information
+      would have to guess blindly which features are heavily used and which ones are not.
+      Minimal video ID counting gives maintainers a grounded way to make technical decisions while still avoiding
+      personal surveillance.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Why an anonymous random viewer ID is stored in localStorage</strong></summary>
+
+    <p>
+      The anonymous viewer ID exists so the instance can estimate how many distinct browsers have contributed events,
+      instead of counting every request as though it came from a completely different person.
+      Without this, the “total users” number would be badly inflated, because one person watching multiple videos
+      or returning later would look like many separate users.
+    </p>
+
+    <p>
+      This ID is intentionally random and anonymous. It is not a login, not an account name, not an email address,
+      not a cookie-based ad identifier, and not something designed to follow you across the web.
+      It lives in your browser’s <code>localStorage</code> only so this instance can avoid obvious overcounting.
+    </p>
+
+    <p>
+      Using <code>localStorage</code> for this purpose is also more transparent than many commercial analytics approaches.
+      It is a simple browser-side value used by the site itself, not a hidden third-party tracking mechanism.
+      It does not, by itself, reveal who you are. Its job is narrow: help the server treat repeated local activity
+      from the same browser as one anonymous viewer instead of many.
+    </p>
+
+    <p>
+      In other words, this is not there to identify you. It is there to make the aggregate numbers less wrong.
+      That is a good privacy-preserving use of a browser-side identifier:
+      limited scope, no third-party sharing, no personal data, and a clear operational purpose.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Why the browser family is recorded</strong></summary>
+
+    <p>
+      Browser-family information helps maintainers understand compatibility.
+      If a bug affects Firefox but not Chromium-based browsers, or if a UI issue mostly affects Safari users,
+      aggregate browser totals make it easier to know how important that issue is and where testing effort should go.
+    </p>
+
+    <p>
+      The telemetry system records only the broad browser family, such as Firefox, Chromium, or Safari.
+      It does <strong>not</strong> keep the full user-agent string for fingerprinting purposes.
+      This matters because the full user-agent string can contain much more detailed information,
+      while a browser-family label is a much coarser, safer technical signal.
+    </p>
+
+    <p>
+      That makes this data useful without being invasive. The goal is simply to answer questions like:
+      “Do we need to spend more time testing Firefox?” or “Are most of our users on Chromium-based browsers?”
+      Those are legitimate software maintenance questions, and collecting the browser family is a reasonable,
+      privacy-conscious way to answer them.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Why the operating system family is recorded</strong></summary>
+
+    <p>
+      Operating system family information is recorded for the same general reason as browser family:
+      compatibility and maintenance. A video front-end may behave differently on Android, GNU/Linux, Windows,
+      macOS, or iOS because of media handling differences, browser engine differences, UI limitations,
+      performance constraints, or platform-specific quirks.
+    </p>
+
+    <p>
+      Knowing the broad operating system family helps maintainers understand what environments are most common
+      and where fixes or testing time are likely to help the most people.
+      For example, if a large share of users are on Android, then mobile layout issues become especially important.
+      If GNU/Linux usage is strong, then desktop media and free software browser compatibility may deserve extra attention.
+    </p>
+
+    <p>
+      Again, this is collected at a broad family level rather than in an overly detailed form.
+      The point is not to fingerprint a machine. The point is to get a high-level picture of what platforms
+      the software needs to support well.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Why this can be a good thing</strong></summary>
+
+    <p>
+      Privacy is not improved only by collecting nothing at all. In practice, software projects sometimes need
+      a very small amount of anonymous operational feedback in order to stay healthy, fix bugs, and serve users well.
+      The real privacy question is not simply “is any data collected?”
+      but “what data is collected, why, how much, where does it go, and can it be abused?”
+    </p>
+
+    <p>
+      In Poke’s case, the design tries to answer those questions in the least invasive way possible.
+      The telemetry is local-only, aggregate-focused, transparent in source code, limited in scope,
+      and optional to disable by instance operators or opt out of from the browser side.
+      That is very different from commercial tracking systems whose purpose is to identify, profile, target,
+      or monetize people.
+    </p>
+
+    <p>
+      So yes: this can be a good thing. It helps improve reliability, compatibility, and maintenance,
+      while avoiding the much worse alternative of opaque third-party surveillance analytics.
+      A small amount of well-scoped anonymous telemetry can be a privacy-respecting tool for better free software.
+    </p>
+  </details>
+
   <p>
     Because the system relies only on anonymous counts, it cannot reconstruct an individual person's viewing history.
     The random viewer ID stored in your browser is used only to avoid counting the same browser repeatedly as new users,
@@ -486,6 +662,7 @@
     or disable the stats system when running their own Poke instance.
   </p>
 </section>
+
 <section id="cookies" aria-labelledby="cookies-heading">
   <h2 id="cookies-heading" class="section">Cookies &amp; Local Storage</h2>
   <ul>
