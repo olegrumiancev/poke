@@ -1,13 +1,12 @@
 //  At Poke, we do not collect or share any personal information. That's our privacy promise in a nutshell. To improve Poke we use a completely anonymous, local-only way to figure out how the site is being used. 
 //Any anonymous stats recorded by this instance come from the /api/stats system. You can read exactly what is measured (and what is not) in our privacy policy.
 
-
 const fs = require("fs")
 const path = require("path")
 
 const telemetryConfig = { telemetry: true }
 
- const statsFile = path.join(__dirname, "stats.json")
+const statsFile = path.join(__dirname, "stats.json")
 const statsFileV2 = path.join(__dirname, "stats-v2.json")
 
 const getEmptyStats = () => ({
@@ -36,7 +35,7 @@ function parseUA(ua) {
   return { browser, os }
 }
 
- function safeRead(filePath) {
+function safeRead(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null
     return JSON.parse(fs.readFileSync(filePath, "utf8"))
@@ -106,7 +105,6 @@ module.exports = function (app, config, renderTemplate) {
     }
   }
 
-  // Periodically save to disk
   setInterval(() => {
     if (!needsSave) return
 
@@ -119,7 +117,6 @@ module.exports = function (app, config, renderTemplate) {
     })
   }, 5000)
 
-  // POST: Write stats
   app.post(["/api/stats", "/api/nexus"], (req, res) => {
     if (!telemetryConfig.telemetry) return res.status(200).json({ ok: true })
 
@@ -141,7 +138,6 @@ module.exports = function (app, config, renderTemplate) {
     res.json({ ok: true })
   })
 
-  // OPT-OUT Page
   app.get("/api/stats/optout", (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -280,7 +276,6 @@ module.exports = function (app, config, renderTemplate) {
 </html>`)
   })
 
-  // GET Stats (JSON & Human)
   app.get("/api/stats", (req, res) => {
     const view = (req.query.view || "").toString()
 
@@ -398,6 +393,11 @@ module.exports = function (app, config, renderTemplate) {
     .hero-main p,
     .hero-side p{
       margin:.4rem 0 0 0;
+    }
+    .hero-side{
+      display:flex;
+      flex-direction:column;
+      gap:16px;
     }
     .mini-stat{
       display:flex;
@@ -709,6 +709,11 @@ module.exports = function (app, config, renderTemplate) {
           <div class="mini-stat-label">user id count</div>
           <div id="user-id-count" class="mini-stat-value">Loading…</div>
         </div>
+
+        <div class="mini-stat">
+          <div class="mini-stat-label">total video ids seen in total</div>
+          <div id="total-video-id-count" class="mini-stat-value">Loading…</div>
+        </div>
       </div>
     </div>
 
@@ -817,6 +822,7 @@ module.exports = function (app, config, renderTemplate) {
     const osBreakdown = document.getElementById("os-breakdown");
     const browserBreakdown = document.getElementById("browser-breakdown");
     const userIdCount = document.getElementById("user-id-count");
+    const totalVideoIdCount = document.getElementById("total-video-id-count");
     const limitWarning = document.getElementById("limit-warning");
     const segButtons = document.querySelectorAll(".seg-btn");
     const panels = document.querySelectorAll(".panel");
@@ -1211,6 +1217,7 @@ module.exports = function (app, config, renderTemplate) {
       videoLimitSelect.disabled = true;
       paginationWrap.style.display = "none";
       userIdCount.textContent = "0";
+      totalVideoIdCount.textContent = "0";
       osBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
       browserBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
     } else {
@@ -1225,6 +1232,7 @@ module.exports = function (app, config, renderTemplate) {
         videoLimitSelect.disabled = true;
         paginationWrap.style.display = "none";
         userIdCount.textContent = "Opt-out active";
+        totalVideoIdCount.textContent = "Opt-out active";
         osBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
         browserBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
       } else {
@@ -1236,10 +1244,12 @@ module.exports = function (app, config, renderTemplate) {
             var browsers = data.browsers || {};
             var os = data.os || {};
             var totalUsers = data.totalUsers || 0;
+            var totalVideoIds = Object.keys(videos).length;
 
             allVideos = videos;
             recentVideoIds = recent;
             userIdCount.textContent = String(totalUsers);
+            totalVideoIdCount.textContent = String(totalVideoIds);
 
             renderBreakdown(osBreakdown, os, "os");
             renderBreakdown(browserBreakdown, browsers, "browser");
@@ -1261,6 +1271,7 @@ module.exports = function (app, config, renderTemplate) {
             videoLimitSelect.disabled = true;
             paginationWrap.style.display = "none";
             userIdCount.textContent = "Error";
+            totalVideoIdCount.textContent = "Error";
             osBreakdown.innerHTML = '<div class="breakdown-empty">Error loading OS data.</div>';
             browserBreakdown.innerHTML = '<div class="breakdown-empty">Error loading browser data.</div>';
           });
