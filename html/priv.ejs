@@ -364,51 +364,98 @@
         </details>
       </section>
 
-      <section id="stats" aria-labelledby="stats-heading">
-        <h2 id="stats-heading" class="section">How we improve Poke <code>/api/stats</code></h2>
-        <p>
-          How does Poke improve itself while keeping your privacy and browsing history anonymous?
-          By using <strong>anonymous, local-only usage counts</strong> instead of personal profiles, trackers, or third-party analytics.
-        </p>
-        <p>
-          This instance of Poke keeps a tiny, privacy-respecting statistics file so we can see things like:
-          “Which videos are watched the most?” and “What browsers/OSes should we test for?”
-          None of this is tied to your real identity or browsing history.
-        </p>
-        <ul>
-          <li><strong>Enabled by default.</strong> Instance operators may disable it in server configuration.</li>
-          <li><strong>What is recorded:</strong>
-            <ul>
-              <li>Video ID you watched e.g. <code>?v=…</code></li>
-              <li>An anonymous random viewer ID stored in <strong>localStorage</strong> not a cookie</li>
-              <li>Browser type e.g., Firefox, Chromium</li>
-              <li>Operating system family e.g., GNU/Linux, Android</li>
-            </ul>
-          </li>
-          <li><strong>What is <em>not</em> collected:</strong>
-            <ul>
-              <li>No IP address</li>
-              <li>No cookies</li>
-              <li>No account data</li>
-              <li>No full user-agent string for fingerprinting</li>
-              <li>No personal information</li>
-              <li>No third-party analytics or ads</li>
-            </ul>
-          </li>
-          <li><strong>Where it lives:</strong> the counts are stored on this server only and are never sent to third parties.</li>
-          <li><strong>Public API behavior:</strong> <code>/api/stats</code> exposes only aggregate data
-            e.g., top 10 most-watched videos, browser/OS totals, total unique users. Individual anonymous IDs are never shown.</li>
-        </ul>
-        <p>
-          Poke is free software — you can inspect the source code to verify this behavior, fork it, or turn the stats feature off when self-hosting.
-        </p>
-        <p>
-          If you prefer not to contribute to these anonymous counts from this browser, you can opt out at any time at
-          <a href="/api/stats/optout">/api/stats/optout</a>.
-          That page stores a simple opt-out flag in your browser’s <code>localStorage</code>, and Poke will stop sending stats from that browser.
-        </p>
-      </section>
+ <section id="stats" aria-labelledby="stats-heading">
+  <h2 id="stats-heading" class="section">How we improve Poke <code>/api/stats</code></h2>
 
+  <p>
+    Poke improves itself using a small <strong>anonymous statistics system</strong> built directly into the server.
+    Instead of tracking people, building behavioral profiles, or sending data to third-party analytics platforms,
+    Poke simply counts events locally so the software can understand how it is used in general.
+  </p>
+
+  <p>
+    When someone watches a video through Poke, the server may record a single anonymous event.
+    These events are stored only on the instance running Poke and are used to answer simple questions such as
+    which videos are viewed the most, which browsers are commonly used, and which operating systems the interface
+    should be tested on.
+  </p>
+
+  <p>
+    The system is intentionally minimal. It avoids collecting anything that could identify a person or build a browsing profile.
+    Instead, it records only high-level technical counts needed to maintain and improve the software.
+  </p>
+
+  <ul>
+    <li><strong>Enabled by default.</strong> Instance operators may disable the stats system entirely in the server configuration.</li>
+
+    <li><strong>What is recorded for each anonymous view:</strong>
+      <ul>
+        <li>The video ID that was watched (for example <code>?v=...</code>)</li>
+        <li>An anonymous random viewer ID stored locally in your browser using <strong>localStorage</strong> (not a cookie)</li>
+        <li>The browser family (for example Firefox, Chromium, Safari)</li>
+        <li>The operating system family (for example GNU/Linux, Android, Windows)</li>
+      </ul>
+    </li>
+
+    <li><strong>What is derived from these counts:</strong>
+      <ul>
+        <li>Total number of anonymous viewer IDs seen by this instance</li>
+        <li>Aggregate browser and operating system usage statistics</li>
+        <li>Top video IDs viewed on this instance</li>
+        <li>A short rolling list of recently viewed video IDs</li>
+        <li>An approximate <em>estimated total user count</em> based on anonymous usage patterns</li>
+      </ul>
+    </li>
+
+    <li><strong>What is <em>not</em> collected:</strong>
+      <ul>
+        <li>No IP addresses</li>
+        <li>No cookies</li>
+        <li>No login or account data</li>
+        <li>No personal information</li>
+        <li>No full user-agent string used for fingerprinting</li>
+        <li>No cross-site tracking</li>
+        <li>No advertising identifiers</li>
+        <li>No third-party analytics services</li>
+      </ul>
+    </li>
+
+    <li><strong>Where the data is stored:</strong>
+      <ul>
+        <li>All counts are stored locally on the Poke server in a small statistics file</li>
+        <li>The data never leaves the server and is never sent to outside analytics providers</li>
+        <li>Only aggregated totals are exposed through the public API</li>
+      </ul>
+    </li>
+
+    <li><strong>Public API behavior:</strong>
+      <ul>
+        <li><code>/api/stats</code> returns only aggregate numbers such as browser totals, OS totals, and popular video IDs</li>
+        <li>Individual anonymous viewer IDs are never exposed</li>
+        <li>The stats page <code>/api/stats?view=human</code> simply visualizes these aggregates</li>
+      </ul>
+    </li>
+  </ul>
+
+  <p>
+    Because the system relies only on anonymous counts, it cannot reconstruct an individual person's viewing history.
+    The random viewer ID stored in your browser is used only to avoid counting the same browser repeatedly as new users,
+    and it is never shared publicly.
+  </p>
+
+  <p>
+    If you prefer not to contribute even these anonymous counts, you can opt out at any time at
+    <a href="/api/stats/optout">/api/stats/optout</a>.
+    This page stores a simple opt-out flag in your browser’s <code>localStorage</code>, and Poke will stop sending stats
+    from that browser entirely.
+  </p>
+
+  <p>
+    Poke is free software. The full implementation of the stats system is available in the source code,
+    so anyone can inspect exactly what is collected, verify the privacy design, or disable the feature
+    when running their own Poke instance.
+  </p>
+</section> 
 <section id="cookies" aria-labelledby="cookies-heading">
   <h2 id="cookies-heading" class="section">Cookies &amp; Local Storage</h2>
   <ul>
