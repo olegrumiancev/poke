@@ -128,7 +128,39 @@ document.addEventListener("DOMContentLoaded", () => {
     return null;
   };
   const hasExternalAudio = !!audio && audio.tagName === "AUDIO" && !!pickAudioSrc();
-  const coupledMode = hasExternalAudio && qua !== "medium";
+  // isMuxedVideo: true when the video is a single muxed file (audio+video combined).
+  // Detected by: quality=medium param OR a <source label="sd..." selected="true"> element
+  // on the video element. In muxed mode there is no separate audio track to synchronize.
+  const isMuxedVideo = (() => {
+    if (qua === "medium") return true;
+    try {
+      // Check all <source> children of the video element for SD/muxed labels
+      const sources = videoEl?.querySelectorAll?.("source") || [];
+      for (const src of sources) {
+        const selected = src.getAttribute("selected");
+        if (selected !== "true") continue;
+        const label = (src.getAttribute("label") || "").toLowerCase().trim();
+        // SD resolutions (360p, 480p) are always muxed; also allow explicit "mux" tag
+        if (
+          label === "sd360" || label === "sd480" ||
+          label.startsWith("sd") ||
+          label === "360p" || label === "480p" ||
+          label.includes("360") || label.includes("480") ||
+          label.includes("mux") || label.includes("muxed")
+        ) return true;
+      }
+      // Also check video.js sources API if available
+      if (typeof video?.currentSources === "function") {
+        const vjsSrcs = video.currentSources() || [];
+        for (const s of vjsSrcs) {
+          const lbl = (s.label || "").toLowerCase();
+          if (lbl.includes("sd") || lbl === "360p" || lbl === "480p") return true;
+        }
+      }
+    } catch {}
+    return false;
+  })();
+  const coupledMode = hasExternalAudio && !isMuxedVideo;
   // When audio element exists but has no source (e.g. quality=medium sets src=""),
   // silence and disable it immediately so it can never interfere with video playback,
   // audio focus/session, or event handling.
@@ -323,6 +355,12 @@ document.addEventListener("DOMContentLoaded", () => {
     audioZeroVolumeConfirmed: false,
     rapidPlayPauseCount: 0,
     rapidPlayPauseResetAt: 0,
+    // Separate user-click spam tracker — only counts deliberate pointer/key events,
+    // NOT background/auto play-pause events. Used for audio protection.
+    userClickSpamCount: 0,
+    userClickSpamWindowStart: 0,
+    userClickSpamActive: false,
+    userClickSpamUntil: 0,
     audioPlayAttemptCount: 0,
     audioPlayAttemptResetAt: 0,
     backgroundAutoplayTriggered: false,
@@ -519,11 +557,15 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   })();
 
-  // ─── BackgroundPlaybackManagerManager ─────────────────────────────
+  // ─── BackgroundPlaybackManagerManager (BPMM) ─────────────────────────────
   // Higher-level coordinator built on top of BackgroundPlaybackManager.
   // Prevents the notorious play→pause→play oscillation in background by tracking
   // HOW MANY TIMES the browser has forced a pause/resume cycle and applying
   // increasing backoff + an oscillation circuit-breaker.
+  //
+  // Relationship to BPM:
+  //  BPM  = low-level state machine (phase, suppression windows, backoff)
+  //  BPMM = policy layer (oscillation detection, success tracking, locking)
   //
   // Rule: background auto-resume decisions ALWAYS go through BPMM.shouldAttemptBgResume().
   // ────────────────────────────────────────────────────────────────────────────
@@ -596,6 +638,218 @@ document.addEventListener("DOMContentLoaded", () => {
   })();
 
 
+  // ─── MediumQualityManager ────────────────────────────────────────────────────
+  // Dedicated state machine for quality=medium / muxed SD video (no separate audio).
+  //
+  // Root cause of the quality=medium "can't pause" bug:
+  //   video.on("playing") fires AFTER video.on("pause") in some browser sequences.
+  //   When wantsStartupAutoplay()=true it was resetting intendedPlaying=true, then
+  //   runSync saw intendedPlaying=true + video.paused() → execProgrammaticVideoPlay()
+  //   → video restarted despite user having pressed pause.
+  //
+  // This manager owns the definitive user-intent state for non-coupled mode and
+  // provides authoritative guards that override any automatic resume logic.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const MediumQualityManager = (() => {
+    const enabled = !coupledMode;
+
+    let _intentPaused = false;  // true = user wants video stopped
+    let _lastUserPauseAt = 0;
+    let _lastUserPlayAt = 0;
+    let _pauseSerial = 0;       // incremented on every user pause, used to detect stale resumes
+
+    const INTENT_WINDOW_MS = 4000; // intent stays "fresh" for 4s
+
+    function markUserPaused() {
+      if (!enabled) return;
+      _intentPaused = true;
+      _lastUserPauseAt = performance.now();
+      _pauseSerial++;
+    }
+
+    function markUserPlayed() {
+      if (!enabled) return;
+      _intentPaused = false;
+      _lastUserPlayAt = performance.now();
+    }
+
+    // True when user has explicitly paused within the last INTENT_WINDOW_MS.
+    // Used to block automatic resumes (runSync watchdog, "playing" event override, etc).
+    function userRecentlyPaused() {
+      return _intentPaused && (performance.now() - _lastUserPauseAt) < INTENT_WINDOW_MS;
+    }
+
+    // True when user has explicitly played within the last INTENT_WINDOW_MS.
+    // Used to block automatic pause-coercion from background/transition guards.
+    function userRecentlyPlayed() {
+      return !_intentPaused && (performance.now() - _lastUserPlayAt) < INTENT_WINDOW_MS;
+    }
+
+    // Primary guard: should any automatic video resume be blocked right now?
+    // Call this before execProgrammaticVideoPlay() or setting intendedPlaying=true
+    // in response to non-user events in non-coupled mode.
+    function shouldBlockAutoResume() {
+      if (!enabled) return false;
+      return userRecentlyPaused();
+    }
+
+    // Has the pause intent expired? Used by runSync to know when it's safe to
+    // try restarting a stalled video (e.g. network recovery after a long stall).
+    function intentExpired() {
+      if (!enabled) return true;
+      if (!_intentPaused) return true;
+      return (performance.now() - _lastUserPauseAt) >= INTENT_WINDOW_MS;
+    }
+
+    function getPauseSerial() { return _pauseSerial; }
+
+    return {
+      get enabled() { return enabled; },
+      markUserPaused,
+      markUserPlayed,
+      userRecentlyPaused,
+      userRecentlyPlayed,
+      shouldBlockAutoResume,
+      intentExpired,
+      getPauseSerial,
+      get intentPaused() { return _intentPaused; },
+    };
+  })();
+
+
+  // ─── PlaybackStabilityManager ────────────────────────────────────────────────
+  // Watches actual playback state vs intended state and corrects mismatches.
+  // Rate-limited to prevent oscillation. Runs from the heartbeat every 1.5s.
+  //
+  // Unlike runSync (which handles coupled A/V sync), this manager focuses purely
+  // on video-only stability:
+  //   - Unexpected pauses when user wants to play (network stalls, browser quirks)
+  //   - Unexpected plays when user wants to pause (autoplay override bugs)
+  //   - Monitors video position to detect frozen/stalled playback
+  // ─────────────────────────────────────────────────────────────────────────────
+  const PlaybackStabilityManager = (() => {
+    let _lastCorrectionAt = 0;
+    let _correctionCount = 0;
+    let _correctionWindowStart = 0;
+    let _lastCheckedVT = -1;
+    let _lastCheckedVTAt = 0;
+    let _frozenSince = 0;          // when video appears frozen (position stuck)
+    let _lastAutoResumeSuppressedAt = 0;
+
+    const CORRECTION_COOLDOWN_MS = 1200;  // minimum gap between corrections
+    const MAX_CORRECTIONS_IN_WINDOW = 4;  // max corrections per 10s window
+    const CORRECTION_WINDOW_MS = 10000;
+    const FROZEN_THRESHOLD_MS = 4000;     // video stuck at same position for 4s = frozen
+    const FROZEN_THRESHOLD_POS = 0.05;    // position change < 0.05s = frozen
+
+    function _canCorrect() {
+      if ((performance.now() - _lastCorrectionAt) < CORRECTION_COOLDOWN_MS) return false;
+      const n = performance.now();
+      if ((n - _correctionWindowStart) > CORRECTION_WINDOW_MS) {
+        _correctionCount = 0;
+        _correctionWindowStart = n;
+      }
+      return _correctionCount < MAX_CORRECTIONS_IN_WINDOW;
+    }
+
+    function _markCorrection() {
+      _lastCorrectionAt = performance.now();
+      const n = performance.now();
+      if ((n - _correctionWindowStart) > CORRECTION_WINDOW_MS) {
+        _correctionCount = 0;
+        _correctionWindowStart = n;
+      }
+      _correctionCount++;
+    }
+
+    // Called from heartbeat. Checks actual vs intended state and corrects if safe.
+    function check(stateRef, getVideoPausedFn, execPlayFn, execPauseFn) {
+      if (!stateRef || !getVideoPausedFn) return;
+      try {
+        const n = performance.now();
+        const videoPaused = getVideoPausedFn();
+        const intending = stateRef.intendedPlaying;
+        const isHidden = document.visibilityState === "hidden";
+        const inGrace = (n - stateRef.lastBgReturnAt) < 8000;
+        const isSeeking = stateRef.seeking || stateRef.syncing || stateRef.restarting;
+        const isInFlight = stateRef.bgResumeInFlight || stateRef.seekResumeInFlight;
+
+        // Track frozen playback (position not advancing despite intendedPlaying)
+        try {
+          if (!coupledMode && intending && !videoPaused && !isHidden && !isSeeking) {
+            let vt = 0;
+            try { vt = Number(stateRef.lastVT || 0); } catch {}
+            if (Math.abs(vt - _lastCheckedVT) < FROZEN_THRESHOLD_POS && _lastCheckedVT >= 0) {
+              if (!_frozenSince) _frozenSince = n;
+            } else {
+              _frozenSince = 0;
+              _lastCheckedVT = vt;
+              _lastCheckedVTAt = n;
+            }
+          } else {
+            _frozenSince = 0;
+          }
+        } catch {}
+
+        // Correction 1: Video should be playing but is unexpectedly paused
+        if (intending && videoPaused && !isHidden && !inGrace && !isSeeking && !isInFlight) {
+          // Check all blocking conditions before attempting a correction
+          const noUserPause = !stateRef.userPauseUntil || n >= stateRef.userPauseUntil;
+          const noMediumBlock = !MediumQualityManager.shouldBlockAutoResume();
+          const noMediaForced = !stateRef.mediaForcedPauseUntil || n >= stateRef.mediaForcedPauseUntil;
+          const notInStartupHold = !stateRef.strictBufferHold;
+
+          if (noUserPause && noMediumBlock && noMediaForced && notInStartupHold && _canCorrect()) {
+            try { execPlayFn && execPlayFn(); } catch {}
+            _markCorrection();
+          }
+        }
+
+        // Correction 2: Video should be paused but is unexpectedly playing
+        if (!intending && !videoPaused && !isSeeking &&
+            !stateRef.isProgrammaticVideoPlay && !isInFlight) {
+          // Only correct if we're confident this isn't a transient/buffering resume
+          const notInTxn = n >= (stateRef.mediaLockUntil || 0);
+          const notInStartupGrace = stateRef.firstPlayCommitted;
+          if (notInTxn && notInStartupGrace && _canCorrect()) {
+            try { execPauseFn && execPauseFn(); } catch {}
+            _markCorrection();
+          }
+        }
+
+        // Correction 3: Detect if autoplay keep-alive is fighting a user pause (non-coupled)
+        if (!coupledMode && !intending && !videoPaused && !isSeeking) {
+          _lastAutoResumeSuppressedAt = n;
+        }
+      } catch {}
+    }
+
+    function getLastCorrectionAge() {
+      return performance.now() - _lastCorrectionAt;
+    }
+
+    function isFrozen() {
+      return _frozenSince > 0 && (performance.now() - _frozenSince) > FROZEN_THRESHOLD_MS;
+    }
+
+    function resetFrozen() { _frozenSince = 0; }
+
+    function onUserAction() {
+      // Reset oscillation counters on deliberate user interaction
+      _correctionCount = 0;
+      _correctionWindowStart = 0;
+    }
+
+    return {
+      check,
+      isFrozen,
+      resetFrozen,
+      onUserAction,
+      getLastCorrectionAge,
+    };
+  })();
+
+
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
   const HAVE_ENOUGH_DATA = 4;
@@ -627,6 +881,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const RAPID_PLAY_PAUSE_WINDOW_MS = 2000;
   // Increased from 10→20: spurious play/pause events fire during tab switches, buffering, seeks.
   const MAX_RAPID_PLAY_PAUSE = 20;
+  // User-initiated spam detection — separate from the loop detector which counts all events.
+  // Only pointer/keyboard events count toward this. Audio protection only fires for genuine spam.
+  const USER_SPAM_CLICK_WINDOW_MS = 1200;  // window to count user clicks in
+  const USER_SPAM_CLICK_THRESHOLD = 5;     // ≥5 user clicks in 1.2s = spam
+  const USER_SPAM_ACTIVE_MS = 1500;        // how long spam state stays active after threshold
   const MAX_AUDIO_PLAY_ATTEMPTS = 8;
   const AUDIO_PLAY_ATTEMPT_RESET_MS = 5000;
   const AUDIO_STARTUP_PLAY_RETRY_MS = 300;
@@ -778,6 +1037,8 @@ document.addEventListener("DOMContentLoaded", () => {
     state.startupKickDone = true;
     state.startupPhase = false;
     state.playSessionId = (state.playSessionId || 0) + 1;
+    MediumQualityManager.markUserPaused(); // MQM: record authoritative user pause intent
+    PlaybackStabilityManager.onUserAction();
     clearStartupAutoplayRetryTimer();
     state.lastUserActionTime = now();
     state.bgSuppressionSessionCount = 0;
@@ -816,6 +1077,8 @@ document.addEventListener("DOMContentLoaded", () => {
     state.rapidToggleDetected = false;
     state.rapidToggleUntil = 0;
     state.loopPreventionCooldownUntil = 0;
+    MediumQualityManager.markUserPlayed(); // MQM: clear any pending pause intent
+    PlaybackStabilityManager.onUserAction();
     const until = now() + Math.max(0, Number(ms) || 0);
     state.userPlayUntil = Math.max(state.userPlayUntil, until);
     state.userPauseUntil = 0;
@@ -1185,15 +1448,31 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function checkRapidPlayPause() {
-    const nowTs = now();
-    if ((nowTs - state.rapidPlayPauseResetAt) > RAPID_PLAY_PAUSE_WINDOW_MS) {
-      state.rapidPlayPauseCount = 0;
-      state.rapidPlayPauseResetAt = nowTs;
+    // NOTE: This function is called from audio play path.
+    // Only returns true when a *user* has genuinely spammed the button repeatedly.
+    // Background events (tab switches, buffering, autoplay) must NOT trigger this.
+    // We use the separate userClickSpamActive flag which is only set by user gestures.
+    if (state.userClickSpamActive && now() < state.userClickSpamUntil) {
+      return true;
     }
-    state.rapidPlayPauseCount++;
-    if (state.rapidPlayPauseCount >= MAX_RAPID_PLAY_PAUSE) {
-      state.rapidToggleDetected = true;
-      state.rapidToggleUntil = nowTs + 2000;
+    state.userClickSpamActive = false;
+    return false;
+  }
+
+  // Track a deliberate user play/pause click for spam detection.
+  // Call this from onPressStart / onKeyDown (NOT from event handlers for background events).
+  function trackUserClickForSpam() {
+    const nowTs = now();
+    if ((nowTs - state.userClickSpamWindowStart) > USER_SPAM_CLICK_WINDOW_MS) {
+      state.userClickSpamCount = 0;
+      state.userClickSpamWindowStart = nowTs;
+    }
+    state.userClickSpamCount++;
+    if (state.userClickSpamCount >= USER_SPAM_CLICK_THRESHOLD) {
+      state.userClickSpamActive = true;
+      state.userClickSpamUntil = nowTs + USER_SPAM_ACTIVE_MS;
+      state.userClickSpamCount = 0;
+      state.userClickSpamWindowStart = nowTs;
       return true;
     }
     return false;
@@ -2867,6 +3146,7 @@ document.addEventListener("DOMContentLoaded", () => {
           !userPauseLockActive() && !userPauseIntentActive() &&
           !mediaSessionForcedPauseActive() &&
           !BackgroundPlaybackManager.shouldSuppressAutoPause() &&
+          !MediumQualityManager.shouldBlockAutoResume() &&
           state.userPauseIntentPresetAt === 0) {
         try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
       }
@@ -3350,6 +3630,18 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
+      // ── PlaybackStabilityManager check ──────────────────────────────────────
+      // Runs every heartbeat to detect and correct state mismatches between
+      // intended play state and actual video play state. Rate-limited internally.
+      if (state.firstPlayCommitted && !state.startupPhase) {
+        PlaybackStabilityManager.check(
+          state,
+          getVideoPaused,
+          execProgrammaticVideoPlay,
+          execProgrammaticVideoPause
+        );
+      }
+
       state.heartbeatTimer = setTimeout(beat, HEARTBEAT_INTERVAL_MS);
     };
     state.heartbeatTimer = setTimeout(beat, HEARTBEAT_INTERVAL_MS);
@@ -3481,6 +3773,11 @@ document.addEventListener("DOMContentLoaded", () => {
       // the media play/pause event fires before the RAF in onClick sets the intent markers,
       // so the play handler must see a recent lastUserActionTime to allow the event through.
       state.lastUserActionTime = now();
+      // Track user clicks for spam detection (only deliberate pointer events count).
+      // This is the ONLY place we track clicks for audio spam protection.
+      if (isPlayControlTarget(event.target) || isTechSurfaceTarget(event.target)) {
+        trackUserClickForSpam();
+      }
       // Pre-set user intent presets immediately on every pointer event.
       // These are consumed by video.on('play'/'pause') for bulletproof intent
       // detection regardless of visibility/transition state (fixes quality=medium).
@@ -3699,6 +3996,7 @@ document.addEventListener("DOMContentLoaded", () => {
           (now() - state.userPlayIntentPresetAt) < 2000 &&
           document.visibilityState === "visible") {
         state.userPlayIntentPresetAt = 0; // consume
+        MediumQualityManager.markUserPlayed(); // MQM: clear any pending pause block
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
         state.playSessionId++;
@@ -3796,6 +4094,7 @@ document.addEventListener("DOMContentLoaded", () => {
           (now() - state.userPauseIntentPresetAt) < 2000 &&
           document.visibilityState === "visible") {
         state.userPauseIntentPresetAt = 0; // consume
+        MediumQualityManager.markUserPaused(); // MQM: record authoritative user pause
         state.intendedPlaying = false;
         state.bufferHoldIntendedPlaying = false;
         state.playSessionId++;
@@ -3946,6 +4245,27 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
+        // ── CRITICAL FIX: never let autoplay override an explicit user pause ────────
+        // Root cause of quality=medium "can't pause" bug:
+        //   1. User clicks pause → intendedPlaying=false
+        //   2. "playing" fires AFTER "pause" (browser can emit these out of order during
+        //      buffering/preload state changes)
+        //   3. wantsStartupAutoplay()=true → intendedPlaying=true again
+        //   4. runSync sees intendedPlaying=true + videoPaused → restarts video
+        //
+        // Fix: if user has explicitly paused (via any of our intent markers), always
+        // call execProgrammaticVideoPause() instead of re-enabling playing.
+        const userExplicitlyPaused =
+          userPauseLockActive() ||        // userPauseLockUntil fence still active
+          userPauseIntentActive() ||      // userPauseUntil fence still active
+          state.userPauseIntentPresetAt > 0 ||  // preset set on pointerdown
+          MediumQualityManager.shouldBlockAutoResume(); // MQM tracks user pause for 4s
+
+        if (userExplicitlyPaused) {
+          // User pause is authoritative — override autoplay
+          execProgrammaticVideoPause();
+          return;
+        }
         if (wantsStartupAutoplay() || (now() - state.startupPrimeStartedAt) < 2600) {
           clearMediaSessionForcedPause();
           state.intendedPlaying = true;
@@ -4785,6 +5105,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
