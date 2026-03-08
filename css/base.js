@@ -3380,9 +3380,8 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const isUserAction = (now() - state.lastUserActionTime) < 1500;
-
-      if (isUserAction || userPauseIntentActive() || userPauseLockActive()) {
+      // Explicit user pause intent — always honour immediately
+      if (userPauseIntentActive() || userPauseLockActive()) {
         state.intendedPlaying = false;
         state.bufferHoldIntendedPlaying = false;
         state.playSessionId++;
@@ -3392,21 +3391,15 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      // Internal / transient operations — never treat as a real pause
       if (state.isProgrammaticVideoPause || state.restarting || state.seeking) return;
 
-      if (document.visibilityState === "hidden" || isVisibilityTransitionActive() || isAltTabTransitionActive()) {
-        if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
-        return;
-      }
-
-      if (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked()) return;
-
-      if (state.isProgrammaticVideoPlay || state.seekResumeInFlight || state.bgResumeInFlight ||
-          state.videoWaiting || (platform.chromiumOnlyBrowser && chromiumPauseEventSuppressed())) {
+      if (shouldIgnorePauseAsTransient()) {
         scheduleSync(200);
         return;
       }
 
+      // All guards passed — this is a genuine, stable pause
       state.intendedPlaying = false;
       state.bufferHoldIntendedPlaying = false;
       state.playSessionId++;
@@ -4213,7 +4206,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 100);
   scheduleSync(0);
-}); 
+});
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
