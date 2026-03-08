@@ -45,6 +45,54 @@ function safeRead(filePath) {
   }
 }
 
+function sumMetricValues(obj) {
+  return Object.values(obj || {}).reduce((sum, value) => {
+    const n = Number(value) || 0
+    return sum + n
+  }, 0)
+}
+
+function countNonZeroKeys(obj) {
+  return Object.values(obj || {}).reduce((count, value) => {
+    return count + ((Number(value) || 0) > 0 ? 1 : 0)
+  }, 0)
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function estimateTotalUsers(stats) {
+  const exactUsers = Object.keys(stats.users || {}).length
+  const humanViewUsers = Object.keys(stats.humanViewUsers || {}).length
+  const totalRequests = sumMetricValues(stats.browsers)
+  const uniqueBrowsers = countNonZeroKeys(stats.browsers)
+  const uniqueOs = countNonZeroKeys(stats.os)
+
+  if (exactUsers <= 0) return 0
+
+  const viewsPerKnownUser = totalRequests > 0 ? totalRequests / exactUsers : 1
+  const repeatIntensity = clamp((viewsPerKnownUser - 1) / 8, 0, 1)
+
+  const browserDiversityBoost = Math.max(0, uniqueBrowsers - 1) * 0.025
+  const osDiversityBoost = Math.max(0, uniqueOs - 1) * 0.03
+  const diversityFactor = 1 + browserDiversityBoost + osDiversityBoost
+
+  const baseUndercountRate = clamp(0.06 + (1 - repeatIntensity) * 0.09, 0.06, 0.15)
+
+  const humanViewGap = Math.max(0, humanViewUsers - exactUsers)
+  const humanViewBoost = humanViewGap * 0.35
+
+  const estimated = Math.round(
+    Math.max(
+      exactUsers,
+      exactUsers + exactUsers * baseUndercountRate * diversityFactor + humanViewBoost
+    )
+  )
+
+  return estimated
+}
+
 module.exports = function (app, config, renderTemplate) {
   let memoryStats = getEmptyStats()
   let needsSave = false
@@ -295,8 +343,8 @@ module.exports = function (app, config, renderTemplate) {
         }
       });
 
-      updateStatus();
-    })();
+      updateStatus()
+    })()
   </script>
 </body>
 </html>`)
@@ -315,6 +363,7 @@ module.exports = function (app, config, renderTemplate) {
           totalUsers: 0,
           totalVideoIds: 0,
           totalHumanViewUsers: 0,
+          estimatedTotalUsers: 0,
           limit: 0
         })
       }
@@ -339,6 +388,7 @@ module.exports = function (app, config, renderTemplate) {
         totalUsers: Object.keys(memoryStats.users).length,
         totalVideoIds: Object.keys(memoryStats.videos).length,
         totalHumanViewUsers: Object.keys(memoryStats.humanViewUsers).length,
+        estimatedTotalUsers: estimateTotalUsers(memoryStats),
         limit
       })
     }
@@ -775,6 +825,11 @@ module.exports = function (app, config, renderTemplate) {
           <div class="mini-stat-label">unique stats page viewers</div>
           <div id="human-view-user-count" class="mini-stat-value">Loading…</div>
         </div>
+
+        <div class="mini-stat">
+          <div class="mini-stat-label">estimated total users</div>
+          <div id="estimated-total-users" class="mini-stat-value">Loading…</div>
+        </div>
       </div>
     </div>
 
@@ -798,6 +853,13 @@ module.exports = function (app, config, renderTemplate) {
         <h2>About unique stats page viewers</h2>
         <p class="note" style="margin:0;">
           This number counts unique browsers/profiles that opened this stats page using a random local-only identifier stored in browser storage. It is anonymous and local to this Poke instance. If someone clears storage or uses another browser/profile/device, they may count again.
+        </p>
+      </div>
+
+      <div class="section-card">
+        <h2>About estimated total users</h2>
+        <p class="note" style="margin:0;">
+          This is a rough estimate, not an exact count. It starts from the anonymous unique user count, then applies a small adjustment using total request volume, browser diversity, operating system diversity, and the gap between regular anonymous users and unique stats-page viewers. It is meant to be a cautious approximation rather than a hard truth.
         </p>
       </div>
 
@@ -893,6 +955,7 @@ module.exports = function (app, config, renderTemplate) {
     const userIdCount = document.getElementById("user-id-count");
     const totalVideoIdCount = document.getElementById("total-video-id-count");
     const humanViewUserCount = document.getElementById("human-view-user-count");
+    const estimatedTotalUsersEl = document.getElementById("estimated-total-users");
     const limitWarning = document.getElementById("limit-warning");
     const segButtons = document.querySelectorAll(".seg-btn");
     const panels = document.querySelectorAll(".panel");
@@ -1332,6 +1395,7 @@ module.exports = function (app, config, renderTemplate) {
       userIdCount.textContent = "0";
       totalVideoIdCount.textContent = "0";
       humanViewUserCount.textContent = "0";
+      estimatedTotalUsersEl.textContent = "0";
       osBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
       browserBreakdown.innerHTML = '<div class="breakdown-empty">No data (telemetry disabled).</div>';
     } else {
@@ -1348,6 +1412,7 @@ module.exports = function (app, config, renderTemplate) {
         userIdCount.textContent = "Opt-out active";
         totalVideoIdCount.textContent = "Opt-out active";
         humanViewUserCount.textContent = "Opt-out active";
+        estimatedTotalUsersEl.textContent = "Opt-out active";
         osBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
         browserBreakdown.innerHTML = '<div class="breakdown-empty">Opt-out active (no stats loaded).</div>';
       } else {
@@ -1363,12 +1428,14 @@ module.exports = function (app, config, renderTemplate) {
             var totalUsers = data.totalUsers || 0;
             var totalVideoIds = data.totalVideoIds || 0;
             var totalHumanViewUsers = data.totalHumanViewUsers || 0;
+            var estimatedTotalUsers = data.estimatedTotalUsers || 0;
 
             allVideos = videos;
             recentVideoIds = recent;
             userIdCount.textContent = String(totalUsers);
             totalVideoIdCount.textContent = String(totalVideoIds);
             humanViewUserCount.textContent = String(totalHumanViewUsers);
+            estimatedTotalUsersEl.textContent = String(estimatedTotalUsers);
 
             renderBreakdown(osBreakdown, os, "os");
             renderBreakdown(browserBreakdown, browsers, "browser");
@@ -1392,6 +1459,7 @@ module.exports = function (app, config, renderTemplate) {
             userIdCount.textContent = "Error";
             totalVideoIdCount.textContent = "Error";
             humanViewUserCount.textContent = "Error";
+            estimatedTotalUsersEl.textContent = "Error";
             osBreakdown.innerHTML = '<div class="breakdown-empty">Error loading OS data.</div>';
             browserBreakdown.innerHTML = '<div class="breakdown-empty">Error loading browser data.</div>';
           });
