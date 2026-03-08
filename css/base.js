@@ -343,7 +343,6 @@ document.addEventListener("DOMContentLoaded", () => {
     volumeSaveScheduled: false,
     lastBgReturnAt: 0,
     bgSuppressionSessionCount: 0,
-    // NEW: Heartbeat & stall recovery
     heartbeatTimer: null,
     lastHeartbeatAt: 0,
     videoStallSince: 0,
@@ -374,6 +373,145 @@ document.addEventListener("DOMContentLoaded", () => {
     seekTargetTime: 0,
     videoSyncRetryTs: 0
   };
+
+
+  // ─── BackgroundPlaybackManager ─────────────────────────────────────────────
+  // Single authoritative state machine for background/foreground transitions.
+  // Replaces the 15+ scattered state.chromiumXxx/state.bgXxx flags with one
+  // coherent object. All play/pause handlers check this instead of checking
+  // every individual flag themselves.
+  //
+  // Key features:
+  //  - Prevents oscillation: limits background auto-resume attempts so the
+  //    browser can't cause an infinite play→pause→play loop in background.
+  //  - Single suppression window: shouldSuppressAutoPause() replaces
+  //    10+ individual flag checks in the pause event handler.
+  //  - isUserPauseImmediate(): trusts pointer events < 600ms old regardless
+  //    of visibility state — fixes quality=medium play/pause on tab return.
+  // ────────────────────────────────────────────────────────────────────────────
+  const BackgroundPlaybackManager = (() => {
+    const PHASE = { STABLE_FG: 0, GOING_BG: 1, STABLE_BG: 2, RETURNING: 3 };
+    let _phase = PHASE.STABLE_FG;
+    let _phaseAt = 0;
+    let _returnSessionId = 0;
+    let _returnSuppressedUntil = 0;
+    let _bgResumeAttempts = 0;
+    let _bgResumeWindowStart = 0;
+    let _returnTimer = null;
+
+    // Spurious pause burst duration on each platform after tab return
+    const SPURIOUS_BURST_MS = platform.chromiumOnlyBrowser ? 1100 : 400;
+    // Full suppression window (spurious burst + settling)
+    const RETURN_SUPPRESS_MS = platform.chromiumOnlyBrowser ? 9000 : 4000;
+    // Max background auto-resume attempts before giving up until foreground return
+    const MAX_BG_RESUME_ATTEMPTS = 3;
+    const BG_RESUME_WINDOW_MS = 10000; // reset window
+
+    function _clearReturnTimer() {
+      if (_returnTimer) { clearTimeout(_returnTimer); _returnTimer = null; }
+    }
+
+    // ── Called when tab/window becomes hidden (blur / visibilitychange hidden) ──
+    function onBecomeBackground() {
+      if (_phase === PHASE.STABLE_BG) return; // already stable background
+      _clearReturnTimer();
+      _phase = PHASE.GOING_BG;
+      _phaseAt = now();
+      // Short settling: once spurious events fire we're in stable bg
+      setTimeout(() => { if (_phase === PHASE.GOING_BG) { _phase = PHASE.STABLE_BG; _phaseAt = now(); } }, 150);
+      // Reset bg-resume counter for this new background session
+      const elapsed = now() - _bgResumeWindowStart;
+      if (elapsed > BG_RESUME_WINDOW_MS || elapsed === now()) {
+        _bgResumeAttempts = 0;
+        _bgResumeWindowStart = now();
+      }
+    }
+
+    // ── Called when tab/window becomes visible (focus / visibilitychange visible) ──
+    function onBecomeForeground() {
+      _clearReturnTimer();
+      _returnSessionId++;
+      const mySession = _returnSessionId;
+      _phase = PHASE.RETURNING;
+      _phaseAt = now();
+      _returnSuppressedUntil = now() + RETURN_SUPPRESS_MS;
+      // Reset bg-resume counter — we're back in foreground, fresh start
+      _bgResumeAttempts = 0;
+      _bgResumeWindowStart = now();
+      // After spurious burst + settling, fully stable in foreground
+      _returnTimer = setTimeout(() => {
+        if (_returnSessionId !== mySession) return;
+        _phase = PHASE.STABLE_FG;
+        _phaseAt = now();
+        _returnTimer = null;
+      }, RETURN_SUPPRESS_MS + 200);
+    }
+
+    // ── State queries ──────────────────────────────────────────────────────────
+
+    function isBackground() {
+      return _phase === PHASE.STABLE_BG || _phase === PHASE.GOING_BG;
+    }
+    function isReturning() {
+      return _phase === PHASE.RETURNING;
+    }
+    function isAnyTransition() {
+      return _phase === PHASE.GOING_BG || _phase === PHASE.RETURNING;
+    }
+
+    // Should non-user-action pause events be suppressed right now?
+    // Returns true during background and the full RETURN_SUPPRESS_MS window.
+    function shouldSuppressAutoPause() {
+      if (_phase === PHASE.STABLE_BG || _phase === PHASE.GOING_BG) return true;
+      if (now() < _returnSuppressedUntil) return true;
+      return false;
+    }
+
+    // Is a VERY RECENT pointer/keyboard event (< 600ms) active?
+    // If so, treat any resulting pause as user-initiated, even during transitions.
+    // This is the key fix for quality=medium: clicking pause within 4.5s of tab
+    // return would fail isUserAction() because isVisibilityTransitionActive()=true,
+    // but the pointer event is genuinely from the user and must be respected.
+    function isUserPauseImmediate() {
+      return (now() - state.lastUserActionTime) < 600 &&
+        document.visibilityState === 'visible';
+    }
+    function isUserPlayImmediate() {
+      return (now() - state.lastUserActionTime) < 600 &&
+        document.visibilityState === 'visible';
+    }
+
+    // ── Background resume attempt throttling ──────────────────────────────────
+    // Prevents the browser from causing an infinite play→pause→play loop in
+    // background by limiting how many times we attempt to resume per window.
+
+    function canAttemptBgResume() {
+      if (_phase !== PHASE.STABLE_BG && _phase !== PHASE.GOING_BG) return true;
+      const elapsed = now() - _bgResumeWindowStart;
+      if (elapsed > BG_RESUME_WINDOW_MS) {
+        _bgResumeAttempts = 0;
+        _bgResumeWindowStart = now();
+      }
+      return _bgResumeAttempts < MAX_BG_RESUME_ATTEMPTS;
+    }
+
+    function trackBgResumeAttempt() {
+      _bgResumeAttempts++;
+    }
+
+    function getPhase() { return _phase; }
+    function getPhaseLabel() {
+      return ['STABLE_FG', 'GOING_BG', 'STABLE_BG', 'RETURNING'][_phase] || '?';
+    }
+
+    return {
+      onBecomeBackground, onBecomeForeground,
+      isBackground, isReturning, isAnyTransition,
+      shouldSuppressAutoPause, isUserPauseImmediate, isUserPlayImmediate,
+      canAttemptBgResume, trackBgResumeAttempt,
+      getPhase, getPhaseLabel,
+    };
+  })();
 
   const EPS = 1.0;
   const HAVE_FUTURE_DATA = 3;
@@ -794,7 +932,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.audioPausedSince) state.audioPausedSince = now();
       const stuckMs = now() - state.audioPausedSince;
       const hardBypass = force || stuckMs > AUDIO_STUCK_HARD_MS;
-      const softBypass = stuckMs > AUDIO_STUCK_RESTART_MS;
+      // Reduced from 2500ms → 1000ms: audio stuck for 1s with video playing
+      // is already audible. React faster to avoid silent-video segments.
+      const softBypass = stuckMs > Math.min(AUDIO_STUCK_RESTART_MS, 1000);
       if (!hardBypass && !softBypass) return;
       if (!hardBypass && state.strictBufferHold) return;
       if (!hardBypass && state.videoWaiting) return;
@@ -812,7 +952,17 @@ document.addEventListener("DOMContentLoaded", () => {
       if (hardBypass) state.audioEventsSquelchedUntil = 0;
       safeSetAudioTime(vtNow);
       execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 })
-        .then(ok => { if (ok) { state.audioPausedSince = 0; softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {}); } })
+        .then(ok => {
+          if (ok) {
+            state.audioPausedSince = 0;
+            softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+          } else if (hardBypass && !getVideoPaused() && state.intendedPlaying) {
+            // Audio can't start even with hard bypass — pause video to
+            // maintain A/V contract. armResumeAfterBuffer restarts both.
+            execProgrammaticVideoPause();
+            armResumeAfterBuffer(6000);
+          }
+        })
         .catch(() => {});
     }
   }
@@ -1683,6 +1833,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
         forceZeroBeforeFirstPlay();
       }
+
+      // BPM gate: if the browser has already paused us several times in
+      // this background session, stop retrying — it will keep pausing us.
+      // resumeOnVisible ensures we restart cleanly when the tab is shown.
+      if (!BackgroundPlaybackManager.canAttemptBgResume()) {
+        state.resumeOnVisible = true;
+        return;
+      }
+      BackgroundPlaybackManager.trackBgResumeAttempt();
       await playTogether().catch(() => {});
     } finally {
       state.bgResumeInFlight = false;
@@ -1749,9 +1908,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const poll = () => {
       if (cleaned) return;
       tryKick();
-      if (!cleaned) pollTimer = setTimeout(poll, 350);
+      // Use a much longer poll interval in background — polling aggressively
+      // triggers rapid play→pause→play oscillation when the browser keeps
+      // auto-pausing. canplay/playing events fire anyway when media is ready.
+      const pollInterval = isHiddenBackground() ? 2000 : 350;
+      if (!cleaned) pollTimer = setTimeout(poll, pollInterval);
     };
-    pollTimer = setTimeout(poll, 200);
+    pollTimer = setTimeout(poll, isHiddenBackground() ? 1500 : 200);
     state.resumeAfterBufferTimer = setTimeout(() => {
       cleanup();
       state.resumeAfterBufferTimer = null;
@@ -1875,7 +2038,9 @@ document.addEventListener("DOMContentLoaded", () => {
       pauseHard();
       return;
     }
-    if (startupSettleActive() && !userPauseIntentActive() && !mediaSessionForcedPauseActive()) return;
+    // Allow immediate user actions through startupSettle gate
+    const _immediateAction = BackgroundPlaybackManager.isUserPauseImmediate();
+    if (startupSettleActive() && !_immediateAction && !userPauseIntentActive() && !mediaSessionForcedPauseActive()) return;
     state.intendedPlaying = false;
     state.bufferHoldIntendedPlaying = false;
     state.strictBufferHold = false; state.bufferHoldSince = 0;
@@ -2587,8 +2752,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (audio && !audio.paused) {
         try { audio.muted = true; audio.volume = 0; audio.pause(); } catch {}
       }
-      // Non-coupled: if intendedPlaying but video somehow stopped, restart it
-      if (state.intendedPlaying && getVideoPaused() && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
+      // Non-coupled: if intendedPlaying but video somehow stopped, restart it.
+      // Guard: don't restart during user-initiated pauses or background transitions.
+      if (state.intendedPlaying && getVideoPaused() &&
+          !userPauseLockActive() && !userPauseIntentActive() &&
+          !mediaSessionForcedPauseActive() &&
+          !BackgroundPlaybackManager.shouldSuppressAutoPause() &&
+          (now() - state.lastUserActionTime) > 800) {
         try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
       }
       scheduleSync();
@@ -2692,7 +2862,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!state.resumeOnVisible) {
               state.resumeOnVisible = true;
             }
-            if (state.firstPlayCommitted && state.startupKickDone && !state.bgResumeInFlight) {
+            if (state.firstPlayCommitted && state.startupKickDone && !state.bgResumeInFlight &&
+                BackgroundPlaybackManager.canAttemptBgResume()) {
               seamlessBgCatchUp().catch(() => {});
             }
           } else {
@@ -3197,6 +3368,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (isTechSurfaceTarget(event.target)) {
         pendingTechTogglePausedState = getVideoPaused();
+        if (!getVideoPaused()) {
+          // User tapped video surface while playing → pause intent.
+          // Pre-set userPauseUntil so video.on("pause") fires with
+          // userPauseIntentActive()=true, even before the RAF in onClick runs.
+          // This is critical for quality=medium and all modes during transitions:
+          // without this, the pause event fires BEFORE markUserPauseIntent() is
+          // called in the RAF, and visibility guards can swallow the pause.
+          state.userPauseUntil = Math.max(state.userPauseUntil, now() + 1200);
+        }
         // Tentative intent for non-coupled mode: since play() fires before the RAF in onClick,
         // pre-set intendedPlaying so the play handler doesn't reject the event.
         if (!coupledMode) {
@@ -3463,7 +3643,17 @@ document.addEventListener("DOMContentLoaded", () => {
         now() >= state.tabVisibilityChangeUntil &&
         !inBgReturnGrace();
 
-      if (isUserAction || userPauseIntentActive() || userPauseLockActive()) {
+      // isUserPauseImmediate: pointer event < 600ms ago on visible page.
+      // This bypasses ALL transition/grace guards — a click within 600ms
+      // is unambiguously user-initiated even if visibility just changed.
+      // Critical fix for quality=medium: isVisibilityTransitionActive()=true
+      // for 4.5s after tab return, causing isUserAction to be false, and
+      // the RAF in onClick hasn't run yet so userPauseIntentActive()=false.
+      // Without this, pausing within 4.5s of returning to the tab is
+      // completely broken in all modes.
+      const isImmediateUserAction = BackgroundPlaybackManager.isUserPauseImmediate();
+
+      if (isImmediateUserAction || isUserAction || userPauseIntentActive() || userPauseLockActive()) {
         state.intendedPlaying = false;
         state.bufferHoldIntendedPlaying = false;
         state.playSessionId++;
@@ -3502,6 +3692,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.isProgrammaticVideoPlay || state.seekResumeInFlight || state.bgResumeInFlight ||
           state.videoWaiting || (platform.chromiumOnlyBrowser && chromiumPauseEventSuppressed())) {
         scheduleSync(200);
+        return;
+      }
+
+      // Final BPM gate: if we're in any background/transition phase and there's
+      // no user action signal, suppress this pause — it's a browser auto-pause.
+      if (BackgroundPlaybackManager.shouldSuppressAutoPause() && !mediaSessionForcedPauseActive()) {
+        if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+        scheduleSync(300);
         return;
       }
 
@@ -3626,6 +3824,50 @@ document.addEventListener("DOMContentLoaded", () => {
         state.videoStallAudioPaused = false;
         scheduleSync(0);
       }
+
+      // ── Audio kill-switch: pause video if audio doesn't start within 700ms ──
+      // If video is playing but audio hasn't started (autoplay blocked, device
+      // audio session lost, etc.), this prevents silent video playback.
+      // After 700ms: one last aggressive audio start attempt; if that fails,
+      // pause video — better to be paused than to play silently.
+      if (coupledMode && audio && state.intendedPlaying && !state.seeking && !state.syncing) {
+        const _ksSession = state.playSessionId;
+        setTimeout(() => {
+          // Abort if session changed or state is no longer valid
+          if (state.playSessionId !== _ksSession) return;
+          if (!state.intendedPlaying || getVideoPaused()) return;
+          if (!audio.paused) return; // audio is playing — all good
+          if (state.seeking || state.syncing || state.restarting) return;
+          if (state.videoWaiting || state.videoStallAudioPaused) return;
+          if (now() < state.stallAudioResumeHoldUntil) return;
+          if (BackgroundPlaybackManager.isBackground()) return; // handled by bg manager
+          // One last try: force-start audio from current video position
+          const _vtNow = Number(video.currentTime()) || 0;
+          safeSetAudioTime(_vtNow);
+          execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 })
+            .then(started => {
+              if (state.playSessionId !== _ksSession) return;
+              if (started) {
+                softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+                return;
+              }
+              // Audio truly can't start right now — pause video to keep A/V contract.
+              // armResumeAfterBuffer will restart both once audio is ready.
+              if (!getVideoPaused() && state.intendedPlaying &&
+                  state.playSessionId === _ksSession && !state.seeking) {
+                execProgrammaticVideoPause();
+                armResumeAfterBuffer(6000);
+              }
+            })
+            .catch(() => {
+              if (!getVideoPaused() && state.intendedPlaying &&
+                  state.playSessionId === _ksSession && !state.seeking) {
+                execProgrammaticVideoPause();
+                armResumeAfterBuffer(6000);
+              }
+            });
+        }, 700);
+      }
     });
     if (!coupledMode) return;
     const onAudioPlay = () => {
@@ -3728,7 +3970,9 @@ document.addEventListener("DOMContentLoaded", () => {
           if (!userPauseIntentActive() && !userPauseLockActive() &&
               (state.isProgrammaticVideoPlay || state.seekResumeInFlight || state.bgResumeInFlight ||
                mediaPlayTxnActive() || fastSyncActive() || state.videoWaiting ||
-               (platform.chromiumOnlyBrowser && chromiumPauseEventSuppressed()))) {
+               (platform.chromiumOnlyBrowser && chromiumPauseEventSuppressed()) ||
+               BackgroundPlaybackManager.shouldSuppressAutoPause())) {
+            if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
             scheduleSync(200);
             return;
           }
@@ -4056,6 +4300,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
       if (newState === "visible") {
         state.lastBgReturnAt = now();
+        BackgroundPlaybackManager.onBecomeForeground();
 
         clearHiddenMediaSessionPlay();
         state.bgAutoResumeSuppressed = false;
@@ -4131,6 +4376,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => { state.visibilityTransitionActive = false; }, VISIBILITY_TRANSITION_MS);
       } else {
         updateLastKnownGoodVT();
+        BackgroundPlaybackManager.onBecomeBackground();
         state.bgTransitionInProgress = true;
         if (platform.useBgControllerRetry) {
           noteBackgroundEntry();
@@ -4150,6 +4396,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
+      BackgroundPlaybackManager.onBecomeBackground();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
       state.focusLossCount++;
@@ -4167,6 +4414,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
+      BackgroundPlaybackManager.onBecomeForeground();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
       state.focusStableUntil = now() + 300;
@@ -4349,6 +4597,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
+
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
