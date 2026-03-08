@@ -129,8 +129,12 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const hasExternalAudio = !!audio && audio.tagName === "AUDIO" && !!pickAudioSrc();
   // isMuxedVideo: true when the video is a single muxed file (audio+video combined).
-  // Detected by: quality=medium param OR a <source label="sd..." selected="true"> element
-  // on the video element. In muxed mode there is no separate audio track to synchronize.
+  // Detected by:
+  //   1. quality=medium URL param  (explicit muxed quality tier)
+  //   2. <source label="sd..." selected="true"> on video element (SD = always muxed)
+  //   3. audio src matches video src or audio src is empty/blob (no distinct audio stream)
+  //   4. video.js currentSources() API returning SD labels
+  // In muxed mode there is no separate audio track to synchronize.
   const isMuxedVideo = (() => {
     if (qua === "medium") return true;
     try {
@@ -156,6 +160,22 @@ document.addEventListener("DOMContentLoaded", () => {
           const lbl = (s.label || "").toLowerCase();
           if (lbl.includes("sd") || lbl === "360p" || lbl === "480p") return true;
         }
+      }
+      // Check if audio element has no real distinct source from the video.
+      // If audio src === video src (same muxed file in both elements), or audio src is
+      // empty/blank/missing, there is no separate audio stream to synchronize.
+      if (audio) {
+        const aSrc = (audio.getAttribute?.("src") || audio.currentSrc || "").trim();
+        const vSrc = (videoEl?.getAttribute?.("src") || videoEl?.currentSrc || "").trim();
+        // Empty, whitespace-only, or bare href (just the page URL) → no audio stream
+        if (!aSrc || aSrc === "" || aSrc === window.location.href) return true;
+        // Audio and video pointing at the same file → muxed
+        if (aSrc && vSrc && aSrc === vSrc) return true;
+        // Also check video.js current src
+        try {
+          const vjsVSrc = (typeof video?.currentSrc === "function" ? video.currentSrc() : video?.currentSrc || "");
+          if (aSrc && vjsVSrc && aSrc === vjsVSrc) return true;
+        } catch {}
       }
     } catch {}
     return false;
@@ -1690,6 +1710,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function shouldBlockNewAudioStart() {
     if (!coupledMode) return false;
     if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return true;
+
+    // ── HARD INVARIANT: audio must NEVER start when video is paused in the foreground ─────
+    // This check is placed FIRST before any early-returns (audioPausedSince, bgPlaybackAllowed,
+    // startupPhase, etc.) because those paths previously bypassed the video-paused gate.
+    // Specifically: audioPausedSince > AUDIO_STUCK_HARD_MS and bgPlaybackAllowed=true both
+    // returned false (allow audio) before reaching getVideoPaused(), allowing audio to start
+    // while video was paused. The fix: enforce this invariant unconditionally in foreground.
+    if (getVideoPaused() && !isHiddenBackground()) return true;
+
     if (state.startupPhase && !state.firstPlayCommitted) return false;
 
     // These checks must run BEFORE the bgPlaybackAllowed early-return (bgPlaybackAllowed is always true).
@@ -1816,6 +1845,11 @@ document.addEventListener("DOMContentLoaded", () => {
   async function execProgrammaticAudioPlay(opts = {}) {
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
+
+    // HARD INVARIANT: never start audio while video is paused in foreground, regardless of force.
+    // This is belt-and-suspenders with shouldBlockNewAudioStart() — it catches async races where
+    // force=true bypasses other guards but video has since paused between the call and execution.
+    if (getVideoPaused() && !isHiddenBackground()) return false;
 
     // CRITICAL FIX: Cancel any active volume fade before attempting to play.
     // pauseHard() starts a fadeAndPauseAudio(120ms) that calls audio.pause() via
@@ -3166,6 +3200,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const vPaused = getVideoPaused();
     const aPaused = !!audio.paused;
 
+    // ── HARD INVARIANT: in coupled mode, audio must NEVER play when video is paused ─────────
+    // This catches any async race where audio started via playTogether/stall-recovery but video
+    // then paused before audio could be stopped. The heartbeat (1.5s) enforces the invariant
+    // continuously. Only bypassed during background playback (bgPlaybackAllowed) where
+    // audio-only is intentional.
+    if (!aPaused && vPaused && !isHiddenBackground() && !state.intendedPlaying) {
+      execProgrammaticAudioPause(100);
+    } else if (!aPaused && vPaused && !isHiddenBackground() &&
+               !state.strictBufferHold && !state.videoWaiting &&
+               !state.seeking && !state.syncing &&
+               !state.bgPlaybackAllowed) {
+      // Also catch the case where intendedPlaying=true but video is still paused — audio should
+      // wait for video to resume, not play ahead solo.
+      execProgrammaticAudioPause(100);
+    }
+
     const inBgDrift = document.visibilityState === "hidden" || !isWindowFocused() || inBgReturnGrace();
     // inBgReturnGrace: suppress all drift-correction seeks for 8s after tab return so the
     // wakeup timer (seamlessBgCatchUp) can handle position sync without racing runSync.
@@ -4259,7 +4309,11 @@ document.addEventListener("DOMContentLoaded", () => {
           userPauseLockActive() ||        // userPauseLockUntil fence still active
           userPauseIntentActive() ||      // userPauseUntil fence still active
           state.userPauseIntentPresetAt > 0 ||  // preset set on pointerdown
-          MediumQualityManager.shouldBlockAutoResume(); // MQM tracks user pause for 4s
+          MediumQualityManager.shouldBlockAutoResume() || // MQM tracks user pause for 4s
+          // KEY FIX: Once startup has completed, intendedPlaying=false means the user (or a
+          // system event) explicitly paused. A stale "playing" event must NEVER override this.
+          // Before firstPlayCommitted, autoplay is legitimate. After it, paused=user's intent.
+          (state.firstPlayCommitted && !state.intendedPlaying);
 
         if (userExplicitlyPaused) {
           // User pause is authoritative — override autoplay
@@ -5105,7 +5159,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
