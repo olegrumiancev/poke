@@ -400,6 +400,8 @@ document.addEventListener("DOMContentLoaded", () => {
     bbtabRetryCount: 0,
     bbtabAudioSyncTimer: null,
     bbtabVideoConfirmedAt: 0,
+    bbtabAudioSyncDone: false,       // true after first audio sync attempt in retry loop
+    bbtabAudioFallbackDone: false,   // true after fallback audio retry (600ms after video confirmed)
     lastUserActionTime: 0,
     loopPreventionCooldownUntil: 0,
     seekCooldownUntil: 0,
@@ -993,30 +995,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
   // ─── QuantumReturnOrchestrator (QRO) ─────────────────────────────────────
-  // The deepest-level fix for "browser pauses video in background" visible
-  // stutter. Eliminates the audible/visual gap on tab-return by:
+  // Eliminates the visible/audible gap on tab-return by:
   //
   //  1. BACKGROUND SNAPSHOT — captures {position, timestamp, audioPosition}
-  //     the instant the page hides so we know exactly where both streams are
-  //     and can pre-align without seeking on return.
+  //     the instant the page hides so we know exactly where both streams are.
   //
   //  2. PRE-EMPTIVE PLAY — fires play() on BOTH streams as the VERY FIRST
   //     action inside the visibilitychange handler (before any state mutations),
   //     racing the browser's spurious pause event with a head start. This
   //     reduces the gap between "tab becomes visible" and "play() called"
-  //     from ~5-50ms (after state setup) to ~0ms.
+  //     from ~5-50ms to ~0ms.
   //
-  //  3. AUDIO PRE-ALIGNMENT — before the preemptive play(), seeks audio to
-  //     the current video position so both streams start from the SAME frame
-  //     with zero inter-stream gap. This eliminates the audible cut that
-  //     happened when audio was synced 150ms after video confirmation.
+  //     IMPORTANT — NO audio seek in preemptive path: Seeking audio while it is
+  //     paused and immediately calling play() causes an audible click/pop
+  //     (the browser's decode buffer flushes mid-resume). The sub-2s drift
+  //     typical of a tab-return is inaudible, and the heartbeat rate-nudge
+  //     corrects it silently within ~250ms. Hard seeks are only done by the
+  //     retry loop for drifts >2s, and only AFTER video is confirmed playing.
   //
-  //  4. CONTINUITY ASSESSMENT — after returning, checks whether background
-  //     playback succeeded (streams still running) or was killed, so the
-  //     retry loop can take the optimal path for each case.
+  //  3. CONTINUITY ASSESSMENT — after returning, checks whether background
+  //     playback succeeded (streams still running) or was killed.
   //
   // QRO works alongside BBTM: BBTM is the gatekeeper (lock + suppress pauses),
-  // QRO is the active resumer (preemptive play + pre-alignment + assessment).
+  // QRO is the active resumer (preemptive play + assessment).
   // ─────────────────────────────────────────────────────────────────────────
   const QuantumReturnOrchestrator = (() => {
     let _snapshot          = null;  // {ts, vPos, aPos, wasPlaying}
@@ -1053,33 +1054,25 @@ document.addEventListener("DOMContentLoaded", () => {
       _bgPlayConfirmed = false;
 
       try {
-        // Step 1: Pre-align audio to the current video position BEFORE playing.
-        // When both were paused in background, seek audio to video.currentTime
-        // so they start from exactly the same frame — no inter-stream gap.
-        if (coupledMode && audio) {
-          const vNow     = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
-          const aNow     = Number(audio.currentTime) || 0;
-          const snapPos  = _snapshot ? _snapshot.vPos : 0;
-          const targetPos = (isFinite(vNow) && vNow > 0.1) ? vNow : snapPos;
-          if (isFinite(targetPos) && targetPos > 0.05 &&
-              isFinite(aNow)      && Math.abs(aNow - targetPos) > 0.1) {
-            try { audio.currentTime = targetPos; } catch {}
-            _audioPreAligned = true;
-          }
-        }
-
-        // Step 2: Fire play() on the raw HTMLVideoElement IMMEDIATELY,
+        // Step 1: Fire play() on the raw HTMLVideoElement IMMEDIATELY,
         // bypassing any video.js wrapper queuing to minimize latency.
+        // NOTE: We intentionally do NOT seek audio here. Seeking a paused audio
+        // element immediately before play() causes an audible click/pop (the
+        // browser's decode buffer has to flush and restart). Any minor drift
+        // (<2s) between audio and video after tab-return is completely inaudible
+        // and is corrected within one heartbeat cycle (~250ms) by the sync loop.
+        // Only very large drifts (>2s, handled below in the retry loop) need a
+        // seek, and even then we wait until video is confirmed playing first.
         const vn = getVideoNode();
         if (vn && typeof vn.play === 'function') {
           vn.play().catch(() => {});
           _preemptiveFired = true;
         }
 
-        // Step 3: Fire audio.play() SIMULTANEOUSLY with video.
-        // Audio must not wait for the video confirmation callback (150ms later).
-        // If audio starts fractionally before/after video, the sync loop
-        // corrects the tiny drift within its next heartbeat tick.
+        // Step 2: Fire audio.play() SIMULTANEOUSLY with video — no seek.
+        // The tiny position gap between audio and video (typically <50ms after
+        // tab-return) is corrected silently by the rate-nudge sync in the
+        // heartbeat. Seeking here would cause an audible glitch every tab switch.
         if (coupledMode && audio && audio.paused) {
           audio.play().catch(() => {});
         }
@@ -6164,17 +6157,23 @@ document.addEventListener("DOMContentLoaded", () => {
   // This replaces the single delayed play() in executeSeamlessWakeup for the
   // VIDEO track. executeSeamlessWakeup is kept as a fallback / audio-sync path.
   // ─────────────────────────────────────────────────────────────────────────
-  // ── QuantumRetry: rAF-based bring-back loop ─────────────────────────────
-  // Replaces the old setTimeout(16) loop with requestAnimationFrame for:
-  //   - Frame-perfect synchronization with the browser paint cycle
-  //   - Accurate "is video actually rendering?" detection
-  //   - No timer throttling in background (rAF is also throttled but cleanly)
-  //   - Immediate audio resume in the same frame as video confirmation (no
-  //     150ms delay that caused the audible cut in the previous version)
+  // ── SilkReturn: rAF-based bring-back loop ───────────────────────────────
+  // Handles the video+audio resume after tab-return. Key design principles:
   //
-  // The loop keeps running until the BBTM lock FULLY expires (3500ms), not
-  // just until video is confirmed. This catches late-arriving spurious pauses
-  // that the old version missed after draining _lockUntil to now()+80ms.
+  //   VIDEO: Retries play() at rAF speed (≈16ms) until confirmed. Keeps
+  //          running until BBTM lock expires (3500ms) to block late spurious
+  //          pauses.
+  //
+  //   AUDIO: ONE-SHOT sync on first video confirmation. Does NOT sync on every
+  //          rAF frame (that was the old design and caused constant seek glitches).
+  //          Small drifts (<2s) are silently corrected by the heartbeat rate-nudge
+  //          within ~250ms. Only large drifts (>2s) get a hard seek, and only
+  //          AFTER video is confirmed playing (never speculatively before).
+  //          One fallback retry fires 600ms after confirmation for edge cases.
+  //
+  //   NO extendLock from audio path: The BBTM lock runs to its natural 3500ms
+  //          expiry. Extending it from audio sync created a feedback loop where
+  //          the loop ran indefinitely while seeking audio every frame.
   // ────────────────────────────────────────────────────────────────────────
   function startBringBackRetry() {
     // Cancel any previous loop (both rAF and setTimeout handles)
@@ -6183,6 +6182,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.bbtabAudioSyncTimer){ clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
     state.bbtabRetryCount        = 0;
     state.bbtabVideoConfirmedAt  = 0;
+    state.bbtabAudioSyncDone     = false;
+    state.bbtabAudioFallbackDone = false;
 
     if (!state.intendedPlaying) return;
 
@@ -6228,26 +6229,49 @@ document.addEventListener("DOMContentLoaded", () => {
         try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
       }
 
-      // ── Immediate audio sync (no 150ms delay — this is the key fix) ──────
-      // Previous version waited 150ms after video confirmation before touching
-      // audio. This caused a clearly audible 150ms+ gap. Now we sync audio in
-      // the SAME rAF frame as video confirmation — the user hears no cut.
-      if (coupledMode && audio && !state.isProgrammaticAudioPause) {
+      // ── Audio sync: ONE-SHOT on first video confirmation ─────────────────
+      // CRITICAL DESIGN NOTE — why we don't sync every rAF frame:
+      //
+      // Previous version ran audio sync every rAF iteration (≈60×/sec).
+      // This caused constant seek + play() calls for 3500ms, producing:
+      //   - audible clicks/pops on every seek (even 50ms threshold was too low)
+      //   - race conditions between multiple simultaneous play() callers
+      //   - extendLock(500) on every frame creating a lock-extension death spiral
+      //
+      // Correct approach:
+      //   1. Try to start audio ONCE on first video confirmation (no seek for
+      //      small drifts — the heartbeat rate-nudge handles <2s drift silently)
+      //   2. If audio still hasn't started 600ms later, try exactly ONE more time
+      //   3. Never seek for drift <2s during tab-return (inaudible; heartbeat fixes it)
+      //   4. NEVER extend the BBTM lock from inside the audio sync path
+      //
+      // This matches what browsers do natively: a single resume() call, no seeks.
+      if (!state.bbtabAudioSyncDone && coupledMode && audio && !state.isProgrammaticAudioPause) {
+        state.bbtabAudioSyncDone = true;
         const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
         const at = Number(audio.currentTime) || 0;
 
         if (audio.paused) {
-          // Audio is paused: align position then play
-          if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.05) {
+          // Only seek for LARGE drifts (>2s). Small drift is inaudible at tab-return
+          // and is fixed by the heartbeat rate-nudge within one cycle. Seeking for
+          // small drifts causes an audible pop/glitch — this was the primary bug.
+          if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 2.0) {
             try { audio.currentTime = vt; } catch {}
           }
-          execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
-          // Extend lock while audio is still catching up
-          BringBackToTabManager.extendLock(500);
-        } else if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.15) {
-          // Audio playing but drifted — quiet resync without pausing
-          safeSetAudioTime(vt);
+          execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
+        // If audio is already playing (resumed by preemptivePlay), nothing to do.
+        // Heartbeat handles any remaining drift correction silently via rate nudge.
+      }
+
+      // Fallback: if audio still hasn't started 600ms after first video confirmation,
+      // try exactly ONE more time. This handles edge cases where the first play()
+      // was blocked (e.g. autoplay policy re-evaluated, audio decode error).
+      if (state.bbtabAudioSyncDone && !state.bbtabAudioFallbackDone &&
+          coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause &&
+          state.bbtabVideoConfirmedAt > 0 && (now() - state.bbtabVideoConfirmedAt) > 600) {
+        state.bbtabAudioFallbackDone = true;
+        execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
       }
 
       // Keep the rAF loop running until the lock fully expires.
@@ -6718,7 +6742,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 100);
   scheduleSync(0);
 });
-
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
     if (active && (active.tagName.toLowerCase() === 'input' || active.tagName.toLowerCase() === 'textarea')) {
