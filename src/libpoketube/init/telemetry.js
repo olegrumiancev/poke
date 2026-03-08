@@ -384,6 +384,19 @@ module.exports = function (app, config, renderTemplate) {
       color:#bbb;
       font-size:.95rem;
     }
+    .nojs-warning{
+      margin-bottom:16px;
+      padding:14px 16px;
+      background:#2d2330;
+      border:1px solid #5e3a63;
+      border-radius:14px;
+      color:#ffd9e3;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      line-height:1.55;
+    }
+    .nojs-warning strong{
+      color:#fff;
+    }
 
     .hero{
       display:grid;
@@ -701,6 +714,12 @@ module.exports = function (app, config, renderTemplate) {
 </head>
 <body>
   <div class="app">
+    <noscript>
+      <div class="nojs-warning">
+        <strong>JavaScript is disabled.</strong> This stats page needs JavaScript to load live data, switch sections, and render the interactive view. You can still use the raw JSON endpoint at <code>/api/stats?view=json</code>.
+      </div>
+    </noscript>
+
     <div class="hero">
       <div class="hero-main">
         <h1>Anonymous stats</h1>
