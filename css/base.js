@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  */
 
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -443,22 +443,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     userPauseIntentPresetAt: 0,
     userPlayIntentPresetAt: 0
   };
-
-
-  // ─── BackgroundPlaybackManager v2 ─────────────────────────────────────────
-  // Single authoritative state machine for all background/foreground transitions.
-  // PHASES: STABLE_FG → GOING_BG → STABLE_BG → RETURNING → STABLE_FG
-  //
-  // v2 improvements over v1:
-  //  - Exponential backoff for bg resume attempts (1s, 2s, 4s, 8s, 16s, 30s…)
-  //    instead of a hard 3-attempt limit — allows genuine recovery while
-  //    preventing the rapid play→pause→play oscillation loop.
-  //  - "Stable playing" tracking: if audio played cleanly for >2s before a pause
-  //    it's almost certainly browser-forced, not user-initiated.
-  //  - isUserPauseImmediate/isUserPlayImmediate window extended to 2000ms.
-  //  - Longer return suppression: Chromium 10s, others 5s.
-  //  - RETURN_SUPPRESS_MS applies to ALL non-user pause events (not just audio).
-  // ────────────────────────────────────────────────────────────────────────────
+ 
   const BackgroundPlaybackManager = (() => {
     const PHASE = { STABLE_FG: 0, GOING_BG: 1, STABLE_BG: 2, RETURNING: 3 };
     let _phase = PHASE.STABLE_FG;
@@ -583,19 +568,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       getPhaseLabel,
     };
   })();
-
-  // ─── BackgroundPlaybackManagerManager (BPMM) ─────────────────────────────
-  // Higher-level coordinator built on top of BackgroundPlaybackManager.
-  // Prevents the notorious play→pause→play oscillation in background by tracking
-  // HOW MANY TIMES the browser has forced a pause/resume cycle and applying
-  // increasing backoff + an oscillation circuit-breaker.
-  //
-  // Relationship to BPM:
-  //  BPM  = low-level state machine (phase, suppression windows, backoff)
-  //  BPMM = policy layer (oscillation detection, success tracking, locking)
-  //
-  // Rule: background auto-resume decisions ALWAYS go through BPMM.shouldAttemptBgResume().
-  // ────────────────────────────────────────────────────────────────────────────
+ 
   const BackgroundPlaybackManagerManager = (() => {
     let _oscillationCount = 0;
     let _oscillationWindowStart = 0;
@@ -663,6 +636,73 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       setBgPlayIntent,
     };
   })();
+ 
+  const VisibilityGuard = (() => {
+    let _suppressUntil   = 0;
+    let _tabHiddenAt     = 0;
+    let _tabVisibleAt    = 0;
+    let _lastPlayCalledAt = 0;
+
+    // How long to suppress non-user pauses after each event type.
+    // 6000ms on show covers Chromium's longest-observed spurious-pause burst (800ms)
+    // plus the full BG_RETURN_GRACE_MS (8000ms would also work, 6000 is conservative).
+    const HIDE_SUPPRESS_MS       = 400;
+    const SHOW_GRACE_MS          = 8000;
+    const POST_PLAY_SUPPRESS_MS  = 2000;
+
+    function _extend(ms) {
+      _suppressUntil = Math.max(_suppressUntil, performance.now() + ms);
+    }
+
+    // Called the moment the page becomes hidden (visibilitychange → hidden OR blur)
+    function onTabHide() {
+      _tabHiddenAt = performance.now();
+      _extend(HIDE_SUPPRESS_MS);
+    }
+
+    // Called the moment the page becomes visible (visibilitychange → visible OR focus)
+    function onTabShow() {
+      _tabVisibleAt = performance.now();
+      _extend(SHOW_GRACE_MS);
+    }
+
+    // Called every time our own code issues a play() call.
+    // Prevents the browser's "I paused because autoplay policy" response from
+    // immediately killing intendedPlaying after we just set it.
+    function onPlayCalled() {
+      _lastPlayCalledAt = performance.now();
+      _extend(POST_PLAY_SUPPRESS_MS);
+    }
+
+    // Called only when user explicitly pauses (markUserPauseIntent, MediaSession pause).
+    // Clears suppression so the user's intent is respected immediately.
+    function onUserPause() {
+      _suppressUntil = 0;
+    }
+
+    // Primary gate: should we ignore this non-user-initiated pause event?
+    function shouldSuppress() {
+      return performance.now() < _suppressUntil;
+    }
+
+    // Is the page currently in a tab-return grace window?
+    function isInReturnGrace() {
+      return _tabVisibleAt > 0 && (performance.now() - _tabVisibleAt) < SHOW_GRACE_MS;
+    }
+
+    // Explicit extend (e.g. for BFCache restore or device wakeup)
+    function extendMs(ms) { _extend(ms); }
+
+    function getTabHiddenAt()  { return _tabHiddenAt;  }
+    function getTabVisibleAt() { return _tabVisibleAt; }
+
+    return {
+      onTabHide, onTabShow, onPlayCalled, onUserPause,
+      shouldSuppress, isInReturnGrace, extendMs,
+      getTabHiddenAt, getTabVisibleAt,
+    };
+  })();
+
 
 
   // ─── MediumQualityManager ────────────────────────────────────────────────────
@@ -2389,6 +2429,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   function mediaSessionForcedPauseActive() { return now() < state.mediaForcedPauseUntil; }
 
   function markUserPauseIntent(ms = 1800) {
+    VisibilityGuard.onUserPause(); // VG: clear suppression — user is in control
     state.userPauseIntentPresetAt = now(); // reinforce preset
     state.userPlayIntentPresetAt = 0;      // clear opposite
     state.userGesturePauseIntent = true;
@@ -3152,6 +3193,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }
 
   function execProgrammaticVideoPlay() {
+    VisibilityGuard.onPlayCalled(); // VG: suppress spurious pause after our play()
     state.isProgrammaticVideoPlay = true;
     try {
       let p = null;
@@ -4074,11 +4116,16 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
                   softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
                 }, TAB_RETURN_AUDIO_RETRY_DELAY_MS);
               } else if (state.startupPhase || !state.audioEverStarted) {
-                if (isHiddenBackground()) {
-                  state.resumeOnVisible = true;
-                } else {
-                  armResumeAfterBuffer(8000);
-                }
+                // PRIMARY FIX for first-30s play/pause oscillation:
+                // During startup, NEVER set intendedPlaying=false when audio fails to start.
+                // The sequence was: video plays → audio blocked (AVLG/buffer/policy) →
+                // execProgrammaticVideoPause() + intendedPlaying=false → startupAutoplayRetry
+                // fires → video plays again → audio blocked again → repeat endlessly.
+                // Fix: keep intendedPlaying=true, pause video, arm buffer wait. The retry
+                // mechanism naturally handles restart once audio becomes available.
+                execProgrammaticVideoPause();
+                forceZeroBeforeFirstPlay();
+                armResumeAfterBuffer(8000);
               } else {
                 execProgrammaticVideoPause();
                 if (isHiddenBackground()) {
@@ -4921,6 +4968,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
       // Detect device wakeup from sleep (large heartbeat gap means the JS was frozen)
       if (elapsed > WAKE_DETECT_THRESHOLD_MS) {
         state.lastBgReturnAt = nowTs;
+        VisibilityGuard.onTabShow(); // VG: device wake = tab return, extend grace window
         if (platform.chromiumOnlyBrowser) {
           setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
           setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
@@ -5651,6 +5699,33 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         return;
       }
 
+      // ── YOUTUBE-STYLE FINAL GATE (VisibilityGuard) ────────────────────────────
+      // After ALL the specific checks above, if VisibilityGuard says we are still
+      // in a suppression window (recently hid, recently showed, recently called play()),
+      // this pause is STILL not a user action — it's a late-arriving browser-initiated
+      // pause that slipped past the earlier checks. Suppress it unconditionally.
+      //
+      // This is the critical difference from YouTube's approach:
+      // YouTube never lets ANY non-user pause kill intendedPlaying during a transition.
+      // The window (8s after show, 2s after play()) is generous enough to cover all
+      // known Chromium/Firefox spurious-pause patterns.
+      if (state.intendedPlaying && VisibilityGuard.shouldSuppress() && !mediaSessionForcedPauseActive()) {
+        state.resumeOnVisible = true;
+        scheduleSync(200);
+        return;
+      }
+
+      // At this point: NOT in a suppression window, NOT programmatic, NOT user-preset,
+      // NOT BBTM-locked, NOT BPM-suppressed. This is a genuine pause we should honour.
+      // But add one final belt-and-suspenders: if the tab is not focused/visible,
+      // this still cannot be a user pause — treat it as background.
+      if (state.intendedPlaying && !mediaSessionForcedPauseActive() &&
+          (document.visibilityState === "hidden" || !isWindowFocused())) {
+        state.resumeOnVisible = true;
+        scheduleSync(300);
+        return;
+      }
+
       state.intendedPlaying = false;
       state.bufferHoldIntendedPlaying = false;
       state.playSessionId++;
@@ -5943,6 +6018,14 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
           if (BringBackToTabManager.isVideoConfirmed()) {
             BringBackToTabManager.onLateArrivedPause();
           }
+          return;
+        }
+
+        // ── VisibilityGuard: primary gate for audio pause suppression ─────────
+        // Must run BEFORE the specific visibility checks below — VG covers the
+        // same cases but is simpler and catches edge cases the others miss.
+        if (state.intendedPlaying && VisibilityGuard.shouldSuppress() && !mediaSessionForcedPauseActive()) {
+          if (platform.useBgControllerRetry) state.resumeOnVisible = true;
           return;
         }
 
@@ -6241,135 +6324,118 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   //          expiry. Extending it from audio sync created a feedback loop where
   //          the loop ran indefinitely while seeking audio every frame.
   // ────────────────────────────────────────────────────────────────────────
+  // ── SilkReturn: clean 3-shot tab-return resume ─────────────────────────────
+  // Why 3 shots instead of a 250-iteration rAF loop?
+  //
+  // PROBLEM with the rAF loop: calling play() every 16ms (60fps) for 3500ms fires
+  // ~210 play() calls. Each play() call can trigger the browser's autoplay policy
+  // which responds with a pause event. 210 play() calls → 210 potential pause events
+  // → the pause handler sees "too many pauses" and the loop-detection / rapid-toggle
+  // counters trip, causing state.intendedPlaying=false (the oscillation).
+  //
+  // YouTube's approach: call play() ONCE. If the browser pauses it, you suppress
+  // the pause event (VisibilityGuard) and call play() again after a short delay.
+  // 3 attempts with 400ms and 1200ms gaps covers ALL known Chromium/Firefox
+  // spurious-pause patterns without creating oscillation.
+  //
+  // BringBackToTabManager.isLocked() is still called in the pause handlers as an
+  // additional guard, but the primary protection is now VisibilityGuard.
+  // ─────────────────────────────────────────────────────────────────────────────
   function startBringBackRetry() {
-    // Cancel any previous loop (both rAF and setTimeout handles)
+    // Cancel any previous attempts
     if (state.bbtabRetryRafId)    { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
-    if (state.bbtabRetryTimer)    { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
+    if (state.bbtabRetryTimer)    { clearTimeout(state.bbtabRetryTimer);    state.bbtabRetryTimer    = null; }
     if (state.bbtabAudioSyncTimer){ clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
-    state.bbtabRetryCount        = 0;
-    state.bbtabVideoConfirmedAt  = 0;
-    state.bbtabAudioSyncDone     = false;
-    state.bbtabAudioFallbackDone = false;
 
     if (!state.intendedPlaying) return;
 
-    // Kick the first iteration synchronously (no rAF delay on first tick)
-    _doBringBackRetry();
-  }
+    // Notify BBTM so the pause handler's BBTM lock still works as a fast-path guard
+    BringBackToTabManager.onTabReturn();
 
-  function _doBringBackRetry() {
-    state.bbtabRetryRafId = null;
-
-    // Lock expired — clean exit
-    if (!BringBackToTabManager.isLocked()) {
-      if (state.intendedPlaying) {
-        setFastSync(800);
-        scheduleSync(0);
+    // ── Shot 1: immediate RAF (≈0–16ms after tab show) ──────────────────────
+    state.bbtabRetryRafId = requestAnimationFrame(() => {
+      state.bbtabRetryRafId = null;
+      if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+      VisibilityGuard.onPlayCalled();
+      const vn = getVideoNode();
+      if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
+      if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+        audio.play().catch(() => {});
       }
-      return;
-    }
+      // Notify BBTM that we just attempted play so its lock window is fresh
+    });
 
-    // User paused / media session forced pause — abort
-    if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) {
-      BringBackToTabManager.cancelLock();
-      return;
-    }
+    // ── Shot 2: 400ms fallback ───────────────────────────────────────────────
+    // Chromium's spurious-pause burst is typically 50–800ms. By 400ms most of it
+    // has passed; this shot handles the case where shot 1 was rejected by the burst.
+    state.bbtabRetryTimer = setTimeout(() => {
+      state.bbtabRetryTimer = null;
+      if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
 
-    state.bbtabRetryCount++;
+      const vPaused = getVideoPaused();
+      const aPaused = coupledMode && audio ? !!audio.paused : false;
 
-    // Hard cap: 250 rAF iterations ≈ 4.2s at 60fps (covers 3500ms lock + margin)
-    if (state.bbtabRetryCount > 250) {
-      BringBackToTabManager.cancelLock();
-      return;
-    }
-
-    const vPaused = getVideoPaused();
-
-    if (!vPaused) {
-      // ── Video is (or just became) playing ────────────────────────────────
-
-      // First confirmation: notify BBTM (v2: does NOT drain the main lock)
-      if (!state.bbtabVideoConfirmedAt) {
-        state.bbtabVideoConfirmedAt = now();
-        BringBackToTabManager.onVideoConfirmedPlaying();
-        try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
-      }
-
-      // ── Audio sync: ONE-SHOT on first video confirmation ─────────────────
-      // CRITICAL DESIGN NOTE — why we don't sync every rAF frame:
-      //
-      // Previous version ran audio sync every rAF iteration (≈60×/sec).
-      // This caused constant seek + play() calls for 3500ms, producing:
-      //   - audible clicks/pops on every seek (even 50ms threshold was too low)
-      //   - race conditions between multiple simultaneous play() callers
-      //   - extendLock(500) on every frame creating a lock-extension death spiral
-      //
-      // Correct approach:
-      //   1. Try to start audio ONCE on first video confirmation (no seek for
-      //      small drifts — the heartbeat rate-nudge handles <2s drift silently)
-      //   2. If audio still hasn't started 600ms later, try exactly ONE more time
-      //   3. Never seek for drift <2s during tab-return (inaudible; heartbeat fixes it)
-      //   4. NEVER extend the BBTM lock from inside the audio sync path
-      //
-      // This matches what browsers do natively: a single resume() call, no seeks.
-      if (!state.bbtabAudioSyncDone && coupledMode && audio && !state.isProgrammaticAudioPause) {
-        state.bbtabAudioSyncDone = true;
-        const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
-        const at = Number(audio.currentTime) || 0;
-
-        if (audio.paused) {
-          // Only seek for LARGE drifts (>2s). Small drift is inaudible at tab-return
-          // and is fixed by the heartbeat rate-nudge within one cycle. Seeking for
-          // small drifts causes an audible pop/glitch — this was the primary bug.
+      if (!vPaused) {
+        // Video is already playing — just ensure audio is synced
+        if (coupledMode && audio && aPaused && !state.isProgrammaticAudioPause) {
+          const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
+          const at = Number(audio.currentTime) || 0;
           if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 2.0) {
             try { audio.currentTime = vt; } catch {}
           }
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
-        // If audio is already playing (resumed by preemptivePlay), nothing to do.
-        // Heartbeat handles any remaining drift correction silently via rate nudge.
+        BringBackToTabManager.onVideoConfirmedPlaying();
+        try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
+        return;
       }
 
-      // Fallback: if audio still hasn't started 600ms after first video confirmation,
-      // try exactly ONE more time. This handles edge cases where the first play()
-      // was blocked (e.g. autoplay policy re-evaluated, audio decode error).
-      if (state.bbtabAudioSyncDone && !state.bbtabAudioFallbackDone &&
-          coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause &&
-          state.bbtabVideoConfirmedAt > 0 && (now() - state.bbtabVideoConfirmedAt) > 600) {
-        state.bbtabAudioFallbackDone = true;
-        execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
-      }
-
-      // Keep the rAF loop running until the lock fully expires.
-      // This ensures ANY late-arriving spurious pause is caught and suppressed
-      // by the BBTM lock (which now stays alive for the full 3500ms).
-      state.bbtabRetryRafId = requestAnimationFrame(_doBringBackRetry);
-      return;
-    }
-
-    // ── Video still paused — kick it ─────────────────────────────────────
-    // Also kick audio simultaneously: if audio can start before video, that's
-    // fine — a tiny audio-before-video gap is far less noticeable than silence.
-    try {
+      // Video still paused — retry
+      VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
-      if (vn && typeof vn.play === 'function') {
-        vn.play().catch(() => {}); // rejection expected during spurious-pause burst
-      }
-    } catch {}
-
-    // Every 5th iteration also try via video.js API (different internal path)
-    if (state.bbtabRetryCount % 5 === 0) {
+      if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
+      // Also try via video.js API (different internal path)
       try { video.play(); } catch {}
-    }
+      if (coupledMode && audio && aPaused && !state.isProgrammaticAudioPause) {
+        audio.play().catch(() => {});
+      }
+    }, 400);
 
-    // If audio is paused too, kick it simultaneously with video
-    if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
-      try { audio.play().catch(() => {}); } catch {}
-    }
+    // ── Shot 3: 1200ms last-resort ───────────────────────────────────────────
+    // For extremely slow browsers or long spurious-pause bursts.
+    // After 1200ms, the burst has definitely ended. If video is still paused,
+    // something else is wrong — do a full playTogether().
+    state.bbtabAudioSyncTimer = setTimeout(() => {
+      state.bbtabAudioSyncTimer = null;
+      if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
 
-    // Next attempt at rAF speed (≈16ms at 60fps — frame-perfect timing)
-    state.bbtabRetryRafId = requestAnimationFrame(_doBringBackRetry);
+      const vPaused = getVideoPaused();
+      if (!vPaused) {
+        // Confirm video is playing and fix any remaining audio issue
+        BringBackToTabManager.onVideoConfirmedPlaying();
+        if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+          execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
+        }
+        setFastSync(800);
+        scheduleSync(0);
+        return;
+      }
+
+      // Video still paused after 1200ms — escalate to full playTogether()
+      VisibilityGuard.onPlayCalled();
+      if (coupledMode) {
+        seamlessBgCatchUp().catch(() => {});
+      } else {
+        execProgrammaticVideoPlay();
+      }
+      setFastSync(1200);
+      scheduleSync(0);
+    }, 1200);
   }
+
+  // _doBringBackRetry is no longer used (replaced by startBringBackRetry above)
+  // but kept as a no-op so any stray call sites don't crash.
+  function _doBringBackRetry() {}
 
   function executeSeamlessWakeup() {
     if (!state.intendedPlaying) return;
@@ -6441,6 +6507,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         if (e && e.persisted) {
           // Back-forward cache restoration — treat as wakeup
           state.lastBgReturnAt = now();
+          VisibilityGuard.onTabShow(); // VG: BFCache restore = tab return
           if (platform.chromiumOnlyBrowser) {
             setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
             setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
@@ -6477,6 +6544,11 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         // gap between "tab becomes visible" and "play() called" to ~0ms.
         // Audio pre-alignment also happens here, eliminating the audible cut.
         try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
+
+        // ── VisibilityGuard: open the show-grace window immediately ──────────
+        // This MUST happen before any other state mutations so that pause events
+        // fired during this handler (or in the next few ms) are suppressed.
+        VisibilityGuard.onTabShow();
 
         state.lastBgReturnAt = now();
         BackgroundPlaybackManager.onBecomeForeground();
@@ -6564,6 +6636,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
         setTimeout(() => { state.visibilityTransitionActive = false; }, VISIBILITY_TRANSITION_MS);
       } else {
         updateLastKnownGoodVT();
+        VisibilityGuard.onTabHide(); // VG: suppress pauses during browser's hide sequence
         // QRO: snapshot position/audio before going to background.
         // On return, preemptivePlay() uses this to pre-align audio instantly.
         try { QuantumReturnOrchestrator.snapshotState(); } catch {}
@@ -6589,6 +6662,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     window.addEventListener("blur", () => {
       // QRO: snapshot on blur too (alt-tab before visibilitychange fires)
       try { QuantumReturnOrchestrator.snapshotState(); } catch {}
+      VisibilityGuard.onTabHide(); // VG: alt-tab counts as hide
       BackgroundPlaybackManager.onBecomeBackground();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
@@ -6609,6 +6683,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
     window.addEventListener("focus", () => {
       // QRO: pre-emptive play on focus (alt-tab return) — fire immediately
       try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
+      VisibilityGuard.onTabShow(); // VG: alt-tab return opens grace window
       BackgroundPlaybackManager.onBecomeForeground();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
@@ -6816,7 +6891,6 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
   }, 100);
   scheduleSync(0);
 });
-
 
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
