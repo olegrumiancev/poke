@@ -161,21 +161,21 @@ function getJson(str) {
 }
 
 /* support button */
-const PATREON_REGEX = /https:\/\/(?:www\.)?patreon.com\/(?<name>[\w\d_-]+)/;
+const PATREON_REGEX = /https:\/\/(?:www\.)?patreon\.com\/(?<name>[\w\d_-]+)/;
 
 /* connections */
-const TWITTER_REGEX = /https:\/\/twitter.com\/(?<name>[\w\d_-]+)/;
-const CORD_REGEX = /https:\/\/discord.gg\/(?<name>[\w\d_-]+)/;
-const TWITCH_REGEX = /https:\/\/twitch.tv\/(?<name>[\w\d_-]+)/;
-const REDDIT_REGEX = /https:\/\/reddit\.com\/r\/(?<name>[\w\d_-]+)/;
+const TWITTER_REGEX = /https:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/(?<name>[\w\d_-]+)/;
+const CORD_REGEX = /https:\/\/(?:www\.)?discord\.gg\/(?<name>[\w\d_-]+)/;
+const TWITCH_REGEX = /https:\/\/(?:www\.)?twitch\.tv\/(?<name>[\w\d_-]+)/;
+const REDDIT_REGEX = /https:\/\/(?:www\.)?reddit\.com\/r\/(?<name>[\w\d_-]+)/;
 
 /* meta software */
-const INSTAGRAM_REGEX = /https:\/\/www.instagram.com\/(?<name>[\w\d_-]+)/;
-const THREADS_BY_INSTAGRAM_REGEX = /https:\/\/www.threads.net\/(?<name>[\w\d_-]+)/;
-const FACEBOOK_REGEX = /https:\/\/www.facebook.com\/(?<name>[\w\d_-]+)/;
+const INSTAGRAM_REGEX = /https:\/\/(?:www\.)?instagram\.com\/(?<name>[\w\d_-]+)/;
+const THREADS_BY_INSTAGRAM_REGEX = /https:\/\/(?:www\.)?threads\.net\/(?<name>[\w\d_-]+)/;
+const FACEBOOK_REGEX = /https:\/\/(?:www\.)?facebook\.com\/(?<name>[\w\d_-]+)/;
 
 /* music */
-const LNKTO_REGEX = /https:\/\/(?<subdomain>\w+).lnk.to\/(?<path>\S*)/;
+const LNKTO_REGEX = /https:\/\/(?<subdomain>\w+)\.lnk\.to\/(?<path>\S*)/;
 
 module.exports = function (app, config, renderTemplate) {
   app.get("/encryption", async function (req, res) {
