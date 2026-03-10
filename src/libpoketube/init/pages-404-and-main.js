@@ -369,4 +369,3 @@ if (req.hostname !== officialHost && apiHostname === officialApiHost) {
     return rendermainpage();
   });
 };
-```
