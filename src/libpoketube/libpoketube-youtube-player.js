@@ -253,33 +253,8 @@ class InnerTubePokeVidious {
       }
     };
 
-    // --- scheduling logic ---
-    const minute = new Date().getMinutes();
-    const hour = new Date().getHours();
-
-    // pattern for each 2-hour block
-    const pattern = ["normal", "normal", "normal", "normal", "normal", "normal"];
-    const twoHourIndex = Math.floor(hour / 2) % pattern.length;
-    const currentPreference = pattern[twoHourIndex];
-    const inFallbackWindow = minute % 20 >= 10;
-
-    // build the URLs
-    const primaryUrl = `${this.config.invapi}/videos/${v}?hl=${contentlang}&region=${contentregion}&h=${this.toBase64(Date.now())}`;
-    const fallbackUrl = `${this.config.inv_fallback}${v}?hl=${contentlang}&region=${contentregion}&h=${this.toBase64(Date.now())}`;
-
-    // Select order
-    const preferFallbackPrimary = currentPreference === "fallback";
-    const chooseFirst = preferFallbackPrimary ? inFallbackWindow ? fallbackUrl : primaryUrl : inFallbackWindow ? primaryUrl : fallbackUrl;
-    const chooseSecond = chooseFirst === primaryUrl ? fallbackUrl : primaryUrl;
-
-    // TRY HARD STRATEGY
-    const attemptSequence =[
-        chooseFirst,
-        chooseSecond,
-        chooseFirst,
-        chooseSecond,
-        chooseFirst
-    ];
+    // build the video info URL — cache-busted with current timestamp
+    const videoUrl = `${this.config.invapi}/videos/${v}?hl=${contentlang}&region=${contentregion}&h=${this.toBase64(Date.now())}`;
 
     try {
       // PERF: Execute all fetches in parallel using Promise.all
@@ -292,62 +267,62 @@ class InnerTubePokeVidious {
           )}`
         ).then((res) => res?.text()),
 
-        // 2. Video Info  
+        // 2. Video Info
         (async () => {
           let fetchError = null;
-          for (const url of attemptSequence) {
+          // Reduced maxRetryTime here to 2000ms to failover faster between retries
+          const MAX_ATTEMPTS = 3;
+          for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             try {
-              // Reduced maxRetryTime here to 2000ms to failover faster to the next URL in sequence
-              const r = await fetchWithRetry(url, {}, 2000);
-              if (!r.ok) {
-                 throw new Error(`HTTP Error ${r.status}`);
-              }
-              const text = await r.text();
+              const r = await fetchWithRetry(videoUrl, {}, 2000);
+              if (!r.ok) throw new Error(`HTTP Error ${r.status}`);
 
+              const text = await r.text();
               try {
                 const parsed = JSON.parse(text);
                 if (this.checkUnexistingObject(parsed)) {
-                    return parsed; // SUCCESS
+                  return parsed; // SUCCESS
                 }
-                console.log(`[LIBPT INFO] Soft fail on ${url}: Valid JSON but missing authorId. Retrying...`);
+                console.log(`[LIBPT INFO] Soft fail on attempt ${attempt + 1}: Valid JSON but missing authorId. Retrying...`);
               } catch (parseErr) {
-                 // console.log(`[LIBPT INFO] Parse fail on ${url}. Retrying...`);
+                // parse failed, loop and retry
               }
             } catch (err) {
               // Bail out completely if it hit an unrecoverable state
               if (["COPYRIGHT_BLOCKED", "UPLOADER_REMOVED", "VIDEO_UNAVAILABLE"].includes(err.message)) throw err;
               fetchError = err;
             }
-             // If the request fails, we want to hit the fallback immediately, not wait nearly a second.
           }
 
           if (fetchError) {
-             this.initError("All video info fetch attempts failed", fetchError);
+            this.initError("All video info fetch attempts failed", fetchError);
           }
           return null;
         })(),
 
-         (async () => {
-            try {
-                return await getdislikes(v);
-            } catch (err) {
-                this.initError("Dislike API error", err);
-                return { engagement: null };
-            }
+        // 3. Dislikes
+        (async () => {
+          try {
+            return await getdislikes(v);
+          } catch (err) {
+            this.initError("Dislike API error", err);
+            return { engagement: null };
+          }
         })(),
 
-         (async () => {
-            try {
-                const palette = await getColors(
-                    `https://i.ytimg.com/vi/${v}/hqdefault.jpg?sqp=${this.sqp}`
-                );
-                if (Array.isArray(palette) && palette[0] && palette[1]) {
-                    return { color: palette[0].hex(), color2: palette[1].hex() };
-                }
-            } catch (err) {
-                this.initError("Thumbnail color extraction error", err);
+        // 4. Thumbnail color palette
+        (async () => {
+          try {
+            const palette = await getColors(
+              `https://i.ytimg.com/vi/${v}/hqdefault.jpg?sqp=${this.sqp}`
+            );
+            if (Array.isArray(palette) && palette[0] && palette[1]) {
+              return { color: palette[0].hex(), color2: palette[1].hex() };
             }
-            return { color: "#0ea5e9", color2: "#111827" }; // Defaults
+          } catch (err) {
+            this.initError("Thumbnail color extraction error", err);
+          }
+          return { color: "#0ea5e9", color2: "#111827" }; // Defaults
         })()
       ]);
 
