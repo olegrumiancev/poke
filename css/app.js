@@ -272,13 +272,16 @@ function fetchUrls(urls) {
   }
   }
  
+ 
 
+ 
 var popupMenu = document.getElementById("popupMenu");
 var loopOption = document.getElementById("loopOption");
 var speedOption = document.getElementById("speedOption");
 var boostOption = document.getElementById("boostOption");
 var normalizeOption = document.getElementById("normalizeOption");
 var whisperOption = document.getElementById("whisperOption"); 
+var snapshotOption = document.getElementById("snapshotOption"); // Added Snapshot Option
 var loopedIndicator = document.getElementById("loopedIndicator");
  
 loopedIndicator.style.display = "none";
@@ -429,7 +432,7 @@ function applyAudioState(isUserInteraction = false) {
 // On page load: Only update visual UI
 applyAudioState(false);
  
- document.addEventListener('play', function(event) {
+document.addEventListener('play', function(event) {
     // Only trigger if the element playing is our video or audio
     if (event.target.id === 'aud' || event.target.tagName === 'VIDEO') {
         
@@ -445,7 +448,7 @@ applyAudioState(false);
     }
 }, true); // Use capture phase to ensure it catches all media events
 
- 
+
 boostOption.addEventListener("click", function() {
     audioState = (audioState === "boost") ? "none" : "boost";
     applyAudioState(true); 
@@ -458,13 +461,45 @@ normalizeOption.addEventListener("click", function() {
     popupMenu.style.display = "none";
 });
 
- if (whisperOption) {
+if (whisperOption) {
     whisperOption.addEventListener("click", function() {
         audioState = (audioState === "whisper") ? "none" : "whisper";
         applyAudioState(true); 
         popupMenu.style.display = "none";
     });
 }
+
+// --- NEW SNAPSHOT LOGIC START ---
+if (snapshotOption) {
+    snapshotOption.addEventListener("click", function() {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+            // 1. Create a temporary invisible canvas
+            var canvas = document.createElement("canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // 2. Draw the exact current frame onto the canvas
+            var ctx = canvas.getContext("2d");
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // 3. Convert the canvas drawing into a base64 Image URL
+            var dataURL = canvas.toDataURL("image/png");
+            
+            // 4. Create an invisible anchor link to force download
+            var a = document.createElement("a");
+            a.href = dataURL;
+            a.download = "snapshot_" + new Date().getTime() + ".png"; 
+            document.body.appendChild(a);
+            a.click(); // Trigger the download
+            document.body.removeChild(a); // Clean up
+        } else {
+            console.warn("Snapshot failed: Video dimensions not ready.");
+        }
+        
+        popupMenu.style.display = "none"; // Hide the menu
+    });
+}
+// --- NEW SNAPSHOT LOGIC END ---
 
 video.addEventListener("contextmenu", function(event) {
     if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
