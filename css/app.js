@@ -272,54 +272,46 @@ function fetchUrls(urls) {
   }
   }
  
- 
-
- 
+  
 var popupMenu = document.getElementById("popupMenu");
 var loopOption = document.getElementById("loopOption");
 var speedOption = document.getElementById("speedOption");
 var boostOption = document.getElementById("boostOption");
 var normalizeOption = document.getElementById("normalizeOption");
 var whisperOption = document.getElementById("whisperOption"); 
-var snapshotOption = document.getElementById("snapshotOption"); // Added Snapshot Option
+var snapshotOption = document.getElementById("snapshotOption");
 var loopedIndicator = document.getElementById("loopedIndicator");
  
 loopedIndicator.style.display = "none";
 
 let audioCtx, source, gainNode, compressorNode, analyzer;
 
-// CHANGED: Default is now "normalize" instead of "none" if no saved preference is found
-let audioState = localStorage.getItem("audioMode") || "normalize"; 
+ let audioState = localStorage.getItem("audioMode") || "normalize"; 
 
-// Normalizer state variables
-let normalizerInterval = null;
+ let normalizerInterval = null;
 let dataArray = null;
 let currentAutoGain = 1.0;
 
 function initAudio() {
-    var currentAud = document.getElementById("aud"); // Fetch dynamically to prevent stale "wrong file" bug
+    var currentAud = document.getElementById("aud"); 
     if (audioCtx || !currentAud) return; 
 
     try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         source = audioCtx.createMediaElementSource(currentAud);
         
-        // Create an Analyser to "listen" to the true volume of the audio
         analyzer = audioCtx.createAnalyser();
-        analyzer.fftSize = 2048; // Tiny memory footprint (1024 data points)
+        analyzer.fftSize = 2048; 
         dataArray = new Float32Array(analyzer.frequencyBinCount);
 
         gainNode = audioCtx.createGain();
         compressorNode = audioCtx.createDynamicsCompressor();
 
-        // THE SMART LEVELLER ROUTING: 
-        // Source -> Analyzer (reads volume) -> Gain (adjusts volume) -> Compressor (safety brickwall)
         source.connect(analyzer);
         analyzer.connect(gainNode);
         gainNode.connect(compressorNode);
         compressorNode.connect(audioCtx.destination);
 
-        // Hardware-optimized base parameters (Hard knee for 0 math)
         compressorNode.knee.value = 0; 
         compressorNode.attack.value = 0.003;
         compressorNode.release.value = 0.25;
@@ -331,7 +323,6 @@ function initAudio() {
 function applyAudioState(isUserInteraction = false) {
     let audioStatusDisplay = document.getElementById("audioStatusDisplay");
 
-    // 1. Update UI Instantly (Mutually Exclusive)
     if (audioState === "normalize") {
         normalizeOption.innerHTML = "<i class='fa-light fa-check'></i> Normalization On";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
@@ -348,36 +339,29 @@ function applyAudioState(isUserInteraction = false) {
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-check'></i> Whisper On";
         if (audioStatusDisplay) audioStatusDisplay.innerHTML = "&nbsp; &bull; &nbsp;<i class='fa-light fa-ear-listen'></i> Whisper Mode On";
     } else {
-        // "none" state - bypass mode, completely clean audio, no visual indicator
         normalizeOption.innerHTML = "<i class='fa-light fa-wave-square'></i> Audio Normalization";
         boostOption.innerHTML = "<i class='fa-light fa-volume-high'></i> Audio Boost";
         if (whisperOption) whisperOption.innerHTML = "<i class='fa-light fa-volume-low'></i> Whisper Mode";
-        // Do not display anything if there is no audio effect applied
         if (audioStatusDisplay) audioStatusDisplay.innerHTML = "";
     }
 
     localStorage.setItem("audioMode", audioState);
 
-    // Stop the background normalizer loop if it was running
     if (normalizerInterval) {
         clearInterval(normalizerInterval);
         normalizerInterval = null;
     }
 
-    // 2. Do nothing if disabled and uninitialized
     if (audioState === "none" && !audioCtx) return;
-
-    // 3. STRICT GUARD: Never hijack audio until a trusted interaction
     if (!isUserInteraction) return;
 
     initAudio();
     if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
-    const smoothTime = 0.05; // 50 milliseconds to smoothly glide to new values (removes pops!)
+    const smoothTime = 0.05; 
 
     if (audioState === "normalize") {
-        // SMART NORMALIZATION ALGORITHM:
         compressorNode.threshold.setTargetAtTime(-3, now, smoothTime);
         compressorNode.ratio.setTargetAtTime(20, now, smoothTime);
 
@@ -406,47 +390,34 @@ function applyAudioState(isUserInteraction = false) {
         }, 300); 
 
     } else if (audioState === "boost") {
-        // BOOST MODE:
         gainNode.gain.setTargetAtTime(2.5, now, smoothTime); 
         compressorNode.threshold.setTargetAtTime(-2, now, smoothTime); 
         compressorNode.ratio.setTargetAtTime(20, now, smoothTime);
     } else if (audioState === "whisper") {
-         // 1. Human hearing is logarithmic. We drop this to a tiny 2.5% (0.025) multiplier.
         gainNode.gain.setTargetAtTime(0.025, now, smoothTime); 
-        
-        // 2. Absolute brickwall at -40dB. Any sudden loud bass drops or 
-        // screaming will be instantly flattened out.
         compressorNode.threshold.setTargetAtTime(-40, now, smoothTime); 
         compressorNode.ratio.setTargetAtTime(20, now, smoothTime);
     } else {
-        // NORMAL / BYPASS MODE (Zero effect applied):
         gainNode.gain.setTargetAtTime(1.0, now, smoothTime); 
         compressorNode.threshold.setTargetAtTime(0, now, smoothTime);
         compressorNode.ratio.setTargetAtTime(1, now, smoothTime); 
     }
 
-    // Wake up context if browser suspended it
     if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-// On page load: Only update visual UI
 applyAudioState(false);
  
 document.addEventListener('play', function(event) {
-    // Only trigger if the element playing is our video or audio
     if (event.target.id === 'aud' || event.target.tagName === 'VIDEO') {
-        
-        // Fix for leaving the page and coming back (wakes up frozen audio)
         if (audioCtx && audioCtx.state === 'suspended') {
             audioCtx.resume();
         }
-
-        // Apply saved preset if user has one, safely after play event
         if (audioState !== "none" && !audioCtx) {
             applyAudioState(true); 
         }
     }
-}, true); // Use capture phase to ensure it catches all media events
+}, true);
 
 
 boostOption.addEventListener("click", function() {
@@ -469,38 +440,60 @@ if (whisperOption) {
     });
 }
 
-// --- NEW SNAPSHOT LOGIC START ---
-if (snapshotOption) {
+ if (snapshotOption) {
     snapshotOption.addEventListener("click", function() {
         if (video.videoWidth > 0 && video.videoHeight > 0) {
-            // 1. Create a temporary invisible canvas
             var canvas = document.createElement("canvas");
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             
-            // 2. Draw the exact current frame onto the canvas
             var ctx = canvas.getContext("2d");
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // 3. Convert the canvas drawing into a base64 Image URL
             var dataURL = canvas.toDataURL("image/png");
             
-            // 4. Create an invisible anchor link to force download
+            // 1. Get Video name from URL
+            var videoName = "snapshot";
+            var src = video.currentSrc || video.src || "";
+            
+            if (src && !src.startsWith("blob:")) {
+                // Remove path, search queries and hashes
+                var fileNameWithExt = src.split('/').pop().split('?')[0].split('#')[0];
+                // Strip out the file extension (e.g. .mp4)
+                var lastDot = fileNameWithExt.lastIndexOf('.');
+                var baseName = lastDot !== -1 ? fileNameWithExt.substring(0, lastDot) : fileNameWithExt;
+                
+                try {
+                    videoName = decodeURIComponent(baseName) || "snapshot"; // Fix %20 spaces
+                } catch(e) {
+                    videoName = baseName || "snapshot";
+                }
+            } else {
+                 videoName = document.title ? document.title.replace(/[^a-zA-Z0-9 -]/g, "").trim() : "snapshot";
+            }
+
+            // 2. Format Current Timestamp (e.g., "1h2m34s" or "4m12s")
+            var time = video.currentTime;
+            var hrs = Math.floor(time / 3600);
+            var mins = Math.floor((time % 3600) / 60);
+            var secs = Math.floor(time % 60);
+            var timeStr = (hrs > 0 ? hrs + "h" : "") + mins + "m" + secs + "s";
+            
+            // 3. Download
             var a = document.createElement("a");
             a.href = dataURL;
-            a.download = "snapshot_" + new Date().getTime() + ".png"; 
+            a.download = videoName + " at " + timeStr + ".png"; 
             document.body.appendChild(a);
-            a.click(); // Trigger the download
-            document.body.removeChild(a); // Clean up
+            a.click(); 
+            document.body.removeChild(a); 
         } else {
             console.warn("Snapshot failed: Video dimensions not ready.");
         }
         
-        popupMenu.style.display = "none"; // Hide the menu
+        popupMenu.style.display = "none"; 
     });
 }
-// --- NEW SNAPSHOT LOGIC END ---
-
+ 
 video.addEventListener("contextmenu", function(event) {
     if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
         event.preventDefault();
