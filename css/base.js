@@ -443,6 +443,7 @@ document.addEventListener("DOMContentLoaded", () => {
     userPauseIntentPresetAt: 0,
     userPlayIntentPresetAt: 0
   };
+
  
   const BackgroundPlaybackManager = (() => {
     const PHASE = { STABLE_FG: 0, GOING_BG: 1, STABLE_BG: 2, RETURNING: 3 };
@@ -2296,7 +2297,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const STATE_CHANGE_COOLDOWN_MS = 100;
   const CHROMIUM_BG_PAUSE_BLOCK_MS = 6000;
   const TAB_VISIBILITY_STABLE_MS = 3500;
-  const VISIBILITY_TRANSITION_MS = 4500;
+  const VISIBILITY_TRANSITION_MS = 1200; // reduced from 4500 — inBgReturnGrace(8s) handles the rest
   const MAX_BG_PAUSE_SUPPRESSIONS = 200;
   const ALT_TAB_TRANSITION_MS = 3500;
   const FOCUS_LOSS_RESET_MS = 12000;
@@ -3565,7 +3566,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     state.bgResumeInFlight = true;
-    state.bgCatchUpCooldownUntil = now() + 800;
+    state.bgCatchUpCooldownUntil = now() + 400; // reduced from 800ms so patch-7 retry (600ms) can fire
 
     const mySession = state.playSessionId;
 
@@ -5726,23 +5727,37 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // ── BACKGROUND / VISIBILITY TRANSITION ───────────────────────────────────
-      // Tab is hidden or mid-transition. Don't fight it — just flag for resume.
-      // We do NOT counter-play here because the browser is actively hiding us.
-      if (document.visibilityState === "hidden" || isVisibilityTransitionActive() || isAltTabTransitionActive()) {
-        if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
-        return;
-      }
-
-      // ── TAB-RETURN GRACE WINDOW (8s) ─────────────────────────────────────────
-      // Chromium and Firefox both fire spurious pause events for up to ~800ms after
-      // returning to a tab. The grace window is conservatively 8s.
-      // IMMEDIATELY counter-play — this is the most common path for tab-return.
+      // ── TAB-RETURN GRACE WINDOW (8s) — MUST BE BEFORE TRANSITION BLOCK ───────
+      // This MUST precede the isVisibilityTransitionActive() check below.
+      // Reason: the transition block (VISIBILITY_TRANSITION_MS = 1200ms) does NOT
+      // call _counterPlay() for the hidden case, so if the grace window check came
+      // second it would never be reached during the transition window, leaving video
+      // paused for ~950ms waiting for scheduleBgResumeRetry.
+      // inBgReturnGrace() covers the full 8s after any tab/focus return — it is the
+      // correct long-lived gate. IMMEDIATELY counter-play.
       if (inBgReturnGrace() && !mediaSessionForcedPauseActive()) {
         if (_shouldCounterPlay()) {
           state.resumeOnVisible = true;
           _counterPlay();
         }
+        return;
+      }
+
+      // ── TRULY HIDDEN ──────────────────────────────────────────────────────────
+      // Page is not visible at all. Don't fight the browser — flag for resume.
+      if (document.visibilityState === "hidden") {
+        if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+        return;
+      }
+
+      // ── VISIBLE BUT MID-TRANSITION (alt-tab blur or early visibilitychange) ───
+      // Tab IS visible (or just became visible) but transition flags are still set.
+      // We were NOT in the 8s grace window above, which means this is a focus-only
+      // transition (blur/focus without visibilitychange) happening AFTER grace expiry.
+      // Counter-play immediately — the browser is done with its spurious-pause burst.
+      if (isVisibilityTransitionActive() || isAltTabTransitionActive()) {
+        if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+        if (_shouldCounterPlay()) _counterPlay();
         return;
       }
 
@@ -6141,20 +6156,43 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
 
-        if (isVisibilityTransitionActive()) {
+        // ── TAB-RETURN GRACE / BG SUPPRESS: restart audio immediately ─────────────
+        // Mirror of the video pause handler fix: grace window must be checked BEFORE
+        // the transition block, and all "spurious on visible tab" paths must restart
+        // audio immediately rather than just setting resumeOnVisible and waiting.
+        const _audioShouldRestart = () =>
+          state.intendedPlaying &&
+          !state.isProgrammaticAudioPause &&
+          !state.videoWaiting &&
+          !state.videoStallAudioPaused &&
+          !state.seeking &&
+          !mediaSessionForcedPauseActive() &&
+          !userPauseLockActive() &&
+          !shouldBlockNewAudioStart();
+
+        const _restartAudio = () => {
+          execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
+        };
+
+        if (_inGraceAtPauseFire || inBgReturnGrace()) {
           if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          if (_audioShouldRestart()) _restartAudio();
+          return;
+        }
+        if (isVisibilityTransitionActive() || isAltTabTransitionActive()) {
+          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          // Tab is visible mid-transition — restart audio immediately
+          if (document.visibilityState === "visible" && _audioShouldRestart()) _restartAudio();
           return;
         }
         if (!isVisibilityStable() || !isFocusStable()) {
           if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          if (document.visibilityState === "visible" && _audioShouldRestart()) _restartAudio();
           return;
         }
         if (now() < state.tabVisibilityChangeUntil) {
           if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
-          return;
-        }
-        if (_inGraceAtPauseFire || inBgReturnGrace()) {
-          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          if (document.visibilityState === "visible" && _audioShouldRestart()) _restartAudio();
           return;
         }
         // Track oscillation: if BPM says suppress but we got here anyway,
@@ -6162,10 +6200,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (BackgroundPlaybackManager.shouldSuppressAutoPause() && state.intendedPlaying) {
           BackgroundPlaybackManagerManager.onBrowserForcedPause();
           if (platform.useBgControllerRetry) state.resumeOnVisible = true;
-          return;
-        }
-        if (isAltTabTransitionActive()) {
-          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          if (document.visibilityState === "visible" && _audioShouldRestart()) _restartAudio();
           return;
         }
 
@@ -6561,6 +6596,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!state.intendedPlaying) return;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
 
+      // Reset BPMM oscillation state before catch-up. If a previous bg session
+      // hit the oscillation lock, it would block seamlessBgCatchUp from retrying.
+      BackgroundPlaybackManagerManager.onForegroundReturn();
+
       state.audioPausedSince = 0;
       if (coupledMode) {
         const vPaused = getVideoPaused();
@@ -6585,6 +6624,25 @@ document.addEventListener("DOMContentLoaded", () => {
           scheduleSync(0);
         }
       }
+
+      // ── RETRY GUARD: if still paused 600ms after wakeup, try again ─────────
+      // seamlessBgCatchUp() can return early if bgCatchUpCooldownUntil is active
+      // (set 800ms ago by a previous attempt). Without this retry, the video stays
+      // paused indefinitely with nothing rescheduling the catch-up.
+      // 600ms gives the first attempt time to complete its async work, then we
+      // check reality and escalate if needed.
+      setTimeout(() => {
+        if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+        if (!getVideoPaused()) return; // already playing — nothing to do
+        if (state.bgResumeInFlight || state.seekResumeInFlight) return; // in flight
+        if (coupledMode) {
+          seamlessBgCatchUp().catch(() => {});
+        } else if (!userPauseLockActive()) {
+          execProgrammaticVideoPlay();
+          setFastSync(1000);
+          scheduleSync(0);
+        }
+      }, 600);
     }, wakeDelay);
   }
 
@@ -6655,7 +6713,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         state.lastBgReturnAt = now();
         BackgroundPlaybackManager.onBecomeForeground();
-        BackgroundPlaybackManagerManager.onForegroundReturn();
+        BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation counters
         // ── BringBackToTab: arm the lock immediately before any pause events fire ──
         if (state.intendedPlaying) BringBackToTabManager.onTabReturn();
         try { UltraStabilizer.onVisibilityChange(true); } catch {}
@@ -6685,6 +6743,13 @@ document.addEventListener("DOMContentLoaded", () => {
         state.rapidPlayPauseCount = 0;
         state.rapidPlayPauseResetAt = now();
         state.loopPreventionCooldownUntil = 0;
+        // Clear alt-tab transition flags immediately. They were set by the blur event
+        // that preceded this visibilitychange. Clearing here ensures they don't
+        // compound with visibilityTransitionActive and cause double-suppression.
+        state.altTabTransitionActive = false;
+        state.altTabTransitionUntil = 0;
+        // Also reset focusStableUntil — on tab return, focus is immediately stable.
+        state.focusStableUntil = 0;
 
         // Always reset startup retry count on tab return — if the user switched
         // tabs during startup, we want fresh timing for the resumed attempts.
@@ -6718,11 +6783,11 @@ document.addEventListener("DOMContentLoaded", () => {
             state.resumeOnVisible = false;
             state.bgHiddenWasPlaying = false;
             startBringBackRetry();
-            setTimeout(() => {
-              if (state.intendedPlaying && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
-                playTogether().catch(() => {});
-              }
-            }, 150);
+            // Removed: setTimeout(playTogether, 150) — it races with startBringBackRetry's
+            // rAF shot (Shot 1) creating a play→pause→play burst in the first 200ms.
+            // Shot 1 (rAF ~16ms) + Shot 2 (1000ms) in startBringBackRetry handle this
+            // better. executeSeamlessWakeup provides the audio-sync fallback.
+            executeSeamlessWakeup();
             setFastSync(800);
             scheduleSync(0);
           }
@@ -6804,33 +6869,78 @@ document.addEventListener("DOMContentLoaded", () => {
         state.focusStableUntil = now() + ALT_TAB_TRANSITION_MS;
         setChromiumAutoPauseBlock(ALT_TAB_TRANSITION_MS + 2000);
         setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
-        setChromiumPauseEventSuppress(CHROMIUM_PAUSE_EVENT_SUPPRESS_MS);
+        // Use ALT_TAB_TRANSITION_MS (3500ms) instead of CHROMIUM_PAUSE_EVENT_SUPPRESS_MS (10s).
+        // The 10s suppress meant users couldn't pause for 10 seconds after any alt-tab.
+        // 3500ms matches altTabTransitionUntil and is more than enough to cover the
+        // browser's spurious-pause burst (~800ms). BG_RETURN_GRACE_MS (8s) on focus
+        // return handles any remaining late-arriving pauses via inBgReturnGrace().
+        setChromiumPauseEventSuppress(ALT_TAB_TRANSITION_MS);
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
+      // ── FOCUS = ALT-TAB RETURN ────────────────────────────────────────────────
+      // window.focus fires when the user switches back to this browser window/tab
+      // from another app (alt-tab) OR from another tab in the same window.
+      // Browsers (including Firefox and Safari, not just Chromium) fire a burst of
+      // spurious pause events for ~300-800ms after this. We must:
+      //   1. Call preemptivePlay() NOW — before the spurious burst — to minimize gap
+      //   2. Update lastBgReturnAt so inBgReturnGrace() returns true for 8s
+      //   3. Arm BBTM lock so the pause handler drops spurious pauses immediately
+      //   4. Call startBringBackRetry() to set up the rAF+1000ms shot system
+      //   5. Clear altTabTransitionActive (set by blur) so it doesn't fight with
+      //      the inBgReturnGrace() path in the pause handler
+      //   6. Run BackgroundPlaybackManagerManager.onForegroundReturn() to reset
+      //      oscillation counters
+
       // QRO: pre-emptive play on focus (alt-tab return) — fire immediately
       try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
-      VisibilityGuard.onTabShow(); // VG: alt-tab return opens grace window
+      VisibilityGuard.onTabShow(); // VG: opens 8s grace window for all browsers
       BackgroundPlaybackManager.onBecomeForeground();
-      if (!platform.chromiumOnlyBrowser) return;
+      BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation state
+
+      // ── UNIVERSAL treatment (all browsers) ───────────────────────────────────
+      // These are not Chromium-specific: Firefox and Safari also fire spurious
+      // pause events after focus, and they also need BBTM lock + grace window.
       state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
       state.focusStableUntil = now() + 300;
       state.pauseEventCount = 0;
       state.pauseEventResetAt = now();
-      // Reset rapid counters on focus — alt-tab events should not count toward loop detection
+      // Reset rapid counters — alt-tab events should not count toward loop detection
       state.rapidPlayPauseCount = 0;
       state.rapidPlayPauseResetAt = now();
       state.loopPreventionCooldownUntil = 0;
-      setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
-      setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
-      if (state.intendedPlaying) BringBackToTabManager.onTabReturn();
-      setTimeout(() => {
-        state.altTabTransitionActive = false;
+
+      // Clear altTabTransitionActive immediately. It was set by blur and stays set
+      // until the 50ms setTimeout in the old code — during those 50ms, new pause
+      // events hit the "isAltTabTransitionActive" branch which now calls _counterPlay,
+      // but clearing it here makes inBgReturnGrace() the sole authority, which is
+      // cleaner. The 8s grace window from lastBgReturnAt above covers everything.
+      state.altTabTransitionActive = false;
+      state.altTabTransitionUntil = 0;
+
+      if (platform.chromiumOnlyBrowser) {
+        setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
+        setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
+        setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
+      }
+
+      if (state.intendedPlaying) {
+        // Arm BBTM for ALL browsers — not just Chromium. Firefox and Safari also
+        // need the BBTM lock so the pause handler drops their spurious pauses.
+        BringBackToTabManager.onTabReturn();
+        // Fire startBringBackRetry immediately (not in a 50ms timeout).
+        // The 50ms delay meant pause events between focus and the timeout weren't
+        // caught by the rAF shot. QRO.preemptivePlay above already fired play(),
+        // and BBTM is now armed, so rAF shot is safe to fire right away.
         if (document.visibilityState === "visible") {
           startBringBackRetry();
           executeSeamlessWakeup();
+        } else {
+          // Tab still hidden (focus fired before visibilitychange) — defer until visible.
+          // The visibilitychange→visible handler will call startBringBackRetry().
+          state.resumeOnVisible = true;
         }
-      }, 50); // reduced from 150ms — QRO already fired preemptive play above
+      }
     }, { passive: true, capture: true });
     window.addEventListener("beforeunload", () => {
       clearBgResumeRetryTimer();
@@ -7025,8 +7135,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   // else: window.load handler triggers maybePrimeStartup + scheduleSync via
   // the coupledMode branch, or scheduleSync(0) directly for non-coupled.
-}); 
-
+});
 
 
 document.addEventListener('keydown', function(event) {
