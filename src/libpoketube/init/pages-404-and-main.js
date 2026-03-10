@@ -1,3 +1,4 @@
+ 
 const {
   fetcher,
   core,
@@ -23,7 +24,7 @@ var ping = require("ping");
 
 const sha384 = modules.hash;
 
-const splash = ["Woke!","Gay gay homosexaul gay!","free Palestine!","free software!","No Glacier Agency!","queer!", "doesnt track u!", "bad bunny baby!", "who is this?","PORTO RICO!", "if young metro..", "doug!","dougdougdoug","BALD!","has hair!", "sexy!", "has privacy!", "HOSTED IN EU!","mamacita!","a drag path..", "trans-aids-Libtard-Ukraine software!", "im... stuff!","frick capitalism!","still calling it twitter btw!","boop!","no way!","traaaa rightssss!","XD!","nya!","say gex!","ur valid :3","gay space communism!","has nothing to with pokemon!","A house of gold :3","doesnt have AI!","no web3!","keemstar is a bald ___!","No One calls it 'X'! ","Eat the rich!","Does Not include Nazis!","also try piped!","not alt-right!","coke zero > coke classic!","poke & chill!","can play HD!","also try invidious!","rms <3!","du hast","can u belive no one bought this?","reee","1.000.000€!","pika!","fsf.org","ssfffssfssfffaassssfsdf!","𝓯𝓻𝓮𝓪𝓴𝔂poke","they not like us!","to pimp a butterfly!","king kunta!","HUMBLE.","can you save my hds?","sahlo folina!","we come for you!","no chances!","dema dont control us!","i see your problem is, your proctologist","got both hands on your shoulder","while ur bottomless!","you should bounce bounce bounce man!","its lavish!","im vibin, vibin!","i would swim the paladin strait","hello clancy!","NO NOT ME,ITS FOR A FRIEND","im fairly local!","i dont wanna go like this!","east is up!","not done, josh dun!","your the judge, oh no!","I dont wanna backslide","welcome back to trench!","sai is propaganda!"," •|i|• Ø i+! ].[","stay alive! |-/","the few, the proud, the Emotional!","ill morph into someone else","still alive","follow the torches","i created this world!","to feel some control!","destory it if i want!","o7 keons","at least let me clean my room","100+ stars on gh!","let the vibe slide over me!","sip a capri sun like its don peregon","i love you alot!","BREACH OUT SEPT 12!","now even gayer!","its joever..","lesbiam,,,","poke!!!","discord.poketube.fun!","women are pretty!","men are handsome!","enbys are cute!","you are cute :3","read if cute!","this shit awesome!","ur pawsome!","i check the doors!","chcek the windows and","pull the blinds..","RAWFEAR","putting on a drum show!","welcome to breach!","i been this way...","i want to change...","FEDHKDHDGBK!","100% meow!","meows at u","hai i am gay","yay, GEX!","say gex..,,","wha if we um erm","awesome screen!","awesome camera!","long lasting battery life","stallmansupport.org!!!","does include nya~!!!","actually stable-ish! :3"];
+const splash =["Woke!","Gay gay homosexaul gay!","free Palestine!","free software!","No Glacier Agency!","queer!", "doesnt track u!", "bad bunny baby!", "who is this?","PORTO RICO!", "if young metro..", "doug!","dougdougdoug","BALD!","has hair!", "sexy!", "has privacy!", "HOSTED IN EU!","mamacita!","a drag path..", "trans-aids-Libtard-Ukraine software!", "im... stuff!","frick capitalism!","still calling it twitter btw!","boop!","no way!","traaaa rightssss!","XD!","nya!","say gex!","ur valid :3","gay space communism!","has nothing to with pokemon!","A house of gold :3","doesnt have AI!","no web3!","keemstar is a bald ___!","No One calls it 'X'! ","Eat the rich!","Does Not include Nazis!","also try piped!","not alt-right!","coke zero > coke classic!","poke & chill!","can play HD!","also try invidious!","rms <3!","du hast","can u belive no one bought this?","reee","1.000.000€!","pika!","fsf.org","ssfffssfssfffaassssfsdf!","𝓯𝓻𝓮𝓪𝓴𝔂poke","they not like us!","to pimp a butterfly!","king kunta!","HUMBLE.","can you save my hds?","sahlo folina!","we come for you!","no chances!","dema dont control us!","i see your problem is, your proctologist","got both hands on your shoulder","while ur bottomless!","you should bounce bounce bounce man!","its lavish!","im vibin, vibin!","i would swim the paladin strait","hello clancy!","NO NOT ME,ITS FOR A FRIEND","im fairly local!","i dont wanna go like this!","east is up!","not done, josh dun!","your the judge, oh no!","I dont wanna backslide","welcome back to trench!","sai is propaganda!"," •|i|• Ø i+! ].[","stay alive! |-/","the few, the proud, the Emotional!","ill morph into someone else","still alive","follow the torches","i created this world!","to feel some control!","destory it if i want!","o7 keons","at least let me clean my room","100+ stars on gh!","let the vibe slide over me!","sip a capri sun like its don peregon","i love you alot!","BREACH OUT SEPT 12!","now even gayer!","its joever..","lesbiam,,,","poke!!!","discord.poketube.fun!","women are pretty!","men are handsome!","enbys are cute!","you are cute :3","read if cute!","this shit awesome!","ur pawsome!","i check the doors!","chcek the windows and","pull the blinds..","RAWFEAR","putting on a drum show!","welcome to breach!","i been this way...","i want to change...","FEDHKDHDGBK!","100% meow!","meows at u","hai i am gay","yay, GEX!","say gex..,,","wha if we um erm","awesome screen!","awesome camera!","long lasting battery life","stallmansupport.org!!!","does include nya~!!!","actually stable-ish! :3"];
 
 function getJson(str) {
   try {
@@ -35,21 +36,30 @@ function getJson(str) {
 
 module.exports = function (app, config, renderTemplate) {
  app.get("/app", async function (req, res) {
-  const { fetch } = await import("undici");
+  const isMobile = req.useragent?.isMobile;
 
-   const isMobile = req.useragent?.isMobile;
+  // If the user is NOT on mobile (desktop), redirect to /search immediately
+  if (!isMobile) {
+    const searchQuery = req.query.mobilesearch || req.query.query || req.query.q;
+    if (searchQuery) {
+      return res.redirect("/search?q=" + encodeURIComponent(searchQuery));
+    }
+    return res.redirect("/search");
+  }
+
+  const { fetch } = await import("undici");
   const currentTab = req.query.tab;
    
-if (isMobile && currentTab !== "search" && !req.query.mobilesearch) {
-  return res.redirect("/app?tab=search");
-}
+  if (isMobile && currentTab !== "search" && !req.query.mobilesearch) {
+    return res.redirect("/app?tab=search");
+  }
 
   let tab = "";
   if (req.query.tab) {
     tab = `/?type=${capitalizeFirstLetter(req.query.tab)}`;
   }
  
-const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
+  const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
     headers: { "User-Agent": config.useragent },
   });
   const t = getJson(await invtrend.text());
@@ -57,10 +67,10 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
    
   const p = "";
 
-  let j = { results: [], meta: {} };
+  let j = { results:[], meta: {} };
 
   const normalizeSearchData = (data) => {
-    if (!data) return { results: [] };
+    if (!data) return { results:[] };
     if (Array.isArray(data)) return { results: data };
     if (Array.isArray(data.results))
       return { results: data.results, meta: data.meta || {} };
@@ -68,7 +78,7 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
       return { results: data.items, meta: data.meta || {} };
     if (Array.isArray(data.videos))
       return { results: data.videos, meta: data.meta || {} };
-    return { results: [], meta: { note: "unrecognized search payload shape" } };
+    return { results:[], meta: { note: "unrecognized search payload shape" } };
   };
 
   try {
@@ -92,7 +102,7 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
 
       if (!r.ok) {
         j = {
-          results: [],
+          results:[],
           error: true,
           meta: { status: r.status, statusText: r.statusText, url: searchUrl },
         };
@@ -111,7 +121,7 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
         j = normalizeSearchData(data);
       }
     } else {
-      j = { results: [], error: true, meta: { reason: "missing query" } };
+      j = { results:[], error: true, meta: { reason: "missing query" } };
       console.warn(
         "[mobilesearch] Missing query parameter (mobilesearch/q/query)"
       );
@@ -120,7 +130,7 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
     j.meta = { ...(j.meta || {}), continuation };
   } catch (err) {
     j = {
-      results: [],
+      results:[],
       error: true,
       meta: {
         reason: "exception",
@@ -154,7 +164,7 @@ const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
     var proxyurl = config.p_url;
    
     const secure = ["poketube.fun", "localhost"].includes(req.hostname);
-    const verify = ["poketube.fun", "poke.ashley0143.xyz", "localhost"].includes(
+    const verify =["poketube.fun", "poke.ashley0143.xyz", "localhost"].includes(
       req.hostname
     );
 
@@ -359,3 +369,4 @@ if (req.hostname !== officialHost && apiHostname === officialApiHost) {
     return rendermainpage();
   });
 };
+```
