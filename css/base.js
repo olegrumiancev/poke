@@ -366,10 +366,6 @@ document.addEventListener("DOMContentLoaded", () => {
     audioVolumeLocked: false,
     audioSafeMuteUntil: 0,
     seekAudioSyncPending: false,
-    // ── Scrub session tracking (rapid seek debounce for long videos) ───────
-    scrubSessionActive: false, // true while user is actively dragging progress bar
-    scrubEndTimer: null,       // clears scrubSessionActive 350ms after last seeking event
-    lastSeekingAt: 0,          // timestamp of last seeking event (for mid-scrub detection)
     seekAudioSyncTime: 0,
     seekAudioSyncUntil: 0,
     bgPlaybackAllowed: true,
@@ -448,21 +444,7 @@ document.addEventListener("DOMContentLoaded", () => {
     userPlayIntentPresetAt: 0
   };
 
-
-  // ─── BackgroundPlaybackManager v2 ─────────────────────────────────────────
-  // Single authoritative state machine for all background/foreground transitions.
-  // PHASES: STABLE_FG → GOING_BG → STABLE_BG → RETURNING → STABLE_FG
-  //
-  // v2 improvements over v1:
-  //  - Exponential backoff for bg resume attempts (1s, 2s, 4s, 8s, 16s, 30s…)
-  //    instead of a hard 3-attempt limit — allows genuine recovery while
-  //    preventing the rapid play→pause→play oscillation loop.
-  //  - "Stable playing" tracking: if audio played cleanly for >2s before a pause
-  //    it's almost certainly browser-forced, not user-initiated.
-  //  - isUserPauseImmediate/isUserPlayImmediate window extended to 2000ms.
-  //  - Longer return suppression: Chromium 10s, others 5s.
-  //  - RETURN_SUPPRESS_MS applies to ALL non-user pause events (not just audio).
-  // ────────────────────────────────────────────────────────────────────────────
+ 
   const BackgroundPlaybackManager = (() => {
     const PHASE = { STABLE_FG: 0, GOING_BG: 1, STABLE_BG: 2, RETURNING: 3 };
     let _phase = PHASE.STABLE_FG;
@@ -2310,8 +2292,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const AUDIO_FADE_DURATION_MS = 120;
   const AUDIO_SAFE_FADE_DURATION_MS = 150;
   const MIN_PLAY_PAUSE_GAP_MS = 150;
-  const SEEK_READY_TIMEOUT_MS = 8000; // increased from 3000: cold seeks on long videos need more time to buffer
-  const SEEK_WATCHDOG_MS = 15000; // increased from 6000: long-video cold seeks can take >6s on slow connections
+  const SEEK_READY_TIMEOUT_MS = 3000;
+  const SEEK_WATCHDOG_MS = 6000; // max time to wait for seeked event before force-finalizing
   const STATE_CHANGE_COOLDOWN_MS = 100;
   const CHROMIUM_BG_PAUSE_BLOCK_MS = 6000;
   const TAB_VISIBILITY_STABLE_MS = 3500;
@@ -3094,10 +3076,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function bufferedAhead(media, t) {
     try {
       const br = media.buffered;
-      if (!br || !isFinite(t)) return 0;
-      const len = br.length; // cache .length — DOM property access is not free
-      if (len === 0) return 0;
-      for (let i = 0; i < len; i++) {
+      if (!br || br.length === 0 || !isFinite(t)) return 0;
+      for (let i = 0; i < br.length; i++) {
         const s = br.start(i) - EPS;
         const e = br.end(i) + EPS;
         if (t >= s && t <= e) return Math.max(0, e - t);
@@ -3221,7 +3201,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const vt = Number(video.currentTime());
       const at = coupledMode && audio ? Number(audio.currentTime) : NaN;
       const bothAtStart = (vt < 0.5) && (!isFinite(at) || at < 0.5);
-      const hasSaved = state.lastKnownGoodVT > 0.5 && (now() - state.lastKnownGoodVTts) < 15000 && bothAtStart;
+      const hasSaved = state.lastKnownGoodVT > 0.5 && (now() - state.lastKnownGoodVTts) < 5000 && bothAtStart;
       if (hasSaved) return state.lastKnownGoodVT;
       if (isFinite(at) && at > 0.5 && (!isFinite(vt) || at > vt + 0.3)) return at;
       if (isFinite(vt) && vt > 0) return vt;
@@ -3419,14 +3399,6 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(state.seekWatchdogTimer);
       state.seekWatchdogTimer = null;
     }
-  }
-  function clearScrubSession() {
-    if (state.scrubEndTimer) {
-      clearTimeout(state.scrubEndTimer);
-      state.scrubEndTimer = null;
-    }
-    state.scrubSessionActive = false;
-    state.lastSeekingAt = 0;
   }
 
   function cancelBackgroundResumeState() {
@@ -3861,7 +3833,6 @@ document.addEventListener("DOMContentLoaded", () => {
     clearHiddenMediaSessionPlay();
     clearBgResumeRetryTimer();
     clearResumeAfterBufferTimer();
-    clearScrubSession(); // cancel any in-flight scrub session tracking
 
     state.isProgrammaticVideoPause = true;
     try { video.pause(); } catch {}
@@ -4377,14 +4348,13 @@ document.addEventListener("DOMContentLoaded", () => {
           await playTogether().catch(() => {});
         }
       }
-      // Post-seek audio guarantee: 200ms after finalize, force-restart audio if still stuck.
-      // Reduced from 300ms: audio should be confirmed playing sooner on long videos.
+      // Post-seek audio guarantee: 300ms after finalize, force-restart audio if still stuck
       setTimeout(() => {
         if (state.intendedPlaying && !state.seeking && coupledMode && audio &&
             audio.paused && !getVideoPaused() && !state.restarting) {
           enforceAudioPlayback(true);
         }
-      }, 200);
+      }, 300);
       scheduleSync(0);
     } finally {
       state.seekResumeInFlight = false;
@@ -6379,9 +6349,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.pendingSeekTarget = seekTime;
       state.lastKnownGoodVT = seekTime;
       state.lastKnownGoodVTts = now();
-      // Reduced from 2000ms: drift correction resumes sooner after seek settles.
-      // finalizeSeekSync adds its own 600ms post-finalize cooldown on top.
-      state.seekCooldownUntil = now() + 1000;
+      state.seekCooldownUntil = now() + 2000;
 
       // A seek supersedes any prior stall state. Clear all stall flags now so they cannot
       // block audio from resuming when the seek completes. Without this, seeking during a
@@ -6393,58 +6361,26 @@ document.addEventListener("DOMContentLoaded", () => {
       state.stallAudioResumeHoldUntil = 0;
       state.audioPauseUntil = 0;
 
-      // ── SCRUB SESSION OPTIMIZATION (long-video rapid seeking) ──────────────
-      // When user drags the progress bar, many seeking events fire in rapid succession.
-      // Each audio.currentTime assignment on a paused element flushes the audio decode
-      // buffer — wasteful and unnecessary for intermediate scrub positions. We track
-      // "scrub session" state so:
-      //   - First seeking of a new scrub: pause audio + set currentTime (correct)
-      //   - Mid-scrub seekings: skip audio.currentTime (finalizeSeekSync sets it once at end)
-      //   - Watchdog is only re-armed if enough time has passed (300ms debounce)
-      const nowMs = now();
-      const isMidScrub = state.scrubSessionActive && (nowMs - state.lastSeekingAt) < 300;
-      state.lastSeekingAt = nowMs;
-      // Extend scrub session end timer — fires 350ms after the LAST seeking event
-      if (state.scrubEndTimer) clearTimeout(state.scrubEndTimer);
-      state.scrubEndTimer = setTimeout(() => {
-        state.scrubSessionActive = false;
-        state.scrubEndTimer = null;
-        state.lastSeekingAt = 0;
-      }, 350);
-      const wasInScrub = state.scrubSessionActive;
-      state.scrubSessionActive = true;
-
       // Safety watchdog: if seeked event never fires (slow network, rapid seeks),
       // force-finalize after SEEK_WATCHDOG_MS to prevent state.seeking staying true forever.
-      // Debounced during rapid scrubs: only re-arm if not mid-scrub or if the seekId gap
-      // is large (indicating a long pause between scrub events).
-      if (!isMidScrub || !wasInScrub) {
-        const watchdogSeekId = state.seekId;
-        state.seekWatchdogTimer = setTimeout(() => {
-          state.seekWatchdogTimer = null;
-          if (state.seeking && state.seekId === watchdogSeekId) {
-            scheduleSeekFinalize(0, watchdogSeekId);
-          }
-        }, SEEK_WATCHDOG_MS);
-      }
+      const watchdogSeekId = state.seekId;
+      state.seekWatchdogTimer = setTimeout(() => {
+        state.seekWatchdogTimer = null;
+        if (state.seeking && state.seekId === watchdogSeekId) {
+          scheduleSeekFinalize(0, watchdogSeekId);
+        }
+      }, SEEK_WATCHDOG_MS);
 
       if (coupledMode && audio) {
         squelchAudioEvents(400);
-        if (!isMidScrub) {
-          // First seeking of a scrub session: pause audio and set initial seek position.
-          // Mid-scrub events skip audio.currentTime — finalizeSeekSync sets it precisely
-          // at the final position, eliminating N-1 unnecessary decode buffer flushes.
-          try {
-            cancelActiveFade();
-            audio.volume = 0;
-            if (!audio.paused) audio.pause();
-          } catch {}
-          if (isFinite(seekTime)) {
-            safeSetAudioTime(seekTime);
-          }
+        try {
+          cancelActiveFade();
+          audio.volume = 0;
+          if (!audio.paused) audio.pause();
+        } catch {}
+        if (isFinite(seekTime)) {
+          safeSetAudioTime(seekTime);
         }
-        // Mid-scrub: audio is already paused (from first event). Skip currentTime assignment.
-        // The seeked handler and finalizeSeekSync sync audio to the final position.
       }
 
       if (!state.intendedPlaying) {
@@ -6467,20 +6403,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const newTime = Number(video.currentTime());
       state.lastKnownGoodVT = newTime;
       state.lastKnownGoodVTts = now();
-      // ── SCRUB SESSION: always sync audio.currentTime on seeked ─────────────
-      // During rapid scrubs we skipped intermediate audio.currentTime assignments.
-      // The seeked event fires for the FINAL seek position — always sync audio here
-      // so it's precisely aligned before finalizeSeekSync starts waiting for readyState.
       if (coupledMode && audio) {
         squelchAudioEvents(300);
-        safeSetAudioTime(newTime); // always set on seeked (final position, not intermediate)
+        safeSetAudioTime(newTime);
       }
-      // Notify UltraStabilizer that seek is done — resets stall/freeze sample windows
-      // so post-seek detection starts fresh (onSeekEnd was never called before this patch).
-      try { UltraStabilizer.onSeekEnd(); } catch {}
-      // Update OS media controls immediately with the new seek position.
-      // For long videos, accurate position in the OS transport bar matters more.
-      try { maybeUpdateMediaSessionPosition(newTime); } catch {}
       state.driftStableFrames = 0;
       state.lastDrift = 0;
       scheduleSeekFinalize(SEEK_FINALIZE_DELAY_MS, state.seekId);
@@ -7210,6 +7136,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // else: window.load handler triggers maybePrimeStartup + scheduleSync via
   // the coupledMode branch, or scheduleSync(0) directly for non-coupled.
 });
+
 
 document.addEventListener('keydown', function(event) {
      const active = document.activeElement;
