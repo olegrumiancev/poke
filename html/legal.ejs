@@ -7,29 +7,19 @@
   <link rel="icon" href="/css/yt-ukraine.svg">
   <style>
     :root {
-      --bg: #f1f1f1;
-      --card-bg: #ffffff;
-      --text-main: #222;
-      --text-muted: #555;
-      --link: #065fd4;
-      --btn-bg: #065fd4;
-      --btn-text: #fff;
-      --border: #ccc;
-      --input-bg: #fff;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f0f0f;
-        --card-bg: #1f1f1f;
-        --text-main: #f1f1f1;
-        --text-muted: #aaa;
-        --link: #3ea6ff;
-        --btn-bg: #3ea6ff;
-        --btn-text: #0f0f0f;
-        --border: #444;
-        --input-bg: #121212;
-      }
+      --bg: #0f0f0f;
+      --card-bg: #1f1f1f;
+      --text-main: #f1f1f1;
+      --text-muted: #aaa;
+      --link: #3ea6ff;
+      --btn-bg: #3ea6ff;
+      --btn-text: #0f0f0f;
+      --border: #444;
+      --input-bg: #121212;
+      --warning-bg: rgba(255, 193, 7, 0.1);
+      --warning-border: #caa100;
+      --danger: #ff6b6b;
+      --success-bg: rgba(62, 166, 255, 0.1);
     }
 
     body {
@@ -43,26 +33,20 @@
       min-height: 100vh;
     }
 
-    /* Header */
     header {
       padding: 15px 25px;
-      border-bottom: 1px solid rgba(0,0,0,0.1);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
       display: flex;
       align-items: center;
       background: var(--card-bg);
     }
-    
+
     .logo-img {
       height: 28px;
       width: auto;
       display: block;
     }
 
-    @media (prefers-color-scheme: dark) {
-      header { border-bottom: 1px solid rgba(255,255,255,0.1); }
-    }
-
-    /* Main Layout */
     .main-wrap {
       flex: 1;
       display: flex;
@@ -112,18 +96,21 @@
     }
 
     .privacy-box {
-      background-color: rgba(6, 95, 212, 0.05);
+      background-color: var(--success-bg);
       border-left: 3px solid var(--link);
       padding: 10px 15px;
       margin: 15px 0;
       border-radius: 0 4px 4px 0;
     }
-    
-    @media (prefers-color-scheme: dark) {
-      .privacy-box { background-color: rgba(62, 166, 255, 0.1); }
+
+    .warning-box {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      padding: 12px 15px;
+      margin: 15px 0;
+      border-radius: 0 4px 4px 0;
     }
 
-    /* Form Styling */
     form {
       background: var(--card-bg);
       padding: 25px;
@@ -151,6 +138,7 @@
       color: var(--text-main);
       border-radius: 2px;
       font-family: inherit;
+      font-size: 14px;
     }
 
     textarea.form-control {
@@ -163,7 +151,6 @@
       border-color: transparent;
     }
 
-    /* Captcha Styling */
     .captcha-container {
       display: flex;
       align-items: center;
@@ -173,7 +160,7 @@
     }
 
     #captchaCanvas {
-      background-color: #fff; /* Always white for readability */
+      background-color: #fff;
       border: 1px solid var(--border);
       cursor: pointer;
     }
@@ -188,7 +175,6 @@
       padding: 0;
     }
 
-    /* Buttons */
     .btn {
       background-color: var(--btn-bg);
       color: var(--btn-text);
@@ -206,7 +192,6 @@
       opacity: 0.9;
     }
 
-    /* Disclaimer Footer */
     .disclaimer {
       margin-top: 30px;
       font-size: 12px;
@@ -221,14 +206,74 @@
       text-decoration: none;
     }
 
-    /* No-JS Specific */
     .no-js-alert {
       padding: 15px;
-      background: #ffecb3;
-      color: #333;
+      background: #3a2f00;
+      color: #f5e6a8;
       margin-bottom: 20px;
-      border: 1px solid #ffcc80;
+      border: 1px solid #8a6d1d;
       font-size: 14px;
+    }
+
+    .dmca-section {
+      display: none;
+      margin-top: 25px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dmca-section h2 {
+      margin-top: 0;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      margin-top: 3px;
+      flex: 0 0 auto;
+    }
+
+    .checkbox-group label {
+      margin: 0;
+      line-height: 1.5;
+      font-weight: 400;
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+
+    .error-text {
+      color: var(--danger);
+      font-size: 12px;
+      display: none;
+      margin-top: 8px;
+    }
+
+    .required-note {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: -10px;
+      margin-bottom: 15px;
+    }
+
+    .mono {
+      font-family: "Roboto Mono", "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .hidden {
+      display: none !important;
     }
   </style>
 </head>
@@ -242,15 +287,22 @@
 
   <main class="main-wrap">
     <div class="container">
-      
+
       <h1>Legal Request</h1>
 
       <div class="legal-text">
         <p>Poke operates as a privacy-friendly frontend for YouTube and does not host or store video content. All material viewed through Poke originates directly from YouTube’s servers. As such, copyright claims concerning specific videos or media should be directed to YouTube, not Poke.</p>
 
         <p>Poke does not modify, rehost, or alter YouTube content in any way. Our systems act purely as a transient intermediary under <strong>17 U.S.C. § 512(a)</strong>, transmitting publicly accessible data.</p>
-        
+
         <p>If you believe that Poke has improperly displayed or proxied material in a way that violates your copyright, please first confirm whether the material appears directly on YouTube. If it does, the proper channel for resolution is <a href="https://www.youtube.com/copyright_complaint_form" style="color:var(--link)">YouTube’s DMCA takedown form</a>.</p>
+
+        <div class="warning-box">
+          <h2>Use This As A Last Option</h2>
+          <p style="margin-bottom:0">
+            This form should only be used if your issue specifically concerns how Poke is displaying or proxying material and you have already determined that the matter cannot be fully resolved through YouTube directly. If the content exists on YouTube itself, that platform is usually the first and proper place to send a copyright complaint.
+          </p>
+        </div>
 
         <div class="privacy-box">
           <h2>Privacy of Submitted Information</h2>
@@ -279,7 +331,7 @@
             <textarea id="nj_body" name="Message Body" class="form-control"></textarea>
           </div>
           <div class="form-group">
-            <label>Human Check: What is 5 + 2?</label>
+            <label>Spam Prevention Check: What is 5 + 2?</label>
             <input type="text" name="Captcha_Answer" class="form-control" placeholder="Enter number">
           </div>
           <button type="submit" class="btn">Open Email Client</button>
@@ -318,8 +370,54 @@
           <textarea id="description" class="form-control" placeholder="Please describe the alleged infringement or legal issue..." required></textarea>
         </div>
 
+        <div id="dmcaSection" class="dmca-section">
+          <h2>DMCA Declaration</h2>
+          <p>
+            These declarations are only required for DMCA takedown requests. Please read them carefully before continuing. By checking these boxes and typing the confirmation phrase, you are confirming that your request is formal and legally intended.
+          </p>
+
+          <div class="checkbox-group">
+            <input type="checkbox" id="dmcaGoodFaith">
+            <label for="dmcaGoodFaith">
+              I have a good-faith belief that the use of the material in the manner complained of is not authorised by the copyright owner, its agent, or the law.
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <input type="checkbox" id="dmcaAccuracy">
+            <label for="dmcaAccuracy">
+              The information in this notification is accurate and, under penalty of perjury, I am the owner, or an agent authorised to act on behalf of the owner, of an exclusive right that is allegedly infringed.
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <input type="checkbox" id="dmcaLastOption">
+            <label for="dmcaLastOption">
+              I understand that this form should be used only as a last option for Poke-specific display or proxy concerns, and that complaints about material hosted on YouTube should normally be sent to YouTube first.
+            </label>
+          </div>
+
+          <div class="form-group" style="margin-top:20px;">
+            <label for="dmcaAcceptText">Type this exactly: <span class="mono">I ACCEPT FOR THE REQUEST</span></label>
+            <input
+              type="text"
+              id="dmcaAcceptText"
+              class="form-control"
+              placeholder="Type the exact phrase here"
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <div class="help-text">
+              This extra confirmation helps show that the declaration was read and intentionally accepted.
+            </div>
+            <div class="error-text" id="dmcaError">
+              For DMCA requests, you must check all declaration boxes and type the exact phrase: I ACCEPT FOR THE REQUEST
+            </div>
+          </div>
+        </div>
+
         <div class="form-group">
-          <label>Security Check</label>
+          <label>Spam Prevention Check</label>
           <div class="captcha-container">
             <canvas id="captchaCanvas" width="180" height="50" title="Click to refresh image"></canvas>
             <button type="button" class="captcha-refresh" onclick="generateCaptcha()">Refresh Image</button>
@@ -333,7 +431,7 @@
 
       <div class="disclaimer">
         <p>
-          Poke acts purely as a transient intermediary. 
+          Poke acts purely as a transient intermediary.
           See our <a href="https://poketube.fun/policies/">Policies Page</a> for more info.
         </p>
         <p>For technical bugs, please use our <a href="https://codeberg.org/ashleyirispuppy/poke/issues">Issue Tracker</a>.</p>
@@ -343,17 +441,22 @@
   </main>
 
   <script>
-    // Reveal Form
     document.getElementById('legalForm').style.display = 'block';
 
-    /* --- EMAIL DECODING --- */
-    // "legal@poketube.fun" encoded in Base64
     const contactB64 = "bGVnYWxAcG9rZXR1YmUuZnVu";
 
-    /* --- CAPTCHA LOGIC --- */
     let captchaCode = "";
     const canvas = document.getElementById('captchaCanvas');
     const ctx = canvas.getContext('2d');
+
+    const requestType = document.getElementById('requestType');
+    const dmcaSection = document.getElementById('dmcaSection');
+    const dmcaGoodFaith = document.getElementById('dmcaGoodFaith');
+    const dmcaAccuracy = document.getElementById('dmcaAccuracy');
+    const dmcaLastOption = document.getElementById('dmcaLastOption');
+    const dmcaAcceptText = document.getElementById('dmcaAcceptText');
+    const dmcaError = document.getElementById('dmcaError');
+    const ytLink = document.getElementById('ytLink');
 
     function generateCaptcha() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -367,8 +470,7 @@
       }
       captchaCode = result;
 
-      // Lines
-      for(let i=0; i<7; i++) {
+      for (let i = 0; i < 7; i++) {
         ctx.strokeStyle = getRandomColor();
         ctx.beginPath();
         ctx.moveTo(Math.random() * canvas.width, Math.random() * canvas.height);
@@ -376,21 +478,19 @@
         ctx.stroke();
       }
 
-      // Dots
-      for(let i=0; i<30; i++) {
+      for (let i = 0; i < 30; i++) {
         ctx.fillStyle = getRandomColor();
         ctx.beginPath();
         ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, 1.5, 0, 2 * Math.PI);
         ctx.fill();
       }
 
-      // Text
       ctx.font = 'bold 28px monospace';
       ctx.textBaseline = 'middle';
       let x = 20;
       for (let i = 0; i < result.length; i++) {
         ctx.save();
-        let angle = (Math.random() - 0.5) * 0.4;
+        const angle = (Math.random() - 0.5) * 0.4;
         ctx.translate(x, 25);
         ctx.rotate(angle);
         ctx.fillStyle = "#222";
@@ -409,15 +509,59 @@
       return color;
     }
 
+    function updateDmcaVisibility() {
+      const isDmca = requestType.value === 'DMCA';
+
+      dmcaSection.style.display = isDmca ? 'block' : 'none';
+      ytLink.required = isDmca;
+
+      if (!isDmca) {
+        dmcaGoodFaith.checked = false;
+        dmcaAccuracy.checked = false;
+        dmcaLastOption.checked = false;
+        dmcaAcceptText.value = '';
+        dmcaError.style.display = 'none';
+      }
+    }
+
+    function validateDmcaSection() {
+      if (requestType.value !== 'DMCA') {
+        dmcaError.style.display = 'none';
+        return true;
+      }
+
+      const acceptedPhrase = "I ACCEPT FOR THE REQUEST";
+      const typedPhrase = dmcaAcceptText.value.trim();
+
+      const ok =
+        dmcaGoodFaith.checked &&
+        dmcaAccuracy.checked &&
+        dmcaLastOption.checked &&
+        typedPhrase === acceptedPhrase;
+
+      dmcaError.style.display = ok ? 'none' : 'block';
+      return ok;
+    }
+
+    requestType.addEventListener('change', updateDmcaVisibility);
+    dmcaAcceptText.addEventListener('input', validateDmcaSection);
+    dmcaGoodFaith.addEventListener('change', validateDmcaSection);
+    dmcaAccuracy.addEventListener('change', validateDmcaSection);
+    dmcaLastOption.addEventListener('change', validateDmcaSection);
+
     canvas.addEventListener('click', generateCaptcha);
     generateCaptcha();
+    updateDmcaVisibility();
 
-    /* --- SUBMISSION LOGIC --- */
     document.getElementById('legalForm').addEventListener('submit', function(e) {
       e.preventDefault();
-      
+
       const userEntry = document.getElementById('captchaInput').value.toUpperCase();
       const errorMsg = document.getElementById('captchaError');
+
+      if (!validateDmcaSection()) {
+        return;
+      }
 
       if (userEntry !== captchaCode) {
         errorMsg.style.display = 'block';
@@ -428,14 +572,24 @@
 
       errorMsg.style.display = 'none';
 
-      // Decode email address
       const destEmail = atob(contactB64);
 
       const type = document.getElementById('requestType').value;
       const name = document.getElementById('contactName').value;
       const pokeUrl = document.getElementById('pokeLink').value || "N/A";
-      const ytUrl = document.getElementById('ytLink').value || "N/A";
+      const ytUrlValue = document.getElementById('ytLink').value || "N/A";
       const desc = document.getElementById('description').value;
+
+      let dmcaBlock = "";
+      if (type === "DMCA") {
+        dmcaBlock =
+`
+DMCA DECLARATIONS:
+- Good-faith belief confirmed: Yes
+- Accuracy and authority confirmed under penalty of perjury: Yes
+- Acknowledged this form is a last option for Poke-specific concerns: Yes
+- Typed confirmation phrase: I ACCEPT FOR THE REQUEST`;
+      }
 
       const subject = encodeURIComponent(`[${type}] Legal Request: ${name}`);
       const body = encodeURIComponent(
@@ -443,17 +597,16 @@
 NAME/ORG: ${name}
 
 POKE URL: ${pokeUrl}
-ORIGINAL YOUTUBE URL: ${ytUrl}
+ORIGINAL YOUTUBE URL: ${ytUrlValue}
 
 DESCRIPTION:
-${desc}
+${desc}${dmcaBlock}
 
 ---
 Sent via Poke Legal Portal
 User Agent: ${navigator.userAgent}`
       );
 
-      // Trigger Mailto with decoded address
       window.location.href = `mailto:${destEmail}?subject=${subject}&body=${body}`;
     });
   </script>
