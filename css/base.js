@@ -8659,10 +8659,6 @@ function setupEventListeners(player, renderer) {
 
 function raiseControls() {
 	const styles = document.createElement("style");
-	styles.textContent = `
-	.vjs-control-bar {
-		z-index: 21;
-	}
-	`;
+	styles.textContent = `.vjs-control-bar {z-index: 21;}`;
 	document.body.append(styles);
 }
