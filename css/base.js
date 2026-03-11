@@ -7139,140 +7139,202 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 (function () {
-    function isEditableElement(el) {
-        if (!el || !(el instanceof Element)) return false;
+    let focusIsInEditable = false;
+
+    function isElement(node) {
+        return node && node.nodeType === 1;
+    }
+
+    function isEditableLike(el) {
+        if (!isElement(el)) return false;
 
         if (el.isContentEditable) return true;
 
-        const editableAncestor = el.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
-        if (editableAncestor) return true;
+        const tag = (el.tagName || '').toLowerCase();
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        const type = (el.getAttribute('type') || 'text').toLowerCase();
 
-        const tag = el.tagName.toLowerCase();
-
-        if (tag === 'textarea' || tag === 'select') return true;
+        if (tag === 'textarea') return true;
 
         if (tag === 'input') {
-            const type = (el.getAttribute('type') || 'text').toLowerCase();
-
             const nonTextInputTypes = new Set([
                 'button',
                 'checkbox',
-                'radio',
-                'range',
                 'color',
                 'file',
+                'hidden',
                 'image',
+                'radio',
+                'range',
                 'reset',
-                'submit',
-                'hidden'
+                'submit'
             ]);
 
             return !nonTextInputTypes.has(type);
         }
 
-        return !!el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
+        if (tag === 'select') return true;
+
+        if (
+            role === 'textbox' ||
+            role === 'searchbox' ||
+            role === 'combobox' ||
+            role === 'spinbutton'
+        ) {
+            return true;
+        }
+
+        if (
+            el.matches('[contenteditable], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]')
+        ) {
+            return true;
+        }
+
+        return false;
     }
 
-    function isInteractiveElement(el) {
-        if (!el || !(el instanceof Element)) return false;
+    function hasEditableAncestor(el) {
+        if (!isElement(el)) return false;
 
-        return !!el.closest(
-            'input, textarea, select, button, summary, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], [role="button"]'
+        if (isEditableLike(el)) return true;
+
+        const closest = el.closest(
+            [
+                'textarea',
+                'select',
+                'input',
+                '[contenteditable]',
+                '[contenteditable=""]',
+                '[contenteditable="true"]',
+                '[contenteditable="plaintext-only"]',
+                '[role="textbox"]',
+                '[role="searchbox"]',
+                '[role="combobox"]',
+                '[role="spinbutton"]'
+            ].join(', ')
         );
+
+        return !!closest;
     }
+
+    function eventHitsEditable(event) {
+        if (!event) return false;
+
+        if (hasEditableAncestor(event.target)) return true;
+
+        const active = document.activeElement;
+        if (hasEditableAncestor(active)) return true;
+
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        for (const node of path) {
+            if (hasEditableAncestor(node)) return true;
+        }
+
+        return false;
+    }
+
+    function updateEditableFocusState(target) {
+        focusIsInEditable = hasEditableAncestor(target) || hasEditableAncestor(document.activeElement);
+    }
+
+    document.addEventListener(
+        'focusin',
+        function (event) {
+            updateEditableFocusState(event.target);
+        },
+        true
+    );
+
+    document.addEventListener(
+        'focusout',
+        function () {
+            requestAnimationFrame(function () {
+                updateEditableFocusState(document.activeElement);
+            });
+        },
+        true
+    );
 
     function getPlayer() {
         const videoElement = document.querySelector('.video-js');
-        if (!videoElement) return null;
-
-        if (typeof videojs === 'undefined') return null;
-
+        if (!videoElement || typeof videojs === 'undefined') return null;
         return videojs.getPlayer(videoElement) || videojs(videoElement);
     }
 
-    document.addEventListener('keydown', function (event) {
-        if (event.defaultPrevented) return;
-        if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
-        if (event.isComposing || event.keyCode === 229) return;
+    document.addEventListener(
+        'keydown',
+        function (event) {
+            if (event.defaultPrevented) return;
+            if (event.ctrlKey || event.altKey || event.metaKey) return;
+            if (event.isComposing || event.keyCode === 229) return;
 
-        const target = event.target;
-        const active = document.activeElement;
+            if (focusIsInEditable || eventHitsEditable(event)) {
+                return;
+            }
 
-        if (isEditableElement(target) || isEditableElement(active)) return;
+            const player = getPlayer();
+            if (!player) return;
 
-        const key = event.key;
-        const lowerKey = typeof key === 'string' ? key.toLowerCase() : '';
+            const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
 
-        if (isInteractiveElement(target) && lowerKey !== 'f') return;
+            switch (key) {
+                case 'f':
+                    event.preventDefault();
+                    if (player.isFullscreen()) {
+                        player.exitFullscreen();
+                    } else {
+                        player.requestFullscreen();
+                    }
+                    break;
 
-        const player = getPlayer();
-        if (!player) return;
+                case 'k':
+                case ' ':
+                case 'spacebar':
+                    event.preventDefault();
+                    if (player.paused()) {
+                        player.play();
+                    } else {
+                        player.pause();
+                    }
+                    break;
 
-        switch (lowerKey) {
-            case 'f':
-                event.preventDefault();
-                if (player.isFullscreen()) {
-                    player.exitFullscreen();
-                } else {
-                    player.requestFullscreen();
-                }
-                break;
+                case 'm':
+                    event.preventDefault();
+                    player.muted(!player.muted());
+                    break;
 
-            case 'k':
-                event.preventDefault();
-                if (player.paused()) {
-                    player.play();
-                } else {
-                    player.pause();
-                }
-                break;
+                case 'arrowright':
+                case 'l':
+                    event.preventDefault();
+                    player.currentTime(Math.min(player.duration() || Infinity, player.currentTime() + 10));
+                    break;
 
-            case ' ':
-            case 'spacebar':
-                event.preventDefault();
-                if (player.paused()) {
-                    player.play();
-                } else {
-                    player.pause();
-                }
-                break;
+                case 'arrowleft':
+                case 'j':
+                    event.preventDefault();
+                    player.currentTime(Math.max(0, player.currentTime() - 10));
+                    break;
 
-            case 'm':
-                event.preventDefault();
-                player.muted(!player.muted());
-                break;
+                case 'arrowup':
+                    event.preventDefault();
+                    if (player.muted() && player.volume() === 0) {
+                        player.muted(false);
+                    }
+                    player.volume(Math.min(1, Math.round((player.volume() + 0.1) * 10) / 10));
+                    break;
 
-            case 'arrowright':
-            case 'l':
-                event.preventDefault();
-                player.currentTime(Math.min(player.duration() || Infinity, player.currentTime() + 10));
-                break;
-
-            case 'arrowleft':
-            case 'j':
-                event.preventDefault();
-                player.currentTime(Math.max(0, player.currentTime() - 10));
-                break;
-
-            case 'arrowup':
-                event.preventDefault();
-                if (player.muted() && player.volume() === 0) {
-                    player.muted(false);
-                }
-                player.volume(Math.min(1, Math.round((player.volume() + 0.1) * 10) / 10));
-                break;
-
-            case 'arrowdown':
-                event.preventDefault();
-                player.volume(Math.max(0, Math.round((player.volume() - 0.1) * 10) / 10));
-                if (player.volume() === 0) {
-                    player.muted(true);
-                }
-                break;
-        }
-    });
+                case 'arrowdown':
+                    event.preventDefault();
+                    player.volume(Math.max(0, Math.round((player.volume() - 0.1) * 10) / 10));
+                    if (player.volume() === 0) {
+                        player.muted(true);
+                    }
+                    break;
+            }
+        },
+        true
+    );
 })();
-
 // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
 
