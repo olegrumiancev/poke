@@ -7137,7 +7137,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // the coupledMode branch, or scheduleSync(0) directly for non-coupled.
 });
 
-
 (function () {
 
 function isTyping(el) {
@@ -7235,7 +7234,8 @@ document.addEventListener('keydown', function (event) {
 }, true); // capture phase
 
 })();
-// https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
+
+ // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
 
  const FORMATS = {
