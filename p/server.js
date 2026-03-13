@@ -187,13 +187,37 @@ const rewriteCssFontUrls = (css) => {
   );
 };
 
+// Disk path for the cached & rewritten CSS (lives alongside the fonts)
+const FA_CSS_DISK_PATH = path.join(__dirname, "fonts", "all.css");
+
 /**
- * Fetch, rewrite, and cache the Font Awesome CSS. Populates FA_CSS_CACHE.
- * Safe to call concurrently — only fetches once.
+ * Load, rewrite, and cache the Font Awesome CSS.
+ *
+ * Priority order:
+ *   1. In-memory cache  (instant, zero I/O)
+ *   2. Disk cache at fonts/all.css  (fast, no network)
+ *   3. Fetch from Wayback Machine, rewrite, save to disk + memory
+ *
+ * Safe to call concurrently — a single in-flight promise is shared so
+ * parallel requests during the first fetch don't fire duplicate downloads.
  */
 let cssLoadPromise = null;
 const loadCss = () => {
+  // 1. Already in memory
   if (FA_CSS_CACHE !== null) return Promise.resolve(FA_CSS_CACHE);
+
+  // 2. Already on disk — load synchronously into memory and return immediately
+  if (fs.existsSync(FA_CSS_DISK_PATH) && fs.statSync(FA_CSS_DISK_PATH).size > 100) {
+    try {
+      FA_CSS_CACHE = fs.readFileSync(FA_CSS_DISK_PATH, "utf8");
+      console.log(`[css] Loaded FA CSS from disk cache (${Buffer.byteLength(FA_CSS_CACHE, "utf8")} bytes)`);
+      return Promise.resolve(FA_CSS_CACHE);
+    } catch (e) {
+      console.warn(`[css] Failed to read disk cache, will re-fetch: ${e.message}`);
+    }
+  }
+
+  // 3. Not on disk yet — fetch, rewrite, persist
   if (cssLoadPromise) return cssLoadPromise;
 
   cssLoadPromise = (async () => {
@@ -227,8 +251,16 @@ const loadCss = () => {
     catch (_) { cssText = rawBody.toString("utf8"); }
 
     cssText = rewriteCssFontUrls(cssText);
+
+    // Persist to disk so future server restarts skip the network entirely
+    try {
+      fs.writeFileSync(FA_CSS_DISK_PATH, cssText, "utf8");
+      console.log(`[css] FA CSS saved to disk (${Buffer.byteLength(cssText, "utf8")} bytes)`);
+    } catch (e) {
+      console.warn(`[css] Could not write CSS to disk: ${e.message}`);
+    }
+
     FA_CSS_CACHE = cssText;
-    console.log(`[css] FA CSS cached in memory (${Buffer.byteLength(cssText, "utf8")} bytes)`);
     cssLoadPromise = null;
     return cssText;
   })();
