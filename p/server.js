@@ -41,19 +41,30 @@ const FONT_MIME = {
   ".eot":   "application/vnd.ms-fontobject",
 };
 
+// In-memory cache for the rewritten CSS text — populated once, served forever
+// (the fonts never change, so there's no need to re-fetch)
+let FA_CSS_CACHE = null;
+
+// In-memory cache for CDX timestamps keyed by original URL
+const cdxTimestampCache = {};
+
 // ---------------------------------------------------------------------------
 // Wayback Machine CDX snapshot discovery + download
 // ---------------------------------------------------------------------------
 
 /**
  * Query the Wayback Machine CDX API to find the most recent valid snapshot
- * timestamp for a given URL. Returns null if none found.
- * @param {string} assetUrl  - original URL, e.g. https://site-assets.fontawesome.com/...
- * @returns {Promise<string|null>}  timestamp string like "20260310233450"
+ * timestamp for a given URL. Caches the result in memory.
+ * Returns null if none found.
+ * @param {string} assetUrl
+ * @returns {Promise<string|null>}
  */
 const findArchiveTimestamp = async (assetUrl) => {
+  if (cdxTimestampCache[assetUrl]) {
+    return cdxTimestampCache[assetUrl];
+  }
+
   const { fetch } = await import("undici");
-  // CDX API: find snapshots with HTTP 200, sorted newest first, limit 1
   const cdxUrl =
     `https://web.archive.org/cdx/search/cdx` +
     `?url=${encodeURIComponent(assetUrl)}` +
@@ -73,7 +84,9 @@ const findArchiveTimestamp = async (assetUrl) => {
     const rows = await res.json();
     // rows[0] is the header ["timestamp","statuscode"], rows[1] is first result
     if (!Array.isArray(rows) || rows.length < 2) return null;
-    return rows[1][0]; // timestamp
+    const ts = rows[1][0];
+    cdxTimestampCache[assetUrl] = ts;
+    return ts;
   } catch (err) {
     console.error(`[fonts] CDX lookup failed for ${assetUrl}: ${err.message}`);
     return null;
@@ -82,7 +95,6 @@ const findArchiveTimestamp = async (assetUrl) => {
 
 /**
  * Validate that a buffer is actually the binary font format we expect.
- * Returns true if the magic bytes look right, false if it seems like HTML/text.
  * @param {Buffer} buf
  * @param {string} filename
  */
@@ -97,13 +109,11 @@ const validateFontBuffer = (buf, filename) => {
     const tag = buf.toString("ascii", 0, 4);
     return magic === 0x00010000 || tag === "OTTO" || tag === "true";
   }
-  return true; // unknown extension, pass through
+  return true;
 };
 
 /**
- * Download a single font file from the Wayback Machine.
- * Discovers the correct snapshot timestamp via CDX if needed.
- * Saves validated binary to disk. Returns true on success.
+ * Download a single font file from the Wayback Machine via CDX-discovered timestamp.
  * @param {string} filename
  * @returns {Promise<boolean>}
  */
@@ -121,7 +131,7 @@ const downloadFont = async (filename) => {
   }
 
   const archiveUrl = `https://web.archive.org/web/${timestamp}if_/${originalUrl}`;
-  console.log(`[fonts] Downloading ${filename} @ ts=${timestamp} from ${archiveUrl}`);
+  console.log(`[fonts] Downloading ${filename} @ ts=${timestamp}`);
 
   try {
     const res = await fetch(archiveUrl, {
@@ -139,10 +149,9 @@ const downloadFont = async (filename) => {
       return false;
     }
 
-    // Reject HTML responses (Wayback Machine error pages come back as 200 HTML)
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("text/html")) {
-      console.error(`[fonts] Skipping ${filename}: got HTML content-type, snapshot may be missing`);
+      console.error(`[fonts] Skipping ${filename}: got HTML content-type`);
       return false;
     }
 
@@ -163,7 +172,72 @@ const downloadFont = async (filename) => {
 };
 
 /**
- * Download all missing font files at startup. Non-blocking — server starts immediately.
+ * Rewrite all font URL variants inside CSS text to local /fonts/<filename> paths.
+ * Handles:
+ *   /web/20260129053127im_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
+ *   https://web.archive.org/web/<ts>if_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
+ *   https://site-assets.fontawesome.com/.../fa-solid-900.woff2
+ * @param {string} css
+ * @returns {string}
+ */
+const rewriteCssFontUrls = (css) => {
+  return css.replace(
+    /(?:(?:https?:\/\/web\.archive\.org)?\/web\/\d{14}[a-z_]*\/)?(?:https?:\/\/)?site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[\w-]+\.(?:woff2|ttf|woff|eot))/g,
+    "/fonts/$1"
+  );
+};
+
+/**
+ * Fetch, rewrite, and cache the Font Awesome CSS. Populates FA_CSS_CACHE.
+ * Safe to call concurrently — only fetches once.
+ */
+let cssLoadPromise = null;
+const loadCss = () => {
+  if (FA_CSS_CACHE !== null) return Promise.resolve(FA_CSS_CACHE);
+  if (cssLoadPromise) return cssLoadPromise;
+
+  cssLoadPromise = (async () => {
+    const cssOriginalUrl = "https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css";
+
+    let cssTimestamp = await findArchiveTimestamp(cssOriginalUrl);
+    if (!cssTimestamp) {
+      cssTimestamp = "20260310233449";
+    }
+
+    const archiveUrl = `https://web.archive.org/web/${cssTimestamp}if_/${cssOriginalUrl}`;
+    console.log(`[css] Fetching FA CSS from ${archiveUrl}`);
+
+    const { fetch } = await import("undici");
+    const f = await fetch(archiveUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/css,*/*;q=0.1",
+        "Accept-Encoding": "identity",
+        "Referer": "https://web.archive.org/",
+      },
+      redirect: "follow",
+    });
+
+    if (!f.ok) throw new Error(`Upstream CSS ${f.status}`);
+
+    const rawBody = Buffer.from(await f.arrayBuffer());
+    const encoding = f.headers.get("content-encoding");
+    let cssText;
+    try { cssText = (await decompress(rawBody, encoding)).toString("utf8"); }
+    catch (_) { cssText = rawBody.toString("utf8"); }
+
+    cssText = rewriteCssFontUrls(cssText);
+    FA_CSS_CACHE = cssText;
+    console.log(`[css] FA CSS cached in memory (${Buffer.byteLength(cssText, "utf8")} bytes)`);
+    cssLoadPromise = null;
+    return cssText;
+  })();
+
+  return cssLoadPromise;
+};
+
+/**
+ * Download all missing font files at startup. Non-blocking.
  */
 const ensureFontsDownloaded = async () => {
   for (const filename of FA_WEBFONTS) {
@@ -183,20 +257,19 @@ const ensureFontsDownloaded = async () => {
   console.log("[fonts] Font cache check complete");
 };
 
-// Kick off font downloads in background — does not block server startup
-ensureFontsDownloaded().catch((err) =>
-  console.error("[fonts] Startup font download error:", err)
-);
+// Kick off both font downloads and CSS pre-warming in background
+Promise.all([
+  ensureFontsDownloaded(),
+  loadCss(),
+]).catch((err) => console.error("[startup] Background init error:", err));
 
 // ---------------------------------------------------------------------------
-// URL whitelist
+// URL whitelist (Glitch CDNs removed)
 // ---------------------------------------------------------------------------
 
 const URL_WHITELIST = [
   "i.ytimg.com",
   "yt3.googleusercontent.com",
-  "cdn.glitch.global",
-  "cdn.glitch.me",
   "cdn.statically.io",
   "site-assets.fontawesome.com",
   "fonts.gstatic.com",
@@ -333,7 +406,6 @@ app.use((_req, res, next) => {
 app.get("/fonts/:filename", (req, res) => {
   const { filename } = req.params;
 
-  // Only allow known font filenames — no path traversal
   if (!FA_WEBFONTS.includes(filename)) {
     return res.status(404).send("Font not found");
   }
@@ -341,9 +413,9 @@ app.get("/fonts/:filename", (req, res) => {
   const filePath = path.join(FONTS_DIR, filename);
 
   if (!fs.existsSync(filePath) || fs.statSync(filePath).size < 100) {
-    // Not yet downloaded — kick off download and ask browser to retry
     downloadFont(filename).catch(() => {});
-    return res.status(503)
+    return res
+      .status(503)
       .setHeader("Retry-After", "5")
       .send("Font is being downloaded, please retry in a moment");
   }
@@ -356,60 +428,17 @@ app.get("/fonts/:filename", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Route: Font Awesome CSS — fetch from archive, rewrite font URLs to /fonts/
+// Route: Font Awesome CSS — served from in-memory cache after first load
 // ---------------------------------------------------------------------------
-// Handles both:
-//   GET /https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
-//   GET /web/<ts><modifier>/https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
-
 const FA_CSS_HANDLER = async (req, res) => {
   try {
-    const cssOriginalUrl = "https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css";
-
-    // Discover timestamp for the CSS itself via CDX
-    let cssTimestamp = await findArchiveTimestamp(cssOriginalUrl);
-    if (!cssTimestamp) {
-      // Fallback to a hardcoded known-good timestamp if CDX is unavailable
-      cssTimestamp = "20260310233449";
-    }
-
-    const archiveUrl = `https://web.archive.org/web/${cssTimestamp}if_/${cssOriginalUrl}`;
-    console.log(`==> FA CSS: fetching ${archiveUrl}`);
-
-    const { fetch } = await import("undici");
-    const f = await fetch(archiveUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/css,*/*;q=0.1",
-        "Accept-Encoding": "identity",
-        "Referer": "https://web.archive.org/",
-      },
-      redirect: "follow",
-    });
-
-    if (!f.ok) {
-      return res.status(f.status).send(`Upstream error: ${f.status}`);
-    }
-
-    const rawBody = Buffer.from(await f.arrayBuffer());
-    const encoding = f.headers.get("content-encoding");
-    let cssText;
-    try { cssText = (await decompress(rawBody, encoding)).toString("utf8"); }
-    catch (_) { cssText = rawBody.toString("utf8"); }
-
-    // Rewrite ALL font URL variants in the CSS to our local /fonts/<filename>:
-    //   /web/20260129053127im_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
-    //   https://web.archive.org/web/<ts>if_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
-    //   https://site-assets.fontawesome.com/.../fa-solid-900.woff2
-    cssText = cssText.replace(
-      /(?:(?:https?:\/\/web\.archive\.org)?\/web\/\d{14}[a-z_]*\/)?(?:https?:\/\/)?site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[\w-]+\.(?:woff2|ttf|woff|eot))/g,
-      "/fonts/$1"
-    );
-
+    const cssText = await loadCss();
+    const buf = Buffer.from(cssText, "utf8");
     res.setHeader("Content-Type", "text/css; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=864000");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.removeHeader("content-encoding");
-    res.setHeader("content-length", Buffer.byteLength(cssText, "utf8"));
+    res.setHeader("content-length", buf.length);
     res.send(cssText);
   } catch (e) {
     console.error(`==> FA CSS handler error: ${e}`);
@@ -427,9 +456,8 @@ app.get(
 );
 
 // ---------------------------------------------------------------------------
-// Route: catch all Wayback Machine /web/... font paths and redirect to /fonts/
+// Route: catch Wayback Machine /web/... font paths and redirect to /fonts/
 // ---------------------------------------------------------------------------
-// These come from old cached CSS that still has im_ URLs in it.
 app.get(
   /^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(.+)$/,
   (req, res) => {
@@ -508,10 +536,6 @@ const proxy = async (req, res) => {
   try {
     let rawUrl = "https://" + req.originalUrl.slice(8);
 
-    if (rawUrl.includes("cdn.glitch.global")) {
-      rawUrl = rawUrl.replace("cdn.glitch.global", "cdn.glitch.me");
-    }
-
     let url;
     try { url = new URL(rawUrl); }
     catch (e) {
@@ -519,7 +543,7 @@ const proxy = async (req, res) => {
       return res.status(400).send("Malformed URL");
     }
 
-    if (!URL_WHITELIST.includes(url.host) && !rawUrl.includes("cdn.glitch.me")) {
+    if (!URL_WHITELIST.includes(url.host)) {
       console.log(`==> Refusing to proxy host ${url.host}`);
       return res.status(401).send(`Hostname '${url.host}' is not permitted`);
     }
