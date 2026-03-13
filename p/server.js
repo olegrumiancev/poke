@@ -1,7 +1,6 @@
 const express = require("express");
 const fetch = require("node-fetch");
 const { URL } = require("url");
-const { Readable } = require("node:stream");
 const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
@@ -11,35 +10,30 @@ const path = require("path");
 // ---------------------------------------------------------------------------
 
 const FONTS_DIR = path.join(__dirname, "fonts");
-
-// Ensure the fonts directory exists on startup
 if (!fs.existsSync(FONTS_DIR)) {
   fs.mkdirSync(FONTS_DIR, { recursive: true });
 }
 
-const FA_TS = "20260129053127";
+// All Font Awesome v6.1.1 webfont filenames we need to serve locally.
+// woff2 and ttf only — those are the only formats referenced in the CSS.
+const FA_WEBFONTS = [
+  "fa-brands-400.woff2",
+  "fa-brands-400.ttf",
+  "fa-duotone-900.woff2",
+  "fa-duotone-900.ttf",
+  "fa-light-300.woff2",
+  "fa-light-300.ttf",
+  "fa-regular-400.woff2",
+  "fa-regular-400.ttf",
+  "fa-solid-900.woff2",
+  "fa-solid-900.ttf",
+  "fa-thin-100.woff2",
+  "fa-thin-100.ttf",
+  "fa-v4compatibility.woff2",
+  "fa-v4compatibility.ttf",
+];
 
-// All Font Awesome v6.1.1 assets we want to serve locally.
-// Each entry maps a local filename to its Wayback Machine if_ source URL.
-// woff2 and ttf are the only formats used in the CSS — we download both.
-const FA_LOCAL_ASSETS = {
-  "fa-brands-400.woff2":       `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-brands-400.woff2`,
-  "fa-brands-400.ttf":         `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-brands-400.ttf`,
-  "fa-duotone-900.woff2":      `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-duotone-900.woff2`,
-  "fa-duotone-900.ttf":        `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-duotone-900.ttf`,
-  "fa-light-300.woff2":        `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-light-300.woff2`,
-  "fa-light-300.ttf":          `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-light-300.ttf`,
-  "fa-regular-400.woff2":      `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-regular-400.woff2`,
-  "fa-regular-400.ttf":        `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-regular-400.ttf`,
-  "fa-solid-900.woff2":        `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-solid-900.woff2`,
-  "fa-solid-900.ttf":          `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-solid-900.ttf`,
-  "fa-thin-100.woff2":         `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-thin-100.woff2`,
-  "fa-thin-100.ttf":           `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-thin-100.ttf`,
-  "fa-v4compatibility.woff2":  `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-v4compatibility.woff2`,
-  "fa-v4compatibility.ttf":    `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-v4compatibility.ttf`,
-};
-
-// MIME types for font files
+// MIME types for font extensions
 const FONT_MIME = {
   ".woff2": "font/woff2",
   ".ttf":   "font/ttf",
@@ -47,21 +41,90 @@ const FONT_MIME = {
   ".eot":   "application/vnd.ms-fontobject",
 };
 
-/**
- * Download a single font file from the Wayback Machine and save it locally.
- * Returns true on success, false on failure.
- * @param {string} filename
- * @param {string} sourceUrl
- * @returns {Promise<boolean>}
- */
-const downloadFont = async (filename, sourceUrl) => {
-  const { fetch } = await import("undici");
-  const destPath = path.join(FONTS_DIR, filename);
+// ---------------------------------------------------------------------------
+// Wayback Machine CDX snapshot discovery + download
+// ---------------------------------------------------------------------------
 
-  console.log(`[fonts] Downloading ${filename} from ${sourceUrl}`);
+/**
+ * Query the Wayback Machine CDX API to find the most recent valid snapshot
+ * timestamp for a given URL. Returns null if none found.
+ * @param {string} assetUrl  - original URL, e.g. https://site-assets.fontawesome.com/...
+ * @returns {Promise<string|null>}  timestamp string like "20260310233450"
+ */
+const findArchiveTimestamp = async (assetUrl) => {
+  const { fetch } = await import("undici");
+  // CDX API: find snapshots with HTTP 200, sorted newest first, limit 1
+  const cdxUrl =
+    `https://web.archive.org/cdx/search/cdx` +
+    `?url=${encodeURIComponent(assetUrl)}` +
+    `&output=json&limit=1&fl=timestamp,statuscode` +
+    `&filter=statuscode:200&from=20220101&fastLatest=true`;
 
   try {
-    const res = await fetch(sourceUrl, {
+    const res = await fetch(cdxUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; poketube-proxy/1.0)",
+        "Accept": "application/json",
+        "Accept-Encoding": "identity",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    // rows[0] is the header ["timestamp","statuscode"], rows[1] is first result
+    if (!Array.isArray(rows) || rows.length < 2) return null;
+    return rows[1][0]; // timestamp
+  } catch (err) {
+    console.error(`[fonts] CDX lookup failed for ${assetUrl}: ${err.message}`);
+    return null;
+  }
+};
+
+/**
+ * Validate that a buffer is actually the binary font format we expect.
+ * Returns true if the magic bytes look right, false if it seems like HTML/text.
+ * @param {Buffer} buf
+ * @param {string} filename
+ */
+const validateFontBuffer = (buf, filename) => {
+  if (!buf || buf.length < 8) return false;
+  const ext = path.extname(filename).toLowerCase();
+  if (ext === ".woff2") {
+    return buf.toString("ascii", 0, 4) === "wOF2";
+  }
+  if (ext === ".ttf") {
+    const magic = buf.readUInt32BE(0);
+    const tag = buf.toString("ascii", 0, 4);
+    return magic === 0x00010000 || tag === "OTTO" || tag === "true";
+  }
+  return true; // unknown extension, pass through
+};
+
+/**
+ * Download a single font file from the Wayback Machine.
+ * Discovers the correct snapshot timestamp via CDX if needed.
+ * Saves validated binary to disk. Returns true on success.
+ * @param {string} filename
+ * @returns {Promise<boolean>}
+ */
+const downloadFont = async (filename) => {
+  const { fetch } = await import("undici");
+  const destPath = path.join(FONTS_DIR, filename);
+  const originalUrl = `https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/${filename}`;
+
+  console.log(`[fonts] Looking up snapshot for ${filename}...`);
+  const timestamp = await findArchiveTimestamp(originalUrl);
+
+  if (!timestamp) {
+    console.error(`[fonts] No archived snapshot found for ${filename}`);
+    return false;
+  }
+
+  const archiveUrl = `https://web.archive.org/web/${timestamp}if_/${originalUrl}`;
+  console.log(`[fonts] Downloading ${filename} @ ts=${timestamp} from ${archiveUrl}`);
+
+  try {
+    const res = await fetch(archiveUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "*/*",
@@ -72,36 +135,22 @@ const downloadFont = async (filename, sourceUrl) => {
     });
 
     if (!res.ok) {
-      console.error(`[fonts] Failed to download ${filename}: HTTP ${res.status}`);
+      console.error(`[fonts] HTTP ${res.status} downloading ${filename}`);
       return false;
     }
 
-    // Validate we got a binary font file and not an HTML error page.
-    // Wayback Machine sometimes returns HTML with a 200 status for missing snapshots.
-    const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("text/html")) {
-      console.error(`[fonts] Skipping ${filename}: upstream returned HTML (snapshot may be missing)`);
+    // Reject HTML responses (Wayback Machine error pages come back as 200 HTML)
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("text/html")) {
+      console.error(`[fonts] Skipping ${filename}: got HTML content-type, snapshot may be missing`);
       return false;
     }
 
     const buf = Buffer.from(await res.arrayBuffer());
 
-    // Sanity-check: woff2 files start with 0x774F4632 ("wOF2"), ttf with 0x00010000 or "OTTO"
-    const ext = path.extname(filename).toLowerCase();
-    if (ext === ".woff2" && buf.length > 4) {
-      const magic = buf.toString("ascii", 0, 4);
-      if (magic !== "wOF2") {
-        console.error(`[fonts] Skipping ${filename}: bad woff2 magic (got "${magic}"), file may be corrupt or HTML`);
-        return false;
-      }
-    }
-    if (ext === ".ttf" && buf.length > 4) {
-      const magic = buf.readUInt32BE(0);
-      const ottoMagic = buf.toString("ascii", 0, 4);
-      if (magic !== 0x00010000 && ottoMagic !== "OTTO" && ottoMagic !== "true") {
-        console.error(`[fonts] Skipping ${filename}: bad ttf magic (0x${magic.toString(16)}), file may be corrupt or HTML`);
-        return false;
-      }
+    if (!validateFontBuffer(buf, filename)) {
+      console.error(`[fonts] Skipping ${filename}: failed binary validation (${buf.length} bytes, first 4: "${buf.toString("ascii", 0, 4)}")`);
+      return false;
     }
 
     fs.writeFileSync(destPath, buf);
@@ -114,22 +163,27 @@ const downloadFont = async (filename, sourceUrl) => {
 };
 
 /**
- * Download all font files that are not already present on disk.
- * Runs once at startup, non-blocking (does not delay server start).
+ * Download all missing font files at startup. Non-blocking — server starts immediately.
  */
 const ensureFontsDownloaded = async () => {
-  for (const [filename, sourceUrl] of Object.entries(FA_LOCAL_ASSETS)) {
+  for (const filename of FA_WEBFONTS) {
     const destPath = path.join(FONTS_DIR, filename);
-    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
-      console.log(`[fonts] Already have ${filename}, skipping download`);
-      continue;
+    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 100) {
+      const buf = fs.readFileSync(destPath);
+      if (validateFontBuffer(buf, filename)) {
+        console.log(`[fonts] Already have valid ${filename}, skipping`);
+        continue;
+      } else {
+        console.warn(`[fonts] Cached ${filename} failed validation, re-downloading`);
+        fs.unlinkSync(destPath);
+      }
     }
-    await downloadFont(filename, sourceUrl);
+    await downloadFont(filename);
   }
   console.log("[fonts] Font cache check complete");
 };
 
-// Kick off font downloads in the background — server starts immediately
+// Kick off font downloads in background — does not block server startup
 ensureFontsDownloaded().catch((err) =>
   console.error("[fonts] Startup font download error:", err)
 );
@@ -175,14 +229,9 @@ const URL_WHITELIST = [
 ];
 
 // ---------------------------------------------------------------------------
-// Helper: spoofed headers
+// Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Builds spoofed headers for hosts that require specific referrers/origins.
- * @param {string} host
- * @returns {Record<string, string>}
- */
 const getSpoofedHeaders = (host) => {
   if (host === "web.archive.org") {
     return {
@@ -193,7 +242,6 @@ const getSpoofedHeaders = (host) => {
       "Referer": "https://web.archive.org/",
     };
   }
-
   if (host === "site-assets.fontawesome.com") {
     return {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -207,7 +255,6 @@ const getSpoofedHeaders = (host) => {
       "Sec-Fetch-Site": "same-site",
     };
   }
-
   return {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -216,60 +263,28 @@ const getSpoofedHeaders = (host) => {
   };
 };
 
-// ---------------------------------------------------------------------------
-// Helper: decompress
-// ---------------------------------------------------------------------------
-
-/**
- * Decompress a Buffer according to the Content-Encoding header value.
- * @param {Buffer} buf
- * @param {string|null} encoding
- * @returns {Promise<Buffer>}
- */
 const decompress = (buf, encoding) => {
   return new Promise((resolve, reject) => {
     if (!encoding || encoding === "identity") return resolve(buf);
-    if (encoding === "gzip") {
-      return zlib.gunzip(buf, (err, result) => err ? reject(err) : resolve(result));
-    }
+    if (encoding === "gzip") return zlib.gunzip(buf, (e, r) => e ? reject(e) : resolve(r));
     if (encoding === "deflate") {
-      return zlib.inflate(buf, (err, result) => {
-        if (err) {
-          zlib.inflateRaw(buf, (err2, result2) => err2 ? reject(err2) : resolve(result2));
-        } else {
-          resolve(result);
-        }
+      return zlib.inflate(buf, (e, r) => {
+        if (e) zlib.inflateRaw(buf, (e2, r2) => e2 ? reject(e2) : resolve(r2));
+        else resolve(r);
       });
     }
-    if (encoding === "br") {
-      return zlib.brotliDecompress(buf, (err, result) => err ? reject(err) : resolve(result));
-    }
+    if (encoding === "br") return zlib.brotliDecompress(buf, (e, r) => e ? reject(e) : resolve(r));
     resolve(buf);
   });
 };
 
-// ---------------------------------------------------------------------------
-// Helper: fetch and forward
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch a remote URL and pipe the decoded response to the Express response.
- * @param {string} targetUrl
- * @param {string} method
- * @param {express.Response} res
- */
 const fetchAndForward = async (targetUrl, method, res) => {
   const { fetch } = await import("undici");
   const url = new URL(targetUrl);
-  const spoofedHeaders = getSpoofedHeaders(url.host);
+  const headers = getSpoofedHeaders(url.host);
 
   console.log(`==> Fetching ${targetUrl}`);
-
-  const f = await fetch(targetUrl, {
-    method,
-    headers: spoofedHeaders,
-    redirect: "follow",
-  });
+  const f = await fetch(targetUrl, { method, headers, redirect: "follow" });
 
   if (!f.ok) {
     console.log(`==> Upstream returned ${f.status} for ${url.host}`);
@@ -278,21 +293,14 @@ const fetchAndForward = async (targetUrl, method, res) => {
 
   const rawBody = Buffer.from(await f.arrayBuffer());
   const encoding = f.headers.get("content-encoding");
-
   let body;
-  try {
-    body = await decompress(rawBody, encoding);
-  } catch (decompErr) {
-    console.log(`==> Decompression failed (${encoding}): ${decompErr}`);
-    body = rawBody;
-  }
+  try { body = await decompress(rawBody, encoding); }
+  catch (e) { body = rawBody; }
 
-  const headersToForward = ["content-type", "last-modified", "etag"];
-  for (const header of headersToForward) {
-    const value = f.headers.get(header);
-    if (value) res.setHeader(header, value);
+  for (const h of ["content-type", "last-modified", "etag"]) {
+    const v = f.headers.get(h);
+    if (v) res.setHeader(h, v);
   }
-
   res.removeHeader("content-encoding");
   res.setHeader("content-length", body.length);
   res.send(body);
@@ -307,12 +315,12 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use(function (req, res, next) {
+app.use((req, _res, next) => {
   console.log(`=> ${req.method} ${req.originalUrl}`);
   next();
 });
 
-app.use(function (_req, res, next) {
+app.use((_req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "public, max-age=864000");
   res.setHeader("poketube-cacher", "PROXY_FILES");
@@ -320,46 +328,52 @@ app.use(function (_req, res, next) {
 });
 
 // ---------------------------------------------------------------------------
-// Route: serve locally cached Font Awesome fonts
+// Route: serve locally cached Font Awesome fonts from /fonts/<filename>
 // ---------------------------------------------------------------------------
-// Handles requests to /fonts/<filename> — these are the local URLs we
-// substitute into the rewritten CSS.
 app.get("/fonts/:filename", (req, res) => {
-  const filename = req.params.filename;
+  const { filename } = req.params;
 
-  // Security: only allow known font filenames, no path traversal
-  if (!Object.prototype.hasOwnProperty.call(FA_LOCAL_ASSETS, filename)) {
+  // Only allow known font filenames — no path traversal
+  if (!FA_WEBFONTS.includes(filename)) {
     return res.status(404).send("Font not found");
   }
 
   const filePath = path.join(FONTS_DIR, filename);
 
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
-    // File not yet downloaded — trigger download and return 503 so the browser retries
-    downloadFont(filename, FA_LOCAL_ASSETS[filename]).catch(() => {});
-    return res.status(503).send("Font is being downloaded, please retry shortly");
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size < 100) {
+    // Not yet downloaded — kick off download and ask browser to retry
+    downloadFont(filename).catch(() => {});
+    return res.status(503)
+      .setHeader("Retry-After", "5")
+      .send("Font is being downloaded, please retry in a moment");
   }
 
   const ext = path.extname(filename).toLowerCase();
-  const mime = FONT_MIME[ext] || "application/octet-stream";
-
-  res.setHeader("Content-Type", mime);
+  res.setHeader("Content-Type", FONT_MIME[ext] || "application/octet-stream");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.sendFile(filePath);
 });
 
 // ---------------------------------------------------------------------------
-// Route: Font Awesome CSS — fetch from archive and rewrite font URLs to /fonts/
+// Route: Font Awesome CSS — fetch from archive, rewrite font URLs to /fonts/
 // ---------------------------------------------------------------------------
-// Handles:
-//   /https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
-// AND the Wayback Machine im_ variant that the archived CSS itself might embed:
-//   /web/20260129053127im_/https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
+// Handles both:
+//   GET /https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
+//   GET /web/<ts><modifier>/https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
 
 const FA_CSS_HANDLER = async (req, res) => {
   try {
-    const archiveUrl = `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css`;
+    const cssOriginalUrl = "https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css";
 
+    // Discover timestamp for the CSS itself via CDX
+    let cssTimestamp = await findArchiveTimestamp(cssOriginalUrl);
+    if (!cssTimestamp) {
+      // Fallback to a hardcoded known-good timestamp if CDX is unavailable
+      cssTimestamp = "20260310233449";
+    }
+
+    const archiveUrl = `https://web.archive.org/web/${cssTimestamp}if_/${cssOriginalUrl}`;
     console.log(`==> FA CSS: fetching ${archiveUrl}`);
 
     const { fetch } = await import("undici");
@@ -380,23 +394,16 @@ const FA_CSS_HANDLER = async (req, res) => {
     const rawBody = Buffer.from(await f.arrayBuffer());
     const encoding = f.headers.get("content-encoding");
     let cssText;
-    try {
-      cssText = (await decompress(rawBody, encoding)).toString("utf8");
-    } catch (_) {
-      cssText = rawBody.toString("utf8");
-    }
+    try { cssText = (await decompress(rawBody, encoding)).toString("utf8"); }
+    catch (_) { cssText = rawBody.toString("utf8"); }
 
-    // Replace ALL Wayback Machine font URLs (any modifier: im_, if_, cs_, etc.)
-    // AND any direct site-assets.fontawesome.com font URLs
-    // with our local /fonts/<filename> paths.
+    // Rewrite ALL font URL variants in the CSS to our local /fonts/<filename>:
+    //   /web/20260129053127im_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
+    //   https://web.archive.org/web/<ts>if_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
+    //   https://site-assets.fontawesome.com/.../fa-solid-900.woff2
     cssText = cssText.replace(
-      /(?:https?:\/\/web\.archive\.org\/web\/\d{14}[a-z_]*\/)?(?:https?:\/\/)?site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[^"') ]+)/g,
+      /(?:(?:https?:\/\/web\.archive\.org)?\/web\/\d{14}[a-z_]*\/)?(?:https?:\/\/)?site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[\w-]+\.(?:woff2|ttf|woff|eot))/g,
       "/fonts/$1"
-    );
-    // Also rewrite root-relative Wayback paths like /web/20260129053127im_/https://site-assets...
-    cssText = cssText.replace(
-      /url\(\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[^"') ]+)\)/g,
-      "url(/fonts/$1)"
     );
 
     res.setHeader("Content-Type", "text/css; charset=utf-8");
@@ -405,38 +412,40 @@ const FA_CSS_HANDLER = async (req, res) => {
     res.setHeader("content-length", Buffer.byteLength(cssText, "utf8"));
     res.send(cssText);
   } catch (e) {
-    console.log(`==> FA CSS handler error: ${e}`);
+    console.error(`==> FA CSS handler error: ${e}`);
     res.status(500).send("Internal server error");
   }
 };
 
-// Direct proxy path: /https://site-assets.fontawesome.com/releases/v6.1.1/css/all.css
-app.get(/^\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/css\/all\.css/, FA_CSS_HANDLER);
-
-// Wayback im_ path the browser might request directly
-app.get(/^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/css\/all\.css/, FA_CSS_HANDLER);
+app.get(
+  /^\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/css\/all\.css/,
+  FA_CSS_HANDLER
+);
+app.get(
+  /^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/css\/all\.css/,
+  FA_CSS_HANDLER
+);
 
 // ---------------------------------------------------------------------------
-// Route: Wayback Machine font intercept (im_ / any modifier)
+// Route: catch all Wayback Machine /web/... font paths and redirect to /fonts/
 // ---------------------------------------------------------------------------
-// Catches:  /web/20260129053127im_/https://site-assets.fontawesome.com/releases/v6.1.1/webfonts/fa-solid-900.woff2
-// Redirects to the local /fonts/ cache so we never hit the archive again.
-app.get(/^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(.+)$/, (req, res) => {
-  const filename = req.params[0]; // captured group: e.g. "fa-solid-900.woff2"
-
-  if (!Object.prototype.hasOwnProperty.call(FA_LOCAL_ASSETS, filename)) {
-    return res.status(404).send("Font not found");
+// These come from old cached CSS that still has im_ URLs in it.
+app.get(
+  /^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(.+)$/,
+  (req, res) => {
+    const filename = req.params[0];
+    if (!FA_WEBFONTS.includes(filename)) {
+      return res.status(404).send("Font not found");
+    }
+    res.redirect(301, `/fonts/${filename}`);
   }
-
-  // Redirect to local /fonts/ — browser will cache the 301 so it never asks again
-  res.redirect(301, `/fonts/${filename}`);
-});
+);
 
 // ---------------------------------------------------------------------------
 // Route: index
 // ---------------------------------------------------------------------------
 
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.json({
     status: "200",
     version: "1.3.332a-b3-9e",
@@ -446,7 +455,7 @@ app.get("/", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Route: YouTube engagement API with fallback chain
+// Route: YouTube engagement API
 // ---------------------------------------------------------------------------
 
 const apiUrls = [
@@ -455,30 +464,26 @@ const apiUrls = [
   "https://ipv6-t.poketube.fun/api?v=",
 ];
 
-const cache = {};
+const apiCache = {};
 
 app.get("/api", async (req, res) => {
   const { fetch } = await import("undici");
-
   try {
     const cacheKey = req.query.v;
-
-    if (cache[cacheKey] && Date.now() - cache[cacheKey].timestamp < 3600000) {
-      return res.json(cache[cacheKey].data);
+    if (apiCache[cacheKey] && Date.now() - apiCache[cacheKey].timestamp < 3600000) {
+      return res.json(apiCache[cacheKey].data);
     }
-
     const errors = [];
     for (const apiUrl of apiUrls) {
       try {
         const engagement = await fetch(apiUrl + req.query.v).then((r) => r.json());
-        cache[cacheKey] = { data: engagement, timestamp: Date.now() };
+        apiCache[cacheKey] = { data: engagement, timestamp: Date.now() };
         return res.json(engagement);
       } catch (err) {
-        console.log(`Error fetching data from ${apiUrl}: ${err.message}`);
+        console.log(`Error fetching from ${apiUrl}: ${err.message}`);
         errors.push(err.message);
       }
     }
-
     res.status(500).json({ error: "All API endpoints failed", errors });
   } catch (err) {
     console.log(err);
@@ -490,9 +495,7 @@ app.get("/api", async (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get("/bangs", async (req, res) => {
-  let f = await fetch("https://lite.duckduckgo.com/lite/?q=" + req.query.q, {
-    method: req.method,
-  });
+  const f = await fetch("https://lite.duckduckgo.com/lite/?q=" + req.query.q);
   res.redirect(f);
 });
 
@@ -502,7 +505,6 @@ app.get("/bangs", async (req, res) => {
 
 const proxy = async (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=864000");
-
   try {
     let rawUrl = "https://" + req.originalUrl.slice(8);
 
@@ -511,9 +513,8 @@ const proxy = async (req, res) => {
     }
 
     let url;
-    try {
-      url = new URL(rawUrl);
-    } catch (e) {
+    try { url = new URL(rawUrl); }
+    catch (e) {
       console.log("==> Cannot parse URL: " + e);
       return res.status(400).send("Malformed URL");
     }
