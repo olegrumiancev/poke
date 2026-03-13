@@ -74,54 +74,6 @@ for (const font of FA_WEBFONTS) {
 }
 
 /**
- * Rewrite Font Awesome URLs to their correct Wayback Machine if_ equivalents.
- *
- * Three cases:
- *
- * 1. Direct request to site-assets.fontawesome.com
- *    → rewrite to web.archive.org/web/<TS>if_/...
- *
- * 2. The archived CSS rewrites its own font src() URLs to Wayback Machine
- *    paths with the `im_` modifier (image mode), e.g.:
- *      /web/20260129053127im_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2
- *    These arrive at our proxy as GET /web/... and 404 because we don't handle
- *    that path prefix. We intercept and rewrite im_ → if_ so the binary is
- *    fetched correctly.
- *
- * 3. Any other web.archive.org URL that contains site-assets.fontawesome.com
- *    but is not already using if_ — normalise it to if_.
- *
- * @param {string} rawUrl
- * @returns {string} possibly-rewritten URL
- */
-const rewriteFontAwesomeUrl = (rawUrl) => {
-  // Case 1: direct hit on site-assets.fontawesome.com
-  if (rawUrl.includes("site-assets.fontawesome.com") && !rawUrl.includes("web.archive.org")) {
-    const clean = rawUrl.split("?")[0];
-    let pathname = "";
-    try {
-      pathname = new URL(clean).pathname;
-    } catch (_) {}
-    if (FONTAWESOME_ARCHIVE_MAP[pathname]) {
-      return FONTAWESOME_ARCHIVE_MAP[pathname];
-    }
-    // Unknown path — still serve from archive with if_
-    return `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com${pathname}`;
-  }
-
-  // Case 2 & 3: already a web.archive.org URL referencing FA — ensure if_ not im_/cs_/js_/etc.
-  if (rawUrl.includes("web.archive.org") && rawUrl.includes("site-assets.fontawesome.com")) {
-    // Replace any WBM modifier (im_, cs_, js_, fw_, mp_, oe_, or none) with if_
-    return rawUrl.replace(
-      /(\/web\/\d{14})((?:im_|cs_|js_|fw_|mp_|oe_)?)\//,
-      `$1if_/`
-    );
-  }
-
-  return rawUrl;
-};
-
-/**
  * Builds spoofed headers for hosts that require specific referrers/origins.
  * @param {string} host
  * @returns {Record<string, string>}
@@ -133,8 +85,6 @@ const getSpoofedHeaders = (host) => {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "Accept": "*/*",
       "Accept-Language": "en-US,en;q=0.9",
-      // Request plain encoding — prevents receiving zstd or other encodings
-      // that Node's http stack cannot handle natively.
       "Accept-Encoding": "identity",
       "Referer": "https://web.archive.org/",
     };
@@ -155,7 +105,6 @@ const getSpoofedHeaders = (host) => {
     };
   }
 
-  // Default headers for all other proxied hosts
   return {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -164,23 +113,6 @@ const getSpoofedHeaders = (host) => {
     "Accept-Encoding": "identity",
   };
 };
-
-const app = express();
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.use(function (req, res, next) {
-  console.log(`=> ${req.method} ${req.originalUrl.slice(1)}`);
-  next();
-});
-
-app.use(function (_req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cache-Control", "public, max-age=864000");
-  res.setHeader("poketube-cacher", "PROXY_FILES");
-  next();
-});
 
 /**
  * Decompress a Buffer according to the Content-Encoding header value.
@@ -202,7 +134,6 @@ const decompress = (buf, encoding) => {
     if (encoding === "deflate") {
       return zlib.inflate(buf, (err, result) => {
         if (err) {
-          // Some servers send raw deflate without the zlib wrapper
           zlib.inflateRaw(buf, (err2, result2) =>
             err2 ? reject(err2) : resolve(result2)
           );
@@ -216,17 +147,110 @@ const decompress = (buf, encoding) => {
         err ? reject(err) : resolve(result)
       );
     }
-    // Unknown encoding — pass through and hope for the best
     resolve(buf);
   });
 };
 
 /**
+ * Core fetch-and-forward logic. Accepts a fully-resolved target URL string.
+ * @param {string} targetUrl  - the upstream URL to fetch (already rewritten/resolved)
+ * @param {string} method     - HTTP method
+ * @param {express.Response} res
+ */
+const fetchAndForward = async (targetUrl, method, res) => {
+  const { fetch } = await import("undici");
+
+  const url = new URL(targetUrl);
+  const spoofedHeaders = getSpoofedHeaders(url.host);
+
+  console.log(`==> Fetching ${targetUrl}`);
+
+  const f = await fetch(targetUrl, {
+    method,
+    headers: spoofedHeaders,
+    redirect: "follow",
+  });
+
+  if (!f.ok) {
+    console.log(`==> Upstream returned ${f.status} for ${url.host}`);
+    return res.status(f.status).send(`Upstream error: ${f.status} ${f.statusText}`);
+  }
+
+  const rawBody = Buffer.from(await f.arrayBuffer());
+  const encoding = f.headers.get("content-encoding");
+
+  let body;
+  try {
+    body = await decompress(rawBody, encoding);
+  } catch (decompErr) {
+    console.log(`==> Decompression failed (${encoding}): ${decompErr}`);
+    body = rawBody;
+  }
+
+  const headersToForward = ["content-type", "last-modified", "etag"];
+  for (const header of headersToForward) {
+    const value = f.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+
+  res.removeHeader("content-encoding");
+  res.setHeader("content-length", body.length);
+  res.send(body);
+};
+
+const app = express();
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.use(function (req, res, next) {
+  console.log(`=> ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+app.use(function (_req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "public, max-age=864000");
+  res.setHeader("poketube-cacher", "PROXY_FILES");
+  next();
+});
+
+// ---------------------------------------------------------------------------
+// Wayback Machine font intercept
+// ---------------------------------------------------------------------------
+// The archived all.css contains hardcoded URLs like:
+//   url(/web/20260129053127im_/https://site-assets.fontawesome.com/.../fa-solid-900.woff2)
+// Browsers expand these to absolute URLs on this proxy's origin, so they arrive
+// as requests to:
+//   https://p.poketube.fun/web/20260129053127im_/https://site-assets.fontawesome.com/...
+// We catch that exact path pattern here and rewrite im_ (or any other WBM
+// modifier) to if_ so the Wayback Machine returns the raw binary file.
+app.get(/^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com\/(.*)$/, async (req, res) => {
+  try {
+    // Extract the FA asset path from the URL
+    const faPath = req.path.replace(/^\/web\/\d{14}[a-z_]*\/https:\/\/site-assets\.fontawesome\.com/, "");
+
+    // Look up in the archive map, or build a generic if_ URL
+    const targetUrl =
+      FONTAWESOME_ARCHIVE_MAP[faPath] ||
+      `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com${faPath}`;
+
+    console.log(`==> WBM font intercept: ${req.path} -> ${targetUrl}`);
+    await fetchAndForward(targetUrl, req.method, res);
+  } catch (e) {
+    console.log(`==> WBM font intercept error: ${e}`);
+    res.status(500).send("Internal server error");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Standard proxy route
+// ---------------------------------------------------------------------------
+/**
  * @param {express.Request} req
  * @param {express.Response} res
  */
 const proxy = async (req, res) => {
-  const { fetch } = await import("undici");
   res.setHeader("Cache-Control", "public, max-age=864000");
 
   try {
@@ -236,8 +260,14 @@ const proxy = async (req, res) => {
       rawUrl = rawUrl.replace("cdn.glitch.global", "cdn.glitch.me");
     }
 
-    // Rewrite Font Awesome URLs (and broken im_ archive URLs) to if_ snapshots
-    rawUrl = rewriteFontAwesomeUrl(rawUrl);
+    // Rewrite direct Font Awesome requests to Wayback Machine if_ snapshots
+    if (rawUrl.includes("site-assets.fontawesome.com") && !rawUrl.includes("web.archive.org")) {
+      const clean = rawUrl.split("?")[0];
+      let pathname = "";
+      try { pathname = new URL(clean).pathname; } catch (_) {}
+      rawUrl = FONTAWESOME_ARCHIVE_MAP[pathname] ||
+        `https://web.archive.org/web/${FA_TS}if_/https://site-assets.fontawesome.com${pathname}`;
+    }
 
     let url;
     try {
@@ -247,77 +277,22 @@ const proxy = async (req, res) => {
       return res.status(400).send("Malformed URL");
     }
 
-    if (
-      !URL_WHITELIST.includes(url.host) &&
-      !rawUrl.includes("cdn.glitch.me")
-    ) {
+    if (!URL_WHITELIST.includes(url.host) && !rawUrl.includes("cdn.glitch.me")) {
       console.log(`==> Refusing to proxy host ${url.host}`);
-      res.status(401).send(`Hostname '${url.host}' is not permitted`);
-      return;
+      return res.status(401).send(`Hostname '${url.host}' is not permitted`);
     }
 
-    const spoofedHeaders = getSpoofedHeaders(url.host);
-
-    // Do not append cachefixer to Wayback Machine URLs — it would corrupt
-    // their URL structure and result in a 404.
+    // Do not append cachefixer to Wayback Machine URLs
     const fetchUrl =
       url.host === "web.archive.org"
         ? rawUrl
         : rawUrl + `?cachefixer=${btoa(Date.now())}`;
 
-    console.log(`==> Proxying request to ${url.host} — ${fetchUrl}`);
-
-    const f = await fetch(fetchUrl, {
-      method: req.method,
-      headers: spoofedHeaders,
-      redirect: "follow",
-    });
-
-    if (!f.ok) {
-      console.log(`==> Upstream returned ${f.status} for ${url.host}`);
-      return res
-        .status(f.status)
-        .send(`Upstream error: ${f.status} ${f.statusText}`);
-    }
-
-    // Buffer the full response body so we can decompress it before forwarding.
-    // This prevents the browser from receiving a Content-Encoding it cannot
-    // handle (e.g. when upstream sends gzip but our proxy strips the header).
-    const rawBody = Buffer.from(await f.arrayBuffer());
-    const encoding = f.headers.get("content-encoding");
-
-    let body;
-    try {
-      body = await decompress(rawBody, encoding);
-    } catch (decompErr) {
-      console.log(`==> Decompression failed (${encoding}): ${decompErr}`);
-      body = rawBody;
-    }
-
-    // Forward safe response headers, but always strip Content-Encoding
-    // because we have already decoded the body above.
-    const headersToForward = ["content-type", "last-modified", "etag"];
-    for (const header of headersToForward) {
-      const value = f.headers.get(header);
-      if (value) {
-        res.setHeader(header, value);
-      }
-    }
-
-    // Strip Content-Encoding — body is already decoded
-    res.removeHeader("content-encoding");
-    // Set accurate Content-Length for the decoded body
-    res.setHeader("content-length", body.length);
-
-    res.send(body);
+    await fetchAndForward(fetchUrl, req.method, res);
   } catch (e) {
     console.log(`==> Error: ${e}`);
     res.status(500).send("Internal server error");
   }
-};
-
-const listener = (req, res) => {
-  proxy(req, res);
 };
 
 app.get("/", (req, res) => {
@@ -382,6 +357,6 @@ app.get("/bangs", async (req, res) => {
   res.redirect(f);
 });
 
-app.all("/*", listener);
+app.all("/*", (req, res) => proxy(req, res));
 
 app.listen(6014, () => console.log("Listening on 0.0.0.0:6014"));
