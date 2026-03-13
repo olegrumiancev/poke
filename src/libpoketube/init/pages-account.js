@@ -1,7 +1,7 @@
 const { modules } = require("../libpoketube-initsys.js");
 const crypto = require("crypto");
 const sha384 = modules.hash;
-const configJson = require("../config.json");
+const configJson = require("../../../config.json");
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
