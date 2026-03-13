@@ -57,6 +57,36 @@ app.use(function (_req, res, next) {
 });
 
 /**
+ * Builds spoofed headers for hosts that require specific referrers/origins.
+ * @param {string} host
+ * @returns {Record<string, string>}
+ */
+const getSpoofedHeaders = (host) => {
+  // Font Awesome only allows requests that appear to come from their own site
+  if (host === "site-assets.fontawesome.com") {
+    return {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Referer": "https://fontawesome.com/",
+      "Origin": "https://fontawesome.com",
+      "Accept": "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Sec-Fetch-Dest": "empty",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Site": "same-site",
+    };
+  }
+
+  // Default headers for all other proxied hosts
+  return {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+};
+
+/**
  * @param {express.Request} req
  * @param {express.Response} res
  */
@@ -67,7 +97,7 @@ const proxy = async (req, res) => {
   try {
     let rawUrl = "https://" + req.originalUrl.slice(8);
 
-     if (rawUrl.includes("cdn.glitch.global")) {
+    if (rawUrl.includes("cdn.glitch.global")) {
       rawUrl = rawUrl.replace("cdn.glitch.global", "cdn.glitch.me");
     }
 
@@ -85,10 +115,33 @@ const proxy = async (req, res) => {
       return;
     }
 
-    console.log(`==> Proxying request`);
+    const spoofedHeaders = getSpoofedHeaders(url.host);
+
+    console.log(`==> Proxying request to ${url.host}`);
     let f = await fetch(rawUrl + `?cachefixer=${btoa(Date.now())}`, {
       method: req.method,
+      headers: spoofedHeaders,
     });
+
+    // Forward relevant response headers from upstream to client
+    const headersToForward = [
+      "content-type",
+      "content-length",
+      "content-encoding",
+      "last-modified",
+      "etag",
+    ];
+    for (const header of headersToForward) {
+      const value = f.headers.get(header);
+      if (value) {
+        res.setHeader(header, value);
+      }
+    }
+
+    if (!f.ok) {
+      console.log(`==> Upstream returned ${f.status} for ${url.host}`);
+      return res.status(f.status).send(`Upstream error: ${f.status} ${f.statusText}`);
+    }
 
     Readable.fromWeb(f.body).pipe(res);
   } catch (e) {
@@ -104,7 +157,7 @@ const listener = (req, res) => {
 app.get("/", (req, res) => {
   var json = {
     status: "200",
-      version: "1.3.332a-b3-9e",
+    version: "1.3.332a-b3-9e",
     URL_WHITELIST,
     cache: "max-age-864000",
   };
