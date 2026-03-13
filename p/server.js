@@ -181,10 +181,15 @@ const downloadFont = async (filename) => {
  * @returns {string}
  */
 const rewriteCssFontUrls = (css) => {
-  return css.replace(
+  // Strip Wayback Machine injected comment blocks (header notice + playback timings)
+  css = css.replace(/\/\*[\s\S]*?FILE ARCHIVED ON[\s\S]*?\*\//g, "");
+  css = css.replace(/\/\*\s*playback timings[\s\S]*?\*\//gi, "");
+  // Rewrite all font URLs to local /fonts/<filename>
+  css = css.replace(
     /(?:(?:https?:\/\/web\.archive\.org)?\/web\/\d{14}[a-z_]*\/)?(?:https?:\/\/)?site-assets\.fontawesome\.com\/releases\/v6\.1\.1\/webfonts\/(fa-[\w-]+\.(?:woff2|ttf|woff|eot))/g,
     "/fonts/$1"
   );
+  return css.trim();
 };
 
 // Disk path for the cached & rewritten CSS (lives alongside the fonts)
