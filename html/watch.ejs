@@ -1155,7 +1155,7 @@ Offical Discord Server! :3
   let hasHD = false, hasUHD = false, has4K = false;
 
   VideoData.adaptiveFormats.forEach(format => {
-    if (format.itag == '247' || format.itag == '298') {
+    if (format.itag == '247' || format.itag == '302') {
       itag = '140';
       hasHD = true;
     }
@@ -1188,7 +1188,7 @@ Offical Discord Server! :3
       <% if (hasHD) { 
         let hdItag = '247';
         VideoData.adaptiveFormats.forEach(format => {
-          if (format.itag == '298') hdItag = '298';
+          if (format.itag == '302') hdItag = '302';
         });
       %>
         <source src="<%=u%>/companion/latest_version?id=<%=VideoData.videoId%>&itag=<%=hdItag%>&local=true" type="video/mp4" label="hd720" selected="true">
@@ -1341,8 +1341,8 @@ Offical Discord Server! :3
   if (!qua) {
      let hdItag = '247';
     VideoData.adaptiveFormats.forEach(format => {
-      if (format.itag == '298') {
-        hdItag = '298';
+      if (format.itag == '302') {
+        hdItag = '302';
       }
     });
     let f = getAdaptiveFormat(hdItag);
@@ -1497,17 +1497,17 @@ Offical Discord Server! :3
     <% 
     let nonhditag = '247'; // Default itag
     VideoData.adaptiveFormats.forEach(format => {
-        if (format.itag == '298') {
-            nonhditag = '298';
+        if (format.itag == '302') {
+            nonhditag = '302';
         }
     });
     %>                                             
     
-    <% if (VideoData.genre !== "Music" && nonhditag !== "298") { %> 
+    <% if (VideoData.genre !== "Music" && nonhditag !== "302") { %> 
         <a href="#connections" style="font-weight: bolder; font-family: sans-serif; color: var(--text-color); font-size: small; text-decoration: none;">Jump to Connections</a>
     <% } %>
     
-    <% if (VideoData.genre !== "Music" && nonhditag === "298") { %> 
+    <% if (VideoData.genre !== "Music" && nonhditag === "302") { %> 
         <div><i title="60 FPS" class="fa-light fa-circle-waveform-lines"></i>&nbsp;60 FPS video</div>
     <% } %> 
 
