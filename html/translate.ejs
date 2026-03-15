@@ -694,10 +694,10 @@ main {
           .catch(() => {/* ignore */});
       }
 
-      // Debounce typing (Wait 800ms after typing stops)
+      // Debounce typing (Wait 200ms after typing stops)
       input.addEventListener('input', ()=>{
         clearTimeout(timer);
-        timer = setTimeout(translateNow, 800);
+        timer = setTimeout(translateNow, 200);
       });
       
       from.addEventListener('change', translateNow);
