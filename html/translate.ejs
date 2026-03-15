@@ -285,7 +285,7 @@
     
     <style>
     :root {
-        --bg-body: #202124;
+         --bg-body: #202124;
         --bg-surface: #202124; 
         --bg-output: #303134;
         --bg-hover: rgba(255, 255, 255, 0.08);
@@ -344,7 +344,7 @@
         overflow: hidden;
     }
 
-    /* Toolbar (Tabs) */
+    /* JavaScript Toolbar (Tabs) */
     .toolbar {
         display: flex;
         align-items: center;
@@ -358,9 +358,9 @@
         align-items: center;
         flex: 1;
         overflow-x: auto;
-        scrollbar-width: none; /* Firefox */
+        scrollbar-width: none;
     }
-    .lang-tabs-group::-webkit-scrollbar { display: none; } /* Chrome */
+    .lang-tabs-group::-webkit-scrollbar { display: none; }
 
     .tab-btn {
         background: transparent;
@@ -378,9 +378,7 @@
     }
     .tab-btn:hover { background: var(--bg-hover); color: var(--text-main); }
     
-    .tab-btn.active {
-        color: var(--accent-blue);
-    }
+    .tab-btn.active { color: var(--accent-blue); }
     .tab-btn.active::after {
         content: '';
         position: absolute;
@@ -393,33 +391,17 @@
     }
 
     .dropdown-btn {
-        background: transparent;
-        border: none;
-        color: var(--text-muted);
-        height: 40px;
-        width: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        cursor: pointer;
-        margin-left: 4px;
+        background: transparent; border: none; color: var(--text-muted);
+        height: 40px; width: 40px; display: flex; align-items: center;
+        justify-content: center; border-radius: 50%; cursor: pointer; margin-left: 4px;
     }
     .dropdown-btn:hover { background: var(--bg-hover); color: var(--text-main); }
 
     .swap-btn {
-        background: transparent;
-        border: none;
-        color: var(--text-muted);
-        height: 40px;
-        width: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        cursor: pointer;
-        margin: 0 12px;
-        transition: transform 0.2s;
+        background: transparent; border: none; color: var(--text-muted);
+        height: 40px; width: 40px; display: flex; align-items: center;
+        justify-content: center; border-radius: 50%; cursor: pointer;
+        margin: 0 12px; transition: transform 0.2s;
     }
     .swap-btn:hover { background: var(--bg-hover); color: var(--text-main); }
 
@@ -452,23 +434,17 @@
     }
     textarea::placeholder { color: var(--text-muted); }
 
-    /* Modal Overlay (Language Picker) */
+    /* Modal Overlay */
     .lang-modal-overlay {
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: var(--bg-body);
-        z-index: 100;
-        display: none;
-        flex-direction: column;
-        border-radius: var(--radius-card);
-        overflow: hidden;
+        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+        background: var(--bg-body); z-index: 100;
+        display: none; flex-direction: column;
+        border-radius: var(--radius-card); overflow: hidden;
     }
     .lang-modal-overlay.active { display: flex; }
 
     .modal-header {
-        display: flex;
-        align-items: center;
-        padding: 8px 16px;
+        display: flex; align-items: center; padding: 8px 16px;
         border-bottom: 1px solid var(--divider-subtle);
     }
     
@@ -480,54 +456,36 @@
     .modal-back:hover { background: var(--bg-hover); color: var(--text-main); }
 
     .search-input {
-        background: transparent;
-        border: none;
-        color: var(--text-main);
-        font-size: 16px;
-        flex: 1;
-        outline: none;
+        background: transparent; border: none; color: var(--text-main);
+        font-size: 16px; flex: 1; outline: none;
     }
 
-    .modal-body {
-        padding: 16px 24px;
-        overflow-y: auto;
-        flex: 1;
-    }
+    .modal-body { padding: 16px 24px; overflow-y: auto; flex: 1; }
 
     .lang-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 4px;
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px;
     }
 
     .lang-item {
-        background: transparent;
-        border: none;
-        color: var(--text-main);
-        font-size: 14px;
-        text-align: left;
-        padding: 10px 16px;
-        border-radius: 6px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
+        background: transparent; border: none; color: var(--text-main);
+        font-size: 14px; text-align: left; padding: 10px 16px;
+        border-radius: 6px; cursor: pointer; display: flex; align-items: center;
     }
     .lang-item:hover { background: var(--bg-hover); }
-    .lang-item.selected {
-        background: var(--accent-blue-bg);
-        color: var(--accent-blue);
-        font-weight: 500;
-    }
-    .lang-item .check-icon {
-        margin-right: 12px;
-        font-size: 18px;
-        opacity: 0;
-    }
+    .lang-item.selected { background: var(--accent-blue-bg); color: var(--accent-blue); font-weight: 500; }
+    .lang-item .check-icon { margin-right: 12px; font-size: 18px; opacity: 0; }
     .lang-item.selected .check-icon { opacity: 1; }
-
-    /* Hidden Native Form Items */
+ 
+    .no-js-select { display: none; } /* Hidden by default when JS is active */
     .fallback-controls { display: none; }
     
+    .translate-submit-btn {
+        background: var(--accent-blue); color: #171717;
+        border: none; padding: 10px 24px; border-radius: 4px;
+        font-weight: 500; font-size: 14px; cursor: pointer; transition: background 0.2s;
+    }
+    .translate-submit-btn:hover { background: #aecbfa; }
+
     @media (max-width: 800px) {
         .editor-grid { grid-template-columns: 1fr; }
         .input-panel { border-right: none; border-bottom: 1px solid var(--divider-subtle); }
@@ -535,7 +493,40 @@
     </style>
 
     <noscript>
-        <style>.fallback-controls { display: block; padding: 16px; background: var(--bg-surface); }</style>
+        <style>
+            .toolbar { display: none !important; }
+            .lang-modal-overlay { display: none !important; }
+            
+            .no-js-fallback {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                padding: 12px 24px;
+                border-bottom: 1px solid var(--divider-subtle);
+                background: var(--bg-surface);
+                overflow-x: auto;
+            }
+
+            .no-js-select {
+                display: block;
+                padding: 10px;
+                background: var(--bg-body);
+                color: var(--text-main);
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                font-size: 14px;
+                outline: none;
+                cursor: pointer;
+            }
+
+            .fallback-controls {
+                display: flex !important;
+                justify-content: flex-end;
+                padding: 16px 24px;
+                background: var(--bg-surface);
+                border-top: 1px solid var(--divider-subtle);
+            }
+        </style>
     </noscript>
 </head>
 <body>
@@ -549,19 +540,36 @@
     <main>
         <form action="/translate" method="GET" class="translate-container">
             
-            <input type="hidden" name="from_language" id="native_from" value="<%= (typeof from_language !== 'undefined' ? from_language : 'auto') %>">
-            <input type="hidden" name="to_language" id="native_to" value="<%= (typeof to_language !== 'undefined' ? to_language : 'en') %>">
-
             <div class="toolbar">
-                <div class="lang-tabs-group" id="tabs_from">
-                    </div>
+                <div class="lang-tabs-group" id="tabs_from"></div>
                 <button type="button" class="dropdown-btn material-icons" onclick="openModal('from')">expand_more</button>
 
                 <button type="button" id="swapBtn" class="swap-btn material-icons" title="Swap languages">swap_horiz</button>
 
-                <div class="lang-tabs-group" id="tabs_to" style="justify-content: flex-end;">
-                    </div>
+                <div class="lang-tabs-group" id="tabs_to" style="justify-content: flex-end;"></div>
                 <button type="button" class="dropdown-btn material-icons" onclick="openModal('to')">expand_more</button>
+            </div>
+
+            <div class="no-js-fallback">
+                <select name="from_language" id="native_from" class="no-js-select">
+                    <% languageOptions.forEach(lang => { %>
+                        <option value="<%= lang.code %>" <%= (typeof from_language !== 'undefined' ? from_language : 'auto') === lang.code ? 'selected' : '' %>>
+                            <%= lang.name %>
+                        </option>
+                    <% }); %>
+                </select>
+
+                <span class="no-js-select material-icons" style="color: var(--text-muted);">arrow_forward</span>
+
+                <select name="to_language" id="native_to" class="no-js-select">
+                    <% languageOptions.forEach(lang => { %>
+                        <% if(lang.code !== 'auto') { %>
+                            <option value="<%= lang.code %>" <%= (typeof to_language !== 'undefined' ? to_language : 'en') === lang.code ? 'selected' : '' %>>
+                                <%= lang.name %>
+                            </option>
+                        <% } %>
+                    <% }); %>
+                </select>
             </div>
 
             <div class="editor-grid">
@@ -574,7 +582,7 @@
             </div>
 
             <div class="fallback-controls">
-                <button type="submit" style="padding: 10px 20px;">Translate Fallback</button>
+                <button type="submit" class="translate-submit-btn">Translate</button>
             </div>
 
             <div class="lang-modal-overlay" id="langModal">
@@ -583,8 +591,7 @@
                     <input type="text" class="search-input" id="langSearch" placeholder="Search languages">
                 </div>
                 <div class="modal-body">
-                    <div class="lang-grid" id="modalLangGrid">
-                        </div>
+                    <div class="lang-grid" id="modalLangGrid"></div>
                 </div>
             </div>
 
@@ -617,34 +624,30 @@
             textareas: document.querySelectorAll('textarea')
         };
 
-        // State Tracking
+        // State Tracking (Pulling initial state from the native selects)
         let state = {
             currentFrom: DOM.nativeFrom.value,
             currentTo: DOM.nativeTo.value,
             recentFrom: [],
             recentTo: [],
-            modalMode: null // 'from' or 'to'
+            modalMode: null 
         };
 
         const STORAGE_KEYS = { FROM: 'poke_trans_rec_from', TO: 'poke_trans_rec_to' };
         
-        // Helper: Get lang name by code
         const getLangName = (code) => {
             const l = ALL_LANGS.find(x => x.code === code);
             return l ? l.name : code;
         };
 
-        // 1. Storage & Init logic
         const initRecents = () => {
             try {
                 let sF = JSON.parse(localStorage.getItem(STORAGE_KEYS.FROM));
                 let sT = JSON.parse(localStorage.getItem(STORAGE_KEYS.TO));
                 
-                // Defaults if empty
                 state.recentFrom = Array.isArray(sF) && sF.length ? sF : ['en', 'es', 'fr'];
                 state.recentTo = Array.isArray(sT) && sT.length ? sT : ['en', 'es', 'fr'];
                 
-                // Ensure 'auto' is never in recents (we handle it separately)
                 state.recentFrom = state.recentFrom.filter(c => c !== 'auto');
                 state.recentTo = state.recentTo.filter(c => c !== 'auto');
             } catch(e) {
@@ -659,13 +662,10 @@
         };
 
         const addRecent = (type, code) => {
-            if(code === 'auto') return; // Don't track auto in history array
+            if(code === 'auto') return; 
             let arr = type === 'from' ? state.recentFrom : state.recentTo;
-            // Remove if exists
             arr = arr.filter(c => c !== code);
-            // Add to front
             arr.unshift(code);
-            // Keep only top 3
             if(arr.length > 3) arr.pop();
             
             if(type === 'from') state.recentFrom = arr;
@@ -673,7 +673,6 @@
             saveRecents();
         };
 
-        // 2. Tab Rendering
         const createTab = (code, isActive, type) => {
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -687,9 +686,8 @@
             DOM.tabsFrom.innerHTML = '';
             DOM.tabsTo.innerHTML = '';
 
-            // Source Tabs (Always pin Detect Language first)
+            // Source Tabs
             DOM.tabsFrom.appendChild(createTab('auto', state.currentFrom === 'auto', 'from'));
-            
             state.recentFrom.forEach(code => {
                 DOM.tabsFrom.appendChild(createTab(code, state.currentFrom === code, 'from'));
             });
@@ -699,12 +697,11 @@
                 DOM.tabsTo.appendChild(createTab(code, state.currentTo === code, 'to'));
             });
             
-            // Sync Native Form fields
+            // Keep native selects synced for form submission functionality
             DOM.nativeFrom.value = state.currentFrom;
             DOM.nativeTo.value = state.currentTo;
         };
 
-        // 3. Select Action (from Tabs or Modal)
         const selectLanguage = (type, code) => {
             if(type === 'from') {
                 state.currentFrom = code;
@@ -716,10 +713,9 @@
             
             renderTabs();
             closeModal();
-            fetchTranslation(); // Auto translate on change
+            fetchTranslation(); 
         };
 
-        // 4. Modal Logic
         window.openModal = (type) => {
             state.modalMode = type;
             DOM.modal.classList.add('active');
@@ -738,7 +734,6 @@
             const currentSelected = state.modalMode === 'from' ? state.currentFrom : state.currentTo;
 
             ALL_LANGS.forEach(lang => {
-                // If Target mode, hide 'auto'
                 if(state.modalMode === 'to' && lang.code === 'auto') return;
 
                 if(lang.name.toLowerCase().includes(lowerFilter)) {
@@ -747,7 +742,6 @@
                     btn.type = 'button';
                     btn.className = `lang-item ${isSelected ? 'selected' : ''}`;
                     
-                    // Add check icon
                     const icon = document.createElement('span');
                     icon.className = 'material-icons check-icon';
                     icon.textContent = 'check';
@@ -763,19 +757,14 @@
             });
         };
 
-        DOM.searchInput.addEventListener('input', (e) => {
-            renderModalGrid(e.target.value);
-        });
+        DOM.searchInput.addEventListener('input', (e) => renderModalGrid(e.target.value));
 
-        // 5. Swap Logic
         DOM.swapBtn.addEventListener('click', () => {
-            // Can't swap if source is auto, fall back to english
             let safeFrom = state.currentFrom === 'auto' ? 'en' : state.currentFrom;
             
             const temp = safeFrom;
             safeFrom = state.currentTo;
             state.currentTo = temp;
-            
             state.currentFrom = safeFrom;
             
             addRecent('from', state.currentFrom);
@@ -788,7 +777,6 @@
             fetchTranslation();
         });
 
-        // 6. Textarea Auto-Resize
         const resize = (el) => {
             if (!el) return;
             el.style.height = 'auto';
@@ -796,11 +784,8 @@
         };
         const resizeAllTextareas = () => DOM.textareas.forEach(resize);
 
-        DOM.textareas.forEach(el => {
-            el.addEventListener('input', () => resize(el));
-        });
+        DOM.textareas.forEach(el => el.addEventListener('input', () => resize(el)));
 
-        // 7. Async Translation Fetch
         const debounce = (func, delay) => {
             let timeoutId;
             return (...args) => { clearTimeout(timeoutId); timeoutId = setTimeout(() => func(...args), delay); };
@@ -840,13 +825,10 @@
         const debouncedTranslate = debounce(fetchTranslation, 300);
         DOM.input.addEventListener('input', debouncedTranslate);
 
-        // Run setup
+        // Run Setup
         initRecents();
-        
-        // Ensure current loaded values are tracked in history
         if(state.currentFrom && state.currentFrom !== 'auto') addRecent('from', state.currentFrom);
         if(state.currentTo) addRecent('to', state.currentTo);
-        
         renderTabs();
         resizeAllTextareas();
 
