@@ -2865,18 +2865,21 @@ document.addEventListener("fullscreenchange", handleFullscreen);
   <script>
 (function(){
   var script = document.getElementById("baseScript");
+  if (!script) return; 
+  
   var loaded = false;
+  var timeoutId;
 
   function stopMedia(){
     var vids = document.querySelectorAll("video");
     var auds = document.querySelectorAll("audio");
 
-    vids.forEach(v=>{
+    vids.forEach(function(v){
       try{ v.pause(); }catch(e){}
       v.autoplay = false;
     });
 
-    auds.forEach(a=>{
+    auds.forEach(function(a){
       try{ a.pause(); }catch(e){}
       a.autoplay = false;
     });
@@ -2884,17 +2887,19 @@ document.addEventListener("fullscreenchange", handleFullscreen);
 
   script.onload = function(){
     loaded = true;
+    clearTimeout(timeoutId);  
   };
 
   script.onerror = function(){
+    clearTimeout(timeoutId); 
     stopMedia();
   };
 
-  setTimeout(function(){
+   timeoutId = setTimeout(function(){
     if(!loaded){
       stopMedia();
     }
-  }, 2000);
+  }, 1000);
 })();
 </script>
 <style> img.emoji {height: 1em;width: 1em;margin: 0 .05em 0 .1em;vertical-align: -0.1em;}</style>
