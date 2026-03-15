@@ -271,7 +271,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-<title>PokeTranslate</title>
+    <title>PokeTranslate</title>
     <link rel="icon" href="/static/yt-ukraine.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta content="PokeTranslate" property="og:title">
@@ -283,453 +283,574 @@
     <link href="https://fonts.bunny.net/css?family=roboto:400,500,700&display=swap" rel="stylesheet">
     <link href="https://fonts.bunny.net/icon?family=Material+Icons" rel="stylesheet">
     
-  <style>
-   :root {
-   --bg-body: #202124;
-  --bg-surface: #292a2d;
-  --bg-output: #303134;
-  --border-color: #5f6368;
-  --divider-subtle: #3c4043;
-  --text-main: #e8eaed;
-  --text-muted: #9aa0a6;
-  --accent-blue: #8ab4f8
-  --accent-pink: #ffabcc;
-  --accent-hover: #aecbfa;
-  --btn-hover-bg: rgba(255, 255, 255, 0.04);
-  --btn-active-bg: rgba(255, 255, 255, 0.08);
-  --shadow-elevation: 0 1px 3px 0 rgba(0,0,0,0.3), 0 4px 8px 3px rgba(0,0,0,0.15);
-  
-  --radius-card: 12px;
-  --nav-height: 64px;
-}
-
-* { margin:0; padding:0; box-sizing:border-box; }
-
-body {
-  font-family: 'Roboto', sans-serif;
-  background: var(--bg-body);
-  color: var(--text-main);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Navbar */
-header {
-  background: var(--bg-body);
-  height: var(--nav-height);
-  display: flex;
-  align-items: center;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--divider-subtle);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-header h1 {
-  font-size: 22px;
-  font-weight: 500;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-}
-
-.site-logo {
-  height: 32px;
-  width: auto;
-  margin-right: 12px;
-  display: block;
-}
-
-header h1 span {
-  color: var(--text-main);
-}
-
-/* Main Container */
-main {
-  flex: 1;
-  width: 100%;
-  max-width: 1360px;
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-
-/* Card Styling */
-.translate-card {
-  background: var(--bg-surface);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-elevation);
-  border: 1px solid var(--divider-subtle);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Language Toolbar */
-.language-toolbar {
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid var(--divider-subtle);
-  min-height: 56px;
-  padding: 8px 16px;
-}
-
-.lang-group {
-  flex: 1;
-  display: flex;
-  align-items: center;
-}
-
-/* Clean Dropdown Tabs */
-.select-wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.select-wrapper select {
-  appearance: none;
-  background: transparent;
-  border: none;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--accent-pink);
-  padding: 10px 32px 10px 16px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.2s ease;
-  outline: none;
-}
-
-.select-wrapper select option {
-  background-color: var(--bg-surface);
-  color: var(--text-main);
-  font-weight: 400;
-}
-
-.select-wrapper select:hover,
-.select-wrapper select:focus {
-  background: var(--btn-hover-bg);
-}
-
-.select-wrapper::after {
-  content: '▼';
-  font-size: 10px;
-  color: var(--accent-blue);
-  position: absolute;
-  right: 12px;
-  pointer-events: none;
-}
-
-/* Swap Button */
-.swap-btn {
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: all 0.2s ease;
-  margin: 0 16px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.swap-btn:hover {
-  background: var(--btn-hover-bg);
-  color: var(--text-main);
-}
-
-.swap-btn:active {
-  background: var(--btn-active-bg);
-}
-
-/* Input/Output Grid */
-.editor-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-height: 250px;
-}
-
-.editor-panel {
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.input-panel {
-  background: var(--bg-surface);
-  border-right: 1px solid var(--divider-subtle);
-}
-
-.output-panel {
-  background: var(--bg-output);
-}
-
-.editor-panel textarea {
-  width: 100%;
-  border: none;
-  resize: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 24px;
-  line-height: 1.4;
-  color: var(--text-main);
-  outline: none;
-  min-height: 180px;
-  overflow-y: auto;
-}
-
-.editor-panel textarea::placeholder {
-  color: var(--text-muted);
-}
-
- .card-footer {
-  padding: 16px 24px;
-  display: flex;
-  justify-content: flex-end;
-  background: var(--bg-surface);
-  border-top: 1px solid var(--divider-subtle);
-  display: none; /* Hidden by default, JS auto-translates */
-}
-
-.translate-submit {
-  background: var(--accent-blue);
-  color: #171717;
-  border: none;
-  padding: 10px 24px;
-  border-radius: 4px;
-  font-weight: 500;
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.translate-submit:hover {
-  background: var(--accent-hover);
-}
-
-/* Footer/Credits */
-.site-footer {
-  text-align: center;
-  padding: 24px;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  margin-top: auto;
-}
-
-/* Responsive */
-@media (max-width: 800px) {
-  main { padding: 16px; }
-  
-  .editor-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
-  }
-
-  .input-panel {
-    border-right: none;
-    border-bottom: 1px solid var(--divider-subtle);
-  }
-  
-  .language-toolbar {
-    flex-wrap: wrap;
-    justify-content: center;
-    padding: 12px;
-  }
-  
-  .lang-group {
-    flex: initial;
-    width: calc(50% - 40px);
-    justify-content: center;
-  }
-  
-  .editor-panel textarea { font-size: 20px; }
-}
-  </style>
-
-  <noscript>
     <style>
-      .card-footer { display: flex !important; }
+    :root {
+        --bg-body: #202124;
+        --bg-surface: #202124; 
+        --bg-output: #303134;
+        --bg-hover: rgba(255, 255, 255, 0.08);
+        --bg-active: rgba(255, 255, 255, 0.12);
+        --border-color: #5f6368;
+        --divider-subtle: #3c4043;
+        
+        --text-main: #e8eaed;
+        --text-muted: #9aa0a6;
+        --accent-blue: #8ab4f8;
+        --accent-blue-bg: rgba(138, 180, 248, 0.24);
+        
+        --radius-card: 12px;
+        --nav-height: 64px;
+    }
+
+    * { margin:0; padding:0; box-sizing:border-box; font-family: 'Roboto', sans-serif; }
+    
+    body {
+        background: var(--bg-body);
+        color: var(--text-main);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Navbar */
+    header {
+        height: var(--nav-height);
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--divider-subtle);
+        background: var(--bg-body);
+    }
+    .site-logo { height: 32px; width: auto; margin-right: 12px; display: block; }
+    header h1 { font-size: 22px; font-weight: 500; color: var(--text-main); display: flex; align-items: center; }
+
+    /* Main App Layout */
+    main {
+        flex: 1;
+        width: 100%;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 32px 24px;
+        position: relative;
+    }
+
+    /* Translation Card Area */
+    .translate-container {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--divider-subtle);
+        border-radius: var(--radius-card);
+        background: var(--bg-surface);
+        overflow: hidden;
+    }
+
+    /* Toolbar (Tabs) */
+    .toolbar {
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid var(--divider-subtle);
+        min-height: 48px;
+        padding: 0 8px;
+    }
+
+    .lang-tabs-group {
+        display: flex;
+        align-items: center;
+        flex: 1;
+        overflow-x: auto;
+        scrollbar-width: none; /* Firefox */
+    }
+    .lang-tabs-group::-webkit-scrollbar { display: none; } /* Chrome */
+
+    .tab-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        font-size: 14px;
+        font-weight: 500;
+        padding: 0 16px;
+        height: 48px;
+        cursor: pointer;
+        position: relative;
+        white-space: nowrap;
+        border-radius: 4px;
+        transition: background 0.2s, color 0.2s;
+    }
+    .tab-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+    
+    .tab-btn.active {
+        color: var(--accent-blue);
+    }
+    .tab-btn.active::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--accent-blue);
+        border-radius: 3px 3px 0 0;
+    }
+
+    .dropdown-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        height: 40px;
+        width: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        cursor: pointer;
+        margin-left: 4px;
+    }
+    .dropdown-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+
+    .swap-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        height: 40px;
+        width: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        cursor: pointer;
+        margin: 0 12px;
+        transition: transform 0.2s;
+    }
+    .swap-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+
+    /* Input/Output Grids */
+    .editor-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 200px;
+    }
+
+    .editor-panel {
+        padding: 16px 24px;
+        display: flex;
+        flex-direction: column;
+    }
+    .input-panel { border-right: 1px solid var(--divider-subtle); }
+    .output-panel { background: var(--bg-output); }
+
+    textarea {
+        width: 100%;
+        border: none;
+        resize: none;
+        background: transparent;
+        font-size: 24px;
+        line-height: 1.4;
+        color: var(--text-main);
+        outline: none;
+        flex: 1;
+        min-height: 150px;
+    }
+    textarea::placeholder { color: var(--text-muted); }
+
+    /* Modal Overlay (Language Picker) */
+    .lang-modal-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: var(--bg-body);
+        z-index: 100;
+        display: none;
+        flex-direction: column;
+        border-radius: var(--radius-card);
+        overflow: hidden;
+    }
+    .lang-modal-overlay.active { display: flex; }
+
+    .modal-header {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--divider-subtle);
+    }
+    
+    .modal-back {
+        background: none; border: none; color: var(--text-muted);
+        width: 48px; height: 48px; border-radius: 50%;
+        cursor: pointer; margin-right: 8px;
+    }
+    .modal-back:hover { background: var(--bg-hover); color: var(--text-main); }
+
+    .search-input {
+        background: transparent;
+        border: none;
+        color: var(--text-main);
+        font-size: 16px;
+        flex: 1;
+        outline: none;
+    }
+
+    .modal-body {
+        padding: 16px 24px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    .lang-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 4px;
+    }
+
+    .lang-item {
+        background: transparent;
+        border: none;
+        color: var(--text-main);
+        font-size: 14px;
+        text-align: left;
+        padding: 10px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+    }
+    .lang-item:hover { background: var(--bg-hover); }
+    .lang-item.selected {
+        background: var(--accent-blue-bg);
+        color: var(--accent-blue);
+        font-weight: 500;
+    }
+    .lang-item .check-icon {
+        margin-right: 12px;
+        font-size: 18px;
+        opacity: 0;
+    }
+    .lang-item.selected .check-icon { opacity: 1; }
+
+    /* Hidden Native Form Items */
+    .fallback-controls { display: none; }
+    
+    @media (max-width: 800px) {
+        .editor-grid { grid-template-columns: 1fr; }
+        .input-panel { border-right: none; border-bottom: 1px solid var(--divider-subtle); }
+    }
     </style>
-  </noscript>
+
+    <noscript>
+        <style>.fallback-controls { display: block; padding: 16px; background: var(--bg-surface); }</style>
+    </noscript>
 </head>
 <body>
 
-  <header>
-    <h1>
-       <img src="/static/logo-poke.svg" alt="Poke LOGO" class="site-logo">
-     </h1>
-  </header>
+    <header>
+        <h1>
+            <img src="/static/logo-poke.svg" alt="Poke LOGO" class="site-logo">
+         </h1>
+    </header>
 
-  <main>
-    <form action="/translate" method="GET" class="translate-card">
-      
-      <div class="language-toolbar">
-        <div class="lang-group" style="justify-content: flex-start;">
-          <div class="select-wrapper">
-            <select name="from_language" id="from_language">
-              <% languageOptions.forEach(lang => { %>
-                <option value="<%= lang.code %>" <%= lang.code === (from_language||'auto')?'selected':''%>>
-                  <%= lang.name %>
-                </option>
-              <% }); %>
-            </select>
-          </div>
-        </div>
+    <main>
+        <form action="/translate" method="GET" class="translate-container">
+            
+            <input type="hidden" name="from_language" id="native_from" value="<%= (typeof from_language !== 'undefined' ? from_language : 'auto') %>">
+            <input type="hidden" name="to_language" id="native_to" value="<%= (typeof to_language !== 'undefined' ? to_language : 'en') %>">
 
-        <a href="?from_language=<%= to_language %>&to_language=<%= from_language %>&input=<%= encodeURIComponent(text) %>"
-           id="swapBtn"
-           class="material-icons swap-btn"
-           title="Swap languages">
-           swap_horiz
-        </a>
+            <div class="toolbar">
+                <div class="lang-tabs-group" id="tabs_from">
+                    </div>
+                <button type="button" class="dropdown-btn material-icons" onclick="openModal('from')">expand_more</button>
 
-        <div class="lang-group" style="justify-content: flex-end;">
-          <div class="select-wrapper">
-             <select name="to_language" id="to_language">
-              <% languageOptions.slice(1).forEach(lang => { %>
-                <option value="<%= lang.code %>" <%= lang.code===to_language?'selected':''%>>
-                  <%= lang.name %>
-                </option>
-              <% }); %>
-            </select>
-          </div>
-        </div>
-      </div>
+                <button type="button" id="swapBtn" class="swap-btn material-icons" title="Swap languages">swap_horiz</button>
 
-      <div class="editor-grid">
-        <div class="editor-panel input-panel">
-          <textarea id="input" name="input" placeholder="Enter text" spellcheck="false"><%= text %></textarea>
-        </div>
-        
-        <div class="editor-panel output-panel">
-          <textarea id="output" readonly placeholder="Translation"><%= translation %></textarea>
-        </div>
-      </div>
+                <div class="lang-tabs-group" id="tabs_to" style="justify-content: flex-end;">
+                    </div>
+                <button type="button" class="dropdown-btn material-icons" onclick="openModal('to')">expand_more</button>
+            </div>
 
-      <div class="card-footer">
-        <button type="submit" class="translate-submit">Translate</button>
-      </div>
-      
-    </form>
-  </main>
+            <div class="editor-grid">
+                <div class="editor-panel input-panel">
+                    <textarea id="input" name="input" placeholder="Enter text" spellcheck="false"><%= (typeof text !== 'undefined' ? text : '') %></textarea>
+                </div>
+                <div class="editor-panel output-panel">
+                    <textarea id="output" readonly placeholder="Translation"><%= (typeof translation !== 'undefined' ? translation : '') %></textarea>
+                </div>
+            </div>
+
+            <div class="fallback-controls">
+                <button type="submit" style="padding: 10px 20px;">Translate Fallback</button>
+            </div>
+
+            <div class="lang-modal-overlay" id="langModal">
+                <div class="modal-header">
+                    <button type="button" class="modal-back material-icons" onclick="closeModal()">arrow_back</button>
+                    <input type="text" class="search-input" id="langSearch" placeholder="Search languages">
+                </div>
+                <div class="modal-body">
+                    <div class="lang-grid" id="modalLangGrid">
+                        </div>
+                </div>
+            </div>
+
+        </form>
+    </main>
   
-  <div class="site-footer">
-    <p>&copy; 2021-2026 PokeTranslate </p>
-  </div>
+    <div style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 0.85rem;">
+        <p>&copy; 2021-2026 PokeTranslate</p>
+    </div>
 
-  <script>
-  (function() {
-      'use strict';
+    <script>
+        const ALL_LANGS = <%- JSON.stringify(languageOptions) %>;
+    </script>
 
-      const DOM = {
-          swapBtn: document.getElementById('swapBtn'),
-          from: document.getElementById('from_language'),
-          to: document.getElementById('to_language'),
-          input: document.getElementById('input'),
-          output: document.getElementById('output'),
-          textareas: document.querySelectorAll('textarea')
-      };
+    <script>
+    (function() {
+        'use strict';
 
-      if (!DOM.from || !DOM.to || !DOM.input || !DOM.output) return;
+        const DOM = {
+            nativeFrom: document.getElementById('native_from'),
+            nativeTo: document.getElementById('native_to'),
+            tabsFrom: document.getElementById('tabs_from'),
+            tabsTo: document.getElementById('tabs_to'),
+            input: document.getElementById('input'),
+            output: document.getElementById('output'),
+            swapBtn: document.getElementById('swapBtn'),
+            modal: document.getElementById('langModal'),
+            modalGrid: document.getElementById('modalLangGrid'),
+            searchInput: document.getElementById('langSearch'),
+            textareas: document.querySelectorAll('textarea')
+        };
 
-      // Local Storage Setup
-      const STORAGE_KEYS = { FROM: 'poke_trans_from', TO: 'poke_trans_to' };
+        // State Tracking
+        let state = {
+            currentFrom: DOM.nativeFrom.value,
+            currentTo: DOM.nativeTo.value,
+            recentFrom: [],
+            recentTo: [],
+            modalMode: null // 'from' or 'to'
+        };
 
-      const loadPreferences = () => {
-          const savedFrom = localStorage.getItem(STORAGE_KEYS.FROM);
-          const savedTo = localStorage.getItem(STORAGE_KEYS.TO);
-          if (savedFrom) DOM.from.value = savedFrom;
-          if (savedTo) DOM.to.value = savedTo;
-      };
+        const STORAGE_KEYS = { FROM: 'poke_trans_rec_from', TO: 'poke_trans_rec_to' };
+        
+        // Helper: Get lang name by code
+        const getLangName = (code) => {
+            const l = ALL_LANGS.find(x => x.code === code);
+            return l ? l.name : code;
+        };
 
-      const savePreferences = () => {
-          localStorage.setItem(STORAGE_KEYS.FROM, DOM.from.value);
-          localStorage.setItem(STORAGE_KEYS.TO, DOM.to.value);
-      };
+        // 1. Storage & Init logic
+        const initRecents = () => {
+            try {
+                let sF = JSON.parse(localStorage.getItem(STORAGE_KEYS.FROM));
+                let sT = JSON.parse(localStorage.getItem(STORAGE_KEYS.TO));
+                
+                // Defaults if empty
+                state.recentFrom = Array.isArray(sF) && sF.length ? sF : ['en', 'es', 'fr'];
+                state.recentTo = Array.isArray(sT) && sT.length ? sT : ['en', 'es', 'fr'];
+                
+                // Ensure 'auto' is never in recents (we handle it separately)
+                state.recentFrom = state.recentFrom.filter(c => c !== 'auto');
+                state.recentTo = state.recentTo.filter(c => c !== 'auto');
+            } catch(e) {
+                state.recentFrom = ['en', 'es', 'fr'];
+                state.recentTo = ['en', 'es', 'fr'];
+            }
+        };
 
-      // Debounce utility to prevent spamming translation requests
-      const debounce = (func, delay) => {
-          let timeoutId;
-          return (...args) => {
-              clearTimeout(timeoutId);
-              timeoutId = setTimeout(() => func(...args), delay);
-          };
-      };
+        const saveRecents = () => {
+            localStorage.setItem(STORAGE_KEYS.FROM, JSON.stringify(state.recentFrom));
+            localStorage.setItem(STORAGE_KEYS.TO, JSON.stringify(state.recentTo));
+        };
 
-      // Auto-resize logic
-      const resize = (el) => {
-          if (!el) return;
-          el.style.height = 'auto';
-          el.style.height = `${el.scrollHeight}px`;
-      };
+        const addRecent = (type, code) => {
+            if(code === 'auto') return; // Don't track auto in history array
+            let arr = type === 'from' ? state.recentFrom : state.recentTo;
+            // Remove if exists
+            arr = arr.filter(c => c !== code);
+            // Add to front
+            arr.unshift(code);
+            // Keep only top 3
+            if(arr.length > 3) arr.pop();
+            
+            if(type === 'from') state.recentFrom = arr;
+            else state.recentTo = arr;
+            saveRecents();
+        };
 
-      DOM.textareas.forEach(el => {
-          el.addEventListener('input', () => resize(el));
-          resize(el);
-      });
+        // 2. Tab Rendering
+        const createTab = (code, isActive, type) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `tab-btn ${isActive ? 'active' : ''}`;
+            btn.textContent = getLangName(code);
+            btn.onclick = () => selectLanguage(type, code);
+            return btn;
+        };
 
-      // Async Translation Fetch
-      const fetchTranslation = async () => {
-          const text = DOM.input.value.trim();
-          
-          if (!text) {
-              DOM.output.value = "";
-              resize(DOM.output);
-              return;
-          }
+        const renderTabs = () => {
+            DOM.tabsFrom.innerHTML = '';
+            DOM.tabsTo.innerHTML = '';
 
-          const queryParams = new URLSearchParams({
-              from_language: DOM.from.value,
-              to_language: DOM.to.value,
-              input: text
-          });
+            // Source Tabs (Always pin Detect Language first)
+            DOM.tabsFrom.appendChild(createTab('auto', state.currentFrom === 'auto', 'from'));
+            
+            state.recentFrom.forEach(code => {
+                DOM.tabsFrom.appendChild(createTab(code, state.currentFrom === code, 'from'));
+            });
 
-          try {
-              const response = await fetch(`/translate?${queryParams}`);
-              if (!response.ok) throw new Error('Network response failed');
-              
-              const html = await response.text();
-              const doc = new DOMParser().parseFromString(html, 'text/html');
-              const newOut = doc.getElementById('output');
-              
-              if (newOut) {
-                  DOM.output.value = newOut.value;
-                  resize(DOM.output);
-              }
-          } catch (error) {
-              console.error("Translation Error:", error);
-          }
-      };
+            // Target Tabs
+            state.recentTo.forEach(code => {
+                DOM.tabsTo.appendChild(createTab(code, state.currentTo === code, 'to'));
+            });
+            
+            // Sync Native Form fields
+            DOM.nativeFrom.value = state.currentFrom;
+            DOM.nativeTo.value = state.currentTo;
+        };
 
-      const debouncedTranslate = debounce(fetchTranslation, 300);
+        // 3. Select Action (from Tabs or Modal)
+        const selectLanguage = (type, code) => {
+            if(type === 'from') {
+                state.currentFrom = code;
+                addRecent('from', code);
+            } else {
+                state.currentTo = code;
+                addRecent('to', code);
+            }
+            
+            renderTabs();
+            closeModal();
+            fetchTranslation(); // Auto translate on change
+        };
 
-      // Event Listeners
-      DOM.from.addEventListener('change', () => { savePreferences(); fetchTranslation(); });
-      DOM.to.addEventListener('change', () => { savePreferences(); fetchTranslation(); });
-      DOM.input.addEventListener('input', debouncedTranslate);
+        // 4. Modal Logic
+        window.openModal = (type) => {
+            state.modalMode = type;
+            DOM.modal.classList.add('active');
+            DOM.searchInput.value = '';
+            renderModalGrid('');
+            DOM.searchInput.focus();
+        };
 
-      if (DOM.swapBtn) {
-          DOM.swapBtn.addEventListener('click', (e) => {
-              e.preventDefault();
-              [DOM.from.value, DOM.to.value] = [DOM.to.value, DOM.from.value];
-              [DOM.input.value, DOM.output.value] = [DOM.output.value, DOM.input.value];
-              
-              savePreferences();
-              resize(DOM.input);
-              resize(DOM.output);
-              fetchTranslation();
-          });
-      }
+        window.closeModal = () => {
+            DOM.modal.classList.remove('active');
+        };
 
-      // Init
-      loadPreferences();
-  })();
-  </script>
+        const renderModalGrid = (filterText) => {
+            DOM.modalGrid.innerHTML = '';
+            const lowerFilter = filterText.toLowerCase();
+            const currentSelected = state.modalMode === 'from' ? state.currentFrom : state.currentTo;
+
+            ALL_LANGS.forEach(lang => {
+                // If Target mode, hide 'auto'
+                if(state.modalMode === 'to' && lang.code === 'auto') return;
+
+                if(lang.name.toLowerCase().includes(lowerFilter)) {
+                    const isSelected = lang.code === currentSelected;
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = `lang-item ${isSelected ? 'selected' : ''}`;
+                    
+                    // Add check icon
+                    const icon = document.createElement('span');
+                    icon.className = 'material-icons check-icon';
+                    icon.textContent = 'check';
+                    
+                    const textNode = document.createTextNode(lang.name);
+                    
+                    btn.appendChild(icon);
+                    btn.appendChild(textNode);
+                    
+                    btn.onclick = () => selectLanguage(state.modalMode, lang.code);
+                    DOM.modalGrid.appendChild(btn);
+                }
+            });
+        };
+
+        DOM.searchInput.addEventListener('input', (e) => {
+            renderModalGrid(e.target.value);
+        });
+
+        // 5. Swap Logic
+        DOM.swapBtn.addEventListener('click', () => {
+            // Can't swap if source is auto, fall back to english
+            let safeFrom = state.currentFrom === 'auto' ? 'en' : state.currentFrom;
+            
+            const temp = safeFrom;
+            safeFrom = state.currentTo;
+            state.currentTo = temp;
+            
+            state.currentFrom = safeFrom;
+            
+            addRecent('from', state.currentFrom);
+            addRecent('to', state.currentTo);
+            
+            [DOM.input.value, DOM.output.value] = [DOM.output.value, DOM.input.value];
+            
+            renderTabs();
+            resizeAllTextareas();
+            fetchTranslation();
+        });
+
+        // 6. Textarea Auto-Resize
+        const resize = (el) => {
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = `${Math.max(150, el.scrollHeight)}px`;
+        };
+        const resizeAllTextareas = () => DOM.textareas.forEach(resize);
+
+        DOM.textareas.forEach(el => {
+            el.addEventListener('input', () => resize(el));
+        });
+
+        // 7. Async Translation Fetch
+        const debounce = (func, delay) => {
+            let timeoutId;
+            return (...args) => { clearTimeout(timeoutId); timeoutId = setTimeout(() => func(...args), delay); };
+        };
+
+        const fetchTranslation = async () => {
+            const text = DOM.input.value.trim();
+            if (!text) {
+                DOM.output.value = "";
+                resize(DOM.output);
+                return;
+            }
+
+            const queryParams = new URLSearchParams({
+                from_language: state.currentFrom,
+                to_language: state.currentTo,
+                input: text
+            });
+
+            try {
+                const response = await fetch(`/translate?${queryParams}`);
+                if (!response.ok) throw new Error('Network response failed');
+                
+                const html = await response.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const newOut = doc.getElementById('output');
+                
+                if (newOut) {
+                    DOM.output.value = newOut.value;
+                    resize(DOM.output);
+                }
+            } catch (error) {
+                console.error("Translation Error:", error);
+            }
+        };
+
+        const debouncedTranslate = debounce(fetchTranslation, 300);
+        DOM.input.addEventListener('input', debouncedTranslate);
+
+        // Run setup
+        initRecents();
+        
+        // Ensure current loaded values are tracked in history
+        if(state.currentFrom && state.currentFrom !== 'auto') addRecent('from', state.currentFrom);
+        if(state.currentTo) addRecent('to', state.currentTo);
+        
+        renderTabs();
+        resizeAllTextareas();
+
+    })();
+    </script>
 </body>
 </html>
