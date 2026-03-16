@@ -1178,7 +1178,7 @@ Offical Discord Server! :3
 
 <noscript>
   <div class="error-card">
-    <p>JavaScript is disabled. Playing Standard Definition only.</p>
+    <p>JavaScript is disabled. Please switch to "SD" manually.</p>
   </div>
 </noscript>
    
@@ -1415,7 +1415,22 @@ Offical Discord Server! :3
       };
     }
   }
-%>                                                                    
+%>                          
+
+<%
+let cValue = null;
+
+for (const format of videodata.adaptiveFormats || []) {
+  if (!format.url) continue;
+
+  try {
+    const url = new URL(format.url);
+    cValue = url.searchParams.get("c");
+    if (cValue) break;
+  } catch {}
+}
+%>
+
            <div class="div_box">
          Video id : <%=VideoData.videoId%> <br>
        ImmersiveAmbientModecolor: <% if (lightOrDark(color) == "light") { %><%=color%> (color 1)<% } %><% if (lightOrDark(color) == "dark") { %> <%=color2%> (color 2) <% } %> <br>  
@@ -1432,7 +1447,7 @@ Offical Discord Server! :3
      
         PokeEncryptID: <%=sha384(VideoData.videoId)%> <br>
                       <% if (isvidious) { %>
-
+       Client Used:<%= cValue %>
        Proxy/Companion URL : <%= u.replace("https://", "").replace(".poketube.fun", "") %> <br>
                           <% } %>
                              <% if (!isvidious) { %>
@@ -1444,7 +1459,7 @@ Offical Discord Server! :3
 
                                                   <% if (isvidious) { %>
 
-       Mystery text?? :  <%=btoa(VideoData.videoId + " i " + " lov " + " u " + u.replace("https://","") ) %> <br>
+       Mystery text :  <%=btoa(VideoData.videoId + " i " + " lov " + " u " + u.replace("https://","") ) %> <br>
                                                                               <% } %>  
                                                                                                                                   <% if (!isvidious) { %>
 
