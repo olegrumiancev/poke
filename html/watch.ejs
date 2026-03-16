@@ -1419,7 +1419,7 @@ Offical Discord Server! :3
 
 <%
 const cValues = [...new Set(
-  (videodata.adaptiveFormats || [])
+  (VideoData.adaptiveFormats || [])
     .map(format => {
       try {
         return format.url ? new URL(format.url).searchParams.get("c") : null;
