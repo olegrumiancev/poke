@@ -1449,7 +1449,7 @@ for (const format of (VideoData.adaptiveFormats || [])) {
      
         PokeEncryptID: <%=sha384(VideoData.videoId)%> <br>
                       <% if (isvidious) { %>
-       Client Used:<%= clientUsed %><br>
+       Client Used: <%= clientUsed %><br>
 
        Proxy/Companion URL : <%= u.replace("https://", "").replace(".poketube.fun", "") %> <br>
                           <% } %>
