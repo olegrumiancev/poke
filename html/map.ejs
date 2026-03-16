@@ -5,221 +5,268 @@
   <title>PokeMaps Pro</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
   <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#202124" />
   
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.bunny.net">
+  <link href="https://fonts.bunny.net/css?family=roboto:400,500,700&display=swap" rel="stylesheet">
 
   <style>
     :root {
-       --accent: #1a73e8;
-      --accent-hover: #1b66c9;
-      --bg: #e5e3df;
-      --panel-bg: #ffffff;
-      --border: #dadce0;
-      --text-main: #202124;
-      --text-sub: #5f6368;
-      --danger: #d93025;
-      --hover-bg: #f1f3f4;
-      
-      /* Elevations */
-      --shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
-      --shadow-heavy: 0 4px 6px 0 rgba(60,64,67,0.3), 0 8px 24px 8px rgba(60,64,67,0.15);
-      
-      /* Settings Defaults */
-      --marker-size: 32px;
-      --marker-color: #ea4335;
-    }
-
-     body.dark-mode {
+      --accent: #8ab4f8;
+      --accent-hover: #aecbfa;
+      --bg: #202124;
       --panel-bg: #202124;
+      --panel-hover: #303134;
       --border: #3c4043;
       --text-main: #e8eaed;
       --text-sub: #9aa0a6;
-      --bg: #222;
-      --hover-bg: #3c4043;
-      --shadow: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
-      --shadow-heavy: 0 4px 6px 0 rgba(0,0,0,0.3), 0 8px 24px 8px rgba(0,0,0,0.15);
+      --danger: #f28b82;
+      
+       --radius: 8px;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 2px 6px 2px rgba(0,0,0,0.15);
+      --font: 'Roboto', system-ui, sans-serif;
+      
+      --marker-size: 20px;
+      --marker-color: #ef4444;
     }
-    @media (prefers-color-scheme: dark) {
-      body.auto-theme {
-        --panel-bg: #202124; --border: #3c4043; --text-main: #e8eaed; --text-sub: #9aa0a6; --bg: #222; --hover-bg: #3c4043;
-      }
+
+     body.light-mode {
+      --bg: #f8f9fa;
+      --panel-bg: #ffffff;
+      --panel-hover: #f1f3f4;
+      --border: #dadce0;
+      --text-main: #202124;
+      --text-sub: #5f6368;
+      --accent: #1a73e8;
+      --accent-hover: #174ea6;
+      --danger: #d93025;
+      --shadow: 0 1px 2px rgba(60,64,67,0.3), 0 2px 6px 2px rgba(60,64,67,0.15);
     }
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
-    body { font-family: 'Roboto', Arial, sans-serif; background: var(--bg); color: var(--text-main); }
-    h1, h2, h3, .g-font { font-family: 'Google Sans', Arial, sans-serif; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text-main); }
     button { font-family: inherit; }
-    
-    /* --- SVGS --- */
-    svg.icon { width: 20px; height: 20px; fill: currentColor; }
+
+    /* --- ICONS --- */
+    svg.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
     /* --- MAP --- */
-    .app-shell { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
+    .app-shell { position: relative; width: 100%; height: 100%; }
     #map-container { position: absolute; inset: 0; z-index: 0; background: var(--bg); }
     iframe#map { width: 100%; height: 100%; border: 0; display: block; }
 
-    /* --- MARKER (Google Style Pin) --- */
-    .marker-overlay {
-      position: absolute; inset: 0; pointer-events: none; z-index: 10;
-      display: flex; align-items: center; justify-content: center;
+    /* Brand Tag (Bottom Center) - Hidden on Mobile */
+    .brand {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      padding: 6px 12px; font-size: 13px; font-weight: 500; opacity: 0.9;
+      background: var(--panel-bg); color: var(--text-main);
+      border-radius: 16px; box-shadow: var(--shadow);
+      pointer-events: none; z-index: 5;
     }
-    .marker-wrapper {
-      position: relative;
-      /* Shift up so the sharp tip points exactly to the center coordinate */
-      transform: translateY(-50%);
-    }
+
+    /* Marker */
+    .marker-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: flex; align-items: center; justify-content: center; }
     .center-marker {
-      width: var(--marker-size); height: var(--marker-size);
+      width: var(--marker-size); height: var(--marker-size); border-radius: 50%;
       background: var(--marker-color);
-      border-radius: 50% 50% 50% 0;
-      transform: rotate(-45deg);
-      box-shadow: -2px 2px 6px rgba(0,0,0,0.4);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.4), 0 4px 8px rgba(0,0,0,0.4);
       transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
     .center-marker::after {
       content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 35%; height: 35%; background: var(--panel-bg); border-radius: 50%;
+      width: 4px; height: 4px; background: rgba(0,0,0,0.6); border-radius: 50%;
     }
 
     /* --- UI LAYER --- */
     .ui-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
     .ui-layer > * { pointer-events: auto; }
 
-    /* --- OMNIBOX (Search) --- */
-    .omnibox-container { position: absolute; top: 16px; left: 16px; width: 392px; z-index: 50; max-width: calc(100vw - 32px); }
-    .omnibox {
-      display: flex; align-items: center; background: var(--panel-bg);
-      border-radius: 24px; box-shadow: var(--shadow); padding: 0 8px; height: 48px;
-      transition: box-shadow 0.2s;
+    /* --- COMMON COMPONENTS --- */
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      border: none; background: transparent; color: var(--text-main);
+      border-radius: var(--radius); padding: 8px 16px; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background 0.2s;
     }
-    .omnibox:focus-within { box-shadow: var(--shadow-heavy); }
-    .search-input {
-      flex: 1; border: none; background: transparent; color: var(--text-main);
-      font-size: 15px; font-family: 'Roboto', sans-serif; padding: 0 12px; outline: none;
-    }
-    .search-input::placeholder { color: var(--text-sub); }
+    .btn:hover { background: var(--panel-hover); }
     
-    .icon-btn {
-      width: 40px; height: 40px; border-radius: 50%; border: none; background: transparent;
-      display: flex; align-items: center; justify-content: center; color: var(--text-sub);
-      cursor: pointer; flex-shrink: 0; transition: background 0.2s;
+    .btn-filled {
+      background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius);
+      padding: 8px 16px; font-weight: 500; font-size: 14px; cursor: pointer; transition: background 0.2s;
     }
-    .icon-btn:hover { background: var(--hover-bg); color: var(--text-main); }
-    .search-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+    .btn-filled:hover { background: var(--accent-hover); }
 
-    /* --- SUGGESTIONS --- */
+    /* Rich Dropdown / Auto-suggest */
     .suggestions {
-      background: var(--panel-bg); border-radius: 16px; box-shadow: var(--shadow-heavy);
-      margin-top: 8px; padding: 8px 0; list-style: none; display: none;
-      max-height: calc(100vh - 100px); overflow-y: auto;
+      background: var(--panel-bg);
+      border-radius: var(--radius);
+      margin: 8px 0 0 0; padding: 8px 0; list-style: none;
+      box-shadow: var(--shadow); max-height: 400px; overflow-y: auto; display: none;
+      animation: slideDown 0.2s ease-out; z-index: 1000;
     }
-    .suggestions li { padding: 10px 16px; display: flex; align-items: center; gap: 16px; cursor: pointer; }
-    .suggestions li:hover { background: var(--hover-bg); }
-    .sug-icon { color: var(--text-sub); display: flex; align-items: center; }
-    .sug-title { font-size: 15px; color: var(--text-main); font-weight: 500; display: block; }
-    .sug-sub { font-size: 13px; color: var(--text-sub); display: block; }
-
-    /* --- FLOATING ACTIONS --- */
-    .action-controls {
-      position: absolute; right: 16px; bottom: 24px;
-      display: flex; flex-direction: column; gap: 12px; z-index: 40;
-    }
-    .fab {
-      background: var(--panel-bg); color: var(--text-sub); border: none;
-      box-shadow: var(--shadow); display: flex; align-items: center; justify-content: center;
-      cursor: pointer; transition: 0.2s;
-    }
-    .fab:hover { background: var(--hover-bg); color: var(--text-main); }
-    .fab.active { color: var(--accent); }
-    .fab.square { width: 40px; height: 40px; border-radius: 8px; }
-    .fab.circle { width: 56px; height: 56px; border-radius: 50%; color: var(--text-main); }
-
-    /* --- PANELS (Settings / Pins) --- */
-    .g-panel {
-      position: absolute; background: var(--panel-bg); box-shadow: var(--shadow-heavy);
-      z-index: 45; display: flex; flex-direction: column;
-      transition: transform 0.3s cubic-bezier(0.2,0,0,1), opacity 0.2s;
-    }
-    .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); }
-    .panel-header h2 { font-size: 18px; font-weight: 500; margin: 0; color: var(--text-main); font-family: 'Google Sans', sans-serif;}
-    .close-btn { background: none; border: none; color: var(--text-sub); cursor: pointer; padding: 4px; border-radius: 50%; display: flex; }
-    .close-btn:hover { background: var(--hover-bg); }
-    .panel-content { padding: 16px 24px; overflow-y: auto; }
-
-    /* --- FORMS & BUTTONS --- */
-    .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .setting-row label { font-size: 14px; color: var(--text-main); font-weight: 500;}
-    .std-select {
-      background: transparent; border: 1px solid var(--border); color: var(--text-main);
-      padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; cursor: pointer;
-    }
-    .std-select:focus { border-color: var(--accent); }
+    @keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
     
-    .g-btn-primary {
-      background: var(--accent); color: white; border: none; border-radius: 20px;
-      padding: 10px 24px; font-size: 14px; font-weight: 500; font-family: 'Google Sans', sans-serif;
-      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2); width: 100%; transition: background 0.2s; margin-bottom: 16px;
+    .suggestions li {
+      padding: 12px 16px; cursor: pointer;
+      display: flex; align-items: center; gap: 16px;
     }
-    .g-btn-primary:hover { background: var(--accent-hover); box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    .suggestions li:hover { background: var(--panel-hover); }
+    
+    .sug-icon { color: var(--text-sub); display: flex; align-items: center; }
+    .sug-text { display: flex; flex-direction: column; overflow: hidden; }
+    .sug-title { font-weight: 500; font-size: 14px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sug-sub { font-size: 13px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
-    input[type="checkbox"] { accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;}
-    input[type="range"] { accent-color: var(--accent); cursor: pointer;}
-    input[type="color"] { border: none; width: 32px; height: 32px; border-radius: 4px; cursor: pointer; background: transparent; }
+    /* Map Tool Stack (Google Maps Style) */
+    .gm-tool-stack { display: flex; flex-direction: column; gap: 0; background: var(--panel-bg); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+    .gm-fab {
+      width: 40px; height: 40px; border: none; background: transparent; color: var(--text-sub);
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+      border-bottom: 1px solid var(--border); transition: color 0.2s, background 0.2s;
+    }
+    .gm-fab:last-child { border-bottom: none; }
+    .gm-fab:hover { background: var(--panel-hover); color: var(--text-main); }
+    .gm-fab.active { color: var(--accent); }
+    .stack-spacer { height: 16px; background: transparent; }
 
-    /* Links Row */
-    .link-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
-    .link-row a { font-size: 12px; color: var(--text-sub); text-decoration: none; }
-    .link-row a:hover { color: var(--accent); text-decoration: underline; }
+    /* Google Maps Popover Panels */
+    .popover {
+      position: absolute; right: 56px; /* Offset from tools */
+      width: 320px; background: var(--panel-bg);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
+      display: none; flex-direction: column; gap: 12px;
+    }
+    .popover.open { display: flex; }
+    .popover-header { font-weight: 500; font-size: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .row { display: flex; justify-content: space-between; align-items: center; }
 
-    /* Pin List */
-    .pin-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
-    .pin-info strong { font-size: 15px; color: var(--text-main); font-weight: 500; display: block; margin-bottom: 4px; }
-    .pin-info span { font-size: 13px; color: var(--text-sub); }
-    .pin-actions { display: flex; gap: 4px; }
-    .btn-text { background: none; border: none; color: var(--accent); font-weight: 500; font-size: 13px; cursor: pointer; padding: 6px 12px; border-radius: 4px; }
-    .btn-text:hover { background: var(--hover-bg); }
-    .btn-text.danger { color: var(--danger); }
-    .btn-text.danger:hover { background: rgba(217, 48, 37, 0.1); }
-
-    /* --- RESPONSIVE LAYOUTS --- */
+    /* --- DESKTOP LAYOUT --- */
     @media (min-width: 769px) {
       .mobile-only { display: none !important; }
-      .g-panel {
-        top: 80px; left: 16px; width: 392px; border-radius: 16px;
-        max-height: calc(100vh - 100px);
-        transform: translateX(-110%); opacity: 0; pointer-events: none;
+
+      /* Search on Right */
+      .absolute-top-right {
+        position: absolute; top: 16px; right: 16px; width: 380px; z-index: 50;
       }
-      .g-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
+
+      .gm-search-box {
+        background: var(--panel-bg); border-radius: 24px; box-shadow: var(--shadow);
+        display: flex; align-items: center; height: 48px; padding: 0 16px;
+      }
+      .brand-text { font-weight: 700; font-size: 15px; color: var(--accent); white-space: nowrap; margin-right: 12px; }
+      .search-divider { width: 1px; height: 28px; background: var(--border); margin-right: 12px; }
+      .search-input {
+        flex: 1; border: none; background: transparent; color: var(--text-main);
+        font-size: 15px; outline: none; width: 100%;
+      }
+      .search-input::placeholder { color: var(--text-sub); }
+      .search-icon-btn { background: transparent; border: none; color: var(--text-sub); cursor: pointer; display: flex; padding: 0; }
+      .search-icon-btn:hover { color: var(--text-main); }
+
+      /* Tools Bottom Right */
+      .absolute-bottom-right {
+        position: absolute; bottom: 24px; right: 16px; z-index: 50;
+        display: flex; flex-direction: column; align-items: flex-end; gap: 16px;
+      }
+      
+      /* Popover Placement relative to tools */
+      #pop-settings { bottom: 0; }
+      #pop-pins { bottom: 82px; }
     }
+
+    /* --- MOBILE LAYOUT --- */
     @media (max-width: 768px) {
       .desktop-only { display: none !important; }
-      .omnibox-container { top: 8px; left: 8px; width: auto; right: 8px; max-width: none; }
-      .action-controls { bottom: 24px; right: 8px; }
-      .g-panel {
-        bottom: 0; left: 0; right: 0; width: 100%; border-radius: 24px 24px 0 0;
-        max-height: 85vh; transform: translateY(110%); pointer-events: none;
-        padding-bottom: env(safe-area-inset-bottom);
+      .brand { display: none !important; }
+
+      /* Mobile Search Top Right Floating Button */
+      .mobile-search-fab {
+        position: absolute; top: 16px; right: 16px; z-index: 30;
+        width: 48px; height: 48px; border-radius: 50%; border: none;
+        background: var(--panel-bg); box-shadow: var(--shadow);
+        display: flex; align-items: center; justify-content: center;
+        color: var(--text-main); cursor: pointer;
       }
-      .g-panel.open { transform: translateY(0); pointer-events: auto; }
-      .panel-drag-handle { width: 32px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto; opacity: 0.8;}
-      .panel-header { padding-top: 4px; }
+
+      /* Mobile Dock Bottom */
+      .mobile-dock {
+        position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+        display: flex; align-items: center; gap: 8px;
+        background: var(--panel-bg); padding: 8px 16px; border-radius: 32px;
+        box-shadow: var(--shadow); z-index: 30;
+      }
+      .dock-btn { 
+        background: none; border: none; color: var(--text-sub); 
+        padding: 12px 20px; border-radius: 24px; cursor: pointer; 
+      }
+      .dock-btn:active { background: var(--panel-hover); }
+      .dock-btn.main { background: var(--accent); color: var(--bg); padding: 12px 24px; }
+
+      /* Bottom Sheets */
+      .bottom-sheet {
+        position: fixed; left: 0; right: 0; bottom: 0;
+        background: var(--panel-bg); border-radius: 16px 16px 0 0;
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.2);
+        z-index: 40; transform: translateY(110%);
+        transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+        max-height: 85vh; display: flex; flex-direction: column;
+      }
+      .bottom-sheet.open { transform: translateY(0); }
+      .sheet-handle { width: 32px; height: 4px; background: var(--border); border-radius: 4px; margin: 12px auto; }
+      .sheet-content { padding: 16px 24px 40px; overflow-y: auto; }
+
+      /* Mobile Full Width Input */
+      .m-input-container {
+        display: flex; align-items: center; background: var(--bg);
+        border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 0 16px; height: 48px; margin-bottom: 12px;
+      }
+      .m-input-container input {
+        flex: 1; background: transparent; border: none; outline: none;
+        color: var(--text-main); font-size: 15px; margin-left: 12px;
+      }
+      
+      #m-suggestions { position: static; box-shadow: none; border: 1px solid var(--border); }
     }
+
+    /* --- UTILITIES --- */
+    .pin-item {
+      padding: 12px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .pin-item:last-child { border-bottom: none; }
+    .pin-info strong { display: block; font-size: 14px; margin-bottom: 4px; color: var(--text-main); }
+    .pin-info span { font-size: 12px; color: var(--text-sub); }
+    .pin-actions { display: flex; gap: 8px; }
+    .pin-btn { background: var(--panel-hover); border: none; border-radius: 4px; padding: 6px 10px; color: var(--text-main); cursor: pointer; font-size: 12px; font-weight: 500;}
+    .pin-btn.del { color: var(--danger); }
+
+    select.std-select {
+      width: 100%; padding: 10px; border-radius: var(--radius); border: 1px solid var(--border);
+      background: var(--bg); color: var(--text-main); outline: none; cursor: pointer; font-family: var(--font);
+    }
+    input[type="range"] { accent-color: var(--accent); width: 120px; }
+    input[type="color"] { background: none; border: 1px solid var(--border); border-radius: 4px; width: 32px; height: 32px; cursor: pointer; padding: 0; }
+    label { font-size: 14px; color: var(--text-main); font-weight: 500; }
+    
+    .link-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+    .link-pill { font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 500; }
+    .link-pill:hover { text-decoration: underline; }
+
   </style>
 </head>
-<body class="auto-theme">
+<body>
 
 <div style="display:none">
   <svg id="icons">
-    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></symbol>
-    <symbol id="icon-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
-    <symbol id="icon-loc" viewBox="0 0 24 24"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></symbol>
-    <symbol id="icon-pin" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></symbol>
-    <symbol id="icon-share" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92c0-1.61-1.31-2.92-2.92-2.92z"/></symbol>
-    <symbol id="icon-close" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></symbol>
+    <symbol id="icon-nav" viewBox="0 0 24 24"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></symbol>
+    <symbol id="icon-pin" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></symbol>
+    <symbol id="icon-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></symbol>
+    <symbol id="icon-loc" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7z"></path><circle cx="12" cy="9" r="2.5"></circle></symbol>
   </svg>
 </div>
 
@@ -228,87 +275,140 @@
   <div id="map-container">
     <iframe id="map" title="Map"></iframe>
     <div class="marker-overlay">
-      <div class="marker-wrapper">
-        <div id="center-marker" class="center-marker"></div>
-      </div>
+      <div id="center-marker" class="center-marker"></div>
     </div>
+    <div class="brand">PokeMaps Pro</div>
   </div>
 
   <div class="ui-layer">
 
-    <div class="omnibox-container">
-      <div class="omnibox">
-        <button id="btn-menu" class="icon-btn" title="Menu" aria-label="Menu"><svg class="icon"><use href="#icon-menu"/></svg></button>
+    <div class="desktop-only absolute-top-right">
+      <div class="gm-search-box">
+        <div class="brand-text">PokeMaps</div>
         <div class="search-divider"></div>
-        <input type="text" id="search-input" class="search-input" placeholder="Search Google Maps" autocomplete="off">
-        <button class="icon-btn" title="Search"><svg class="icon"><use href="#icon-search"/></svg></button>
+        <input type="text" id="d-search" class="search-input" placeholder="Search Google Maps..." autocomplete="off">
+        <button class="search-icon-btn"><svg class="icon"><use href="#icon-search"/></svg></button>
       </div>
-      <ul id="suggestions" class="suggestions"></ul>
+      <ul id="d-suggestions" class="suggestions"></ul>
     </div>
 
-    <div class="action-controls">
-      <button id="btn-share" class="fab square" title="Share Link"><svg class="icon"><use href="#icon-share"/></svg></button>
-      <button id="btn-pins" class="fab square" title="Saved Locations"><svg class="icon"><use href="#icon-pin"/></svg></button>
-      <button id="btn-locate" class="fab circle" title="Show your location"><svg class="icon"><use href="#icon-loc"/></svg></button>
+    <div class="desktop-only absolute-bottom-right">
+      
+      <div class="popover" id="pop-pins">
+        <div class="popover-header">
+          <span>Saved Locations</span>
+          <button class="btn-filled" style="padding: 6px 12px; font-size: 13px;" id="d-save-pin">+ Save</button>
+        </div>
+        <div id="d-pin-list" style="max-height: 300px; overflow-y: auto; margin-top: 8px;"></div>
+      </div>
+
+      <div class="popover" id="pop-settings">
+        <div class="popover-header">Map Settings</div>
+        <div style="display:flex; flex-direction:column; gap:16px; margin-top: 8px;">
+          <div>
+            <label style="display:block; margin-bottom:6px;">Map Layer</label>
+            <select id="d-layer" class="std-select">
+              <option value="mapnik">Standard</option>
+              <option value="cyclemap">Cyclist</option>
+              <option value="transportmap">Transport</option>
+              <option value="hot">Humanitarian</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>Follow Location</label>
+            <input type="checkbox" id="d-follow" style="width:18px; height:18px; accent-color:var(--accent);">
+          </div>
+          <div class="row">
+            <label>Theme</label>
+            <select id="d-theme" class="std-select" style="width:120px;">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+          <hr style="border:0; border-top:1px solid var(--border); margin:0;">
+          <div class="row"><label>Marker Size</label><input type="range" id="d-m-size" min="10" max="50" value="20"></div>
+          <div class="row"><label>Marker Color</label><input type="color" id="d-m-color" value="#ef4444"></div>
+          <div class="link-row" style="padding-top:8px; border-top:1px solid var(--border);">
+            <a href="/privacy" class="link-pill">Privacy</a>
+            <a href="https://wiki.osmfoundation.org/wiki/Terms_of_Use" target="_blank" class="link-pill">Terms</a>
+            <a href="https://www.openstreetmap.org/copyright" target="_blank" class="link-pill">Data © OSM</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="gm-tool-stack">
+        <button class="gm-fab" id="d-locate" title="Locate Me"><svg class="icon"><use href="#icon-loc"/></svg></button>
+      </div>
+      <div class="gm-tool-stack">
+        <button class="gm-fab" id="d-btn-pins" title="Saved Pins"><svg class="icon"><use href="#icon-pin"/></svg></button>
+        <button class="gm-fab" id="d-btn-settings" title="Settings"><svg class="icon"><use href="#icon-settings"/></svg></button>
+        <button class="gm-fab" id="d-share" title="Share Link"><svg class="icon"><use href="#icon-share"/></svg></button>
+      </div>
+
     </div>
 
-    <div class="g-panel" id="panel-settings">
-      <div class="panel-drag-handle mobile-only"></div>
-      <div class="panel-header">
-        <h2>Map Settings</h2>
-        <button class="close-btn" onclick="ui.closePanels()"><svg class="icon"><use href="#icon-close"/></svg></button>
+    <button class="mobile-only mobile-search-fab" id="m-btn-search">
+      <svg class="icon"><use href="#icon-search"/></svg>
+    </button>
+
+    <div class="mobile-only mobile-dock">
+      <button class="dock-btn" id="m-btn-pins"><svg class="icon"><use href="#icon-pin"/></svg></button>
+      <button class="dock-btn main" id="m-btn-locate"><svg class="icon"><use href="#icon-nav"/></svg></button>
+      <button class="dock-btn" id="m-btn-menu"><svg class="icon"><use href="#icon-menu"/></svg></button>
+    </div>
+
+    <div class="mobile-only bottom-sheet" id="sheet-search">
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="m-input-container">
+          <svg class="icon" style="color:var(--text-sub)"><use href="#icon-search"/></svg>
+          <input type="text" id="m-search" placeholder="Search places..." autocomplete="off">
+        </div>
+        <ul id="m-suggestions" class="suggestions"></ul>
       </div>
-      <div class="panel-content">
-        <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-          <label>Map Layer</label>
-          <select id="setting-layer" class="std-select" style="width: 100%;">
+    </div>
+
+    <div class="mobile-only bottom-sheet" id="sheet-pins">
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <div class="row" style="margin-bottom:16px;">
+          <span style="font-size:18px; font-weight:500;">Saved Pins</span>
+          <button class="btn-filled" id="m-save-curr" style="padding:8px 16px;">+ Save</button>
+        </div>
+        <div id="m-pin-list" style="display:flex; flex-direction:column;"></div>
+      </div>
+    </div>
+
+    <div class="mobile-only bottom-sheet" id="sheet-menu">
+      <div class="sheet-handle"></div>
+      <div class="sheet-content">
+        <span style="font-size:18px; font-weight:500; display:block; margin-bottom:20px;">Map Settings</span>
+        <div style="margin-bottom:24px">
+          <label style="display:block; margin-bottom:8px">Map Layer</label>
+          <select id="m-layer" class="std-select">
             <option value="mapnik">Standard</option>
             <option value="cyclemap">Cyclist</option>
             <option value="transportmap">Transport</option>
             <option value="hot">Humanitarian</option>
           </select>
         </div>
-        <div class="setting-row">
+        <div class="row" style="padding:14px 0; border-top:1px solid var(--border)">
           <label>Follow Location</label>
-          <input type="checkbox" id="setting-follow">
+          <input type="checkbox" id="m-follow" style="width:20px; height:20px; accent-color:var(--accent)">
         </div>
-        <div class="setting-row">
+        <div class="row" style="padding:14px 0; border-top:1px solid var(--border)">
           <label>Theme</label>
-          <select id="setting-theme" class="std-select">
-            <option value="auto">Auto (System)</option>
-            <option value="light">Light</option>
+          <select id="m-theme" class="std-select" style="width:auto">
             <option value="dark">Dark</option>
+            <option value="light">Light</option>
           </select>
         </div>
-        <div class="setting-row">
-          <label>Marker Size</label>
-          <input type="range" id="setting-msize" min="20" max="60" value="32">
+        <div style="margin-top:20px; padding-top:20px; border-top:1px solid var(--border)">
+          <div class="link-row">
+            <a class="link-pill" href="https://wiki.osmfoundation.org/wiki/Terms_of_Use">OSM Terms</a>
+            <a class="link-pill" href="/privacy">Privacy Policy</a>
+          </div>
         </div>
-        <div class="setting-row">
-          <label>Marker Color</label>
-          <input type="color" id="setting-mcolor" value="#ea4335">
-        </div>
-        
-        <div class="link-row">
-          <a href="/privacy">Privacy Policy</a>
-          <a href="https://wiki.osmfoundation.org/wiki/Terms_of_Use" target="_blank">Terms of Use</a>
-          <a href="https://www.openstreetmap.org/copyright" target="_blank">Map Data © OpenStreetMap</a>
-        </div>
-      </div>
-    </div>
-
-    <div class="g-panel" id="panel-pins">
-      <div class="panel-drag-handle mobile-only"></div>
-      <div class="panel-header">
-        <h2>Saved Locations</h2>
-        <button class="close-btn" onclick="ui.closePanels()"><svg class="icon"><use href="#icon-close"/></svg></button>
-      </div>
-      <div class="panel-content">
-        <button class="g-btn-primary" id="btn-save">
-          <svg class="icon" style="width:18px;height:18px"><use href="#icon-pin"/></svg> 
-          Save Current View
-        </button>
-        <div id="pin-list" style="margin-top: 8px;"></div>
       </div>
     </div>
 
@@ -317,7 +417,7 @@
 
 <script>
 ;(() => {
-  // State
+  // State (Dark mode is strictly default via CSS, JS manages toggling)
   const STATE = { lat: 30.41, lon: 72.44, delta: 0.25, layer: 'mapnik', following: false };
   let PINS = [];
   try { PINS = JSON.parse(localStorage.getItem('pm_pins') || '[]'); } catch(e){}
@@ -325,27 +425,23 @@
   const EL = (sel) => document.querySelector(sel);
   
   // UI References
-  window.ui = {
+  const ui = {
     map: EL('#map'),
     marker: EL('#center-marker'),
-    search: EL('#search-input'), 
-    sug: EL('#suggestions'),
-    locate: EL('#btn-locate'), 
-    save: EL('#btn-save'), 
-    pinList: EL('#pin-list'),
-    layer: EL('#setting-layer'), 
-    follow: EL('#setting-follow'), 
-    theme: EL('#setting-theme'), 
-    share: EL('#btn-share'),
-    mSize: EL('#setting-msize'), 
-    mColor: EL('#setting-mcolor'),
-    btnPins: EL('#btn-pins'), 
-    btnMenu: EL('#btn-menu'),
-    panelPins: EL('#panel-pins'), 
-    panelSettings: EL('#panel-settings'),
-    closePanels: () => {
-      document.querySelectorAll('.g-panel').forEach(p => p.classList.remove('open'));
-    }
+    // Desktop Nav
+    d_search: EL('#d-search'), d_sug: EL('#d-suggestions'),
+    d_locate: EL('#d-locate'), d_save: EL('#d-save-pin'), d_pinList: EL('#d-pin-list'),
+    d_layer: EL('#d-layer'), d_follow: EL('#d-follow'), d_theme: EL('#d-theme'), d_share: EL('#d-share'),
+    d_mSize: EL('#d-m-size'), d_mColor: EL('#d-m-color'),
+    d_btnPins: EL('#d-btn-pins'), d_btnSet: EL('#d-btn-settings'),
+    popPins: EL('#pop-pins'), popSet: EL('#pop-settings'),
+    // Mobile
+    m_btnSearch: EL('#m-btn-search'),
+    m_search: EL('#m-search'), m_sug: EL('#m-suggestions'),
+    m_locate: EL('#m-btn-locate'), m_pinsBtn: EL('#m-btn-pins'), m_menuBtn: EL('#m-btn-menu'),
+    m_save: EL('#m-save-curr'), m_pinList: EL('#m-pin-list'),
+    m_layer: EL('#m-layer'), m_follow: EL('#m-follow'), m_theme: EL('#m-theme'),
+    sheetSearch: EL('#sheet-search'), sheetPins: EL('#sheet-pins'), sheetMenu: EL('#sheet-menu')
   };
 
   // --- MAP CORE ---
@@ -370,28 +466,29 @@
     }
     
     // Sync Inputs
-    if(ui.layer.value !== STATE.layer) ui.layer.value = STATE.layer;
-    ui.follow.checked = STATE.following;
+    if(ui.d_layer.value !== STATE.layer) ui.d_layer.value = STATE.layer;
+    if(ui.m_layer.value !== STATE.layer) ui.m_layer.value = STATE.layer;
+    ui.d_follow.checked = STATE.following; ui.m_follow.checked = STATE.following;
   };
 
   // --- SEARCH ---
   let timer;
-  const doSearch = (val) => {
-    if (!val || val.length < 3) { ui.sug.style.display = 'none'; return; }
+  const doSearch = (val, list) => {
+    if (!val || val.length < 3) { list.style.display = 'none'; return; }
     
     // Check Coords
     const m = val.match(/([+-]?\d+\.?\d*)\s*,\s*([+-]?\d+\.?\d*)/);
     if(m) {
       const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
-      ui.sug.innerHTML = `
+      list.innerHTML = `
         <li onclick="goTo(${lat},${lon})">
           <div class="sug-icon"><svg class="icon"><use href="#icon-loc"/></svg></div>
-          <div>
+          <div class="sug-text">
             <span class="sug-title">${lat.toFixed(4)}, ${lon.toFixed(4)}</span>
             <span class="sug-sub">Coordinates</span>
           </div>
         </li>`;
-      ui.sug.style.display = 'block';
+      list.style.display = 'block';
       return;
     }
 
@@ -400,8 +497,8 @@
       try {
         const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}`);
         const d = await r.json();
-        ui.sug.innerHTML = '';
-        if(!d.length) { ui.sug.style.display = 'none'; return; }
+        list.innerHTML = '';
+        if(!d.length) { list.style.display = 'none'; return; }
         
         d.slice(0,5).forEach(i => {
           let parts = i.display_name.split(',');
@@ -411,20 +508,20 @@
           const li = document.createElement('li');
           li.innerHTML = `
             <div class="sug-icon"><svg class="icon"><use href="#icon-loc"/></svg></div>
-            <div>
+            <div class="sug-text">
               <span class="sug-title">${main}</span>
               <span class="sug-sub">${sub}</span>
             </div>
           `;
           li.onclick = () => { 
             goTo(parseFloat(i.lat), parseFloat(i.lon)); 
-            ui.sug.style.display = 'none'; 
-            ui.search.value = main;
-            ui.closePanels();
+            list.style.display = 'none'; 
+            ui.d_search.value = main; ui.m_search.value = main;
+            closeSheets();
           };
-          ui.sug.appendChild(li);
+          list.appendChild(li);
         });
-        ui.sug.style.display = 'block';
+        list.style.display = 'block';
       } catch(e){}
     }, 400);
   };
@@ -438,23 +535,20 @@
   const toggleFollow = () => {
     if (STATE.following) {
       STATE.following = false;
-      ui.locate.classList.remove('active');
       if (watchId) navigator.geolocation.clearWatch(watchId);
       updateMap();
     } else {
       if (!navigator.geolocation) return alert("Geolocation not supported");
       STATE.following = true;
-      ui.locate.classList.add('active');
       watchId = navigator.geolocation.watchPosition(
         p => { STATE.lat = p.coords.latitude; STATE.lon = p.coords.longitude; updateMap(); },
-        e => { STATE.following = false; ui.locate.classList.remove('active'); updateMap(); alert("Location access denied"); },
+        e => { STATE.following = false; updateMap(); alert("Location access denied"); },
         { enableHighAccuracy: true }
       );
       updateMap();
     }
   };
   const locateOnce = () => {
-    if(STATE.following) return toggleFollow(); // Acts as toggle if already following
     navigator.geolocation.getCurrentPosition(p => {
       STATE.lat = p.coords.latitude; STATE.lon = p.coords.longitude; STATE.delta = 0.01;
       updateMap(true);
@@ -466,19 +560,21 @@
       <div class="pin-item">
         <div class="pin-info"><strong>${p.name}</strong><span>${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</span></div>
         <div class="pin-actions">
-          <button class="btn-text" onclick="loadPin(${i})">Go</button>
-          <button class="btn-text danger" onclick="delPin(${i})">Remove</button>
+          <button class="pin-btn" onclick="loadPin(${i})">Go</button>
+          <button class="pin-btn del" onclick="delPin(${i})">✕</button>
         </div>
       </div>
-    `).join('') : '<div style="text-align:center; opacity:0.5; padding:20px; font-size:14px">No saved locations yet</div>';
-    ui.pinList.innerHTML = html;
+    `).join('') : '<div style="text-align:center; opacity:0.6; padding:20px; font-size:14px">No saved pins</div>';
+    
+    ui.d_pinList.innerHTML = html;
+    ui.m_pinList.innerHTML = html;
   };
 
-  window.loadPin = (i) => { STATE.lat = PINS[i].lat; STATE.lon = PINS[i].lon; STATE.layer = PINS[i].layer || 'mapnik'; updateMap(true); ui.closePanels(); };
-  window.delPin = (i) => { if(confirm("Remove this location?")){ PINS.splice(i,1); localStorage.setItem('pm_pins', JSON.stringify(PINS)); renderPins(); } };
+  window.loadPin = (i) => { STATE.lat = PINS[i].lat; STATE.lon = PINS[i].lon; STATE.layer = PINS[i].layer || 'mapnik'; updateMap(true); closeSheets(); };
+  window.delPin = (i) => { if(confirm("Remove pin?")){ PINS.splice(i,1); localStorage.setItem('pm_pins', JSON.stringify(PINS)); renderPins(); } };
   
   const savePin = () => {
-    const name = prompt("Name this location:", "New Saved Place");
+    const name = prompt("Name this location:", "New Place");
     if(name) {
       PINS.unshift({ name, lat: STATE.lat, lon: STATE.lon, layer: STATE.layer });
       localStorage.setItem('pm_pins', JSON.stringify(PINS));
@@ -488,56 +584,65 @@
 
   // --- SETTINGS ---
   const updateMarker = () => {
-    document.documentElement.style.setProperty('--marker-size', ui.mSize.value + 'px');
-    document.documentElement.style.setProperty('--marker-color', ui.mColor.value);
+    document.documentElement.style.setProperty('--marker-size', ui.d_mSize.value + 'px');
+    document.documentElement.style.setProperty('--marker-color', ui.d_mColor.value);
   };
-  ui.mSize.oninput = updateMarker; ui.mColor.oninput = updateMarker;
+  ui.d_mSize.oninput = updateMarker; ui.d_mColor.oninput = updateMarker;
 
   const applyTheme = (t) => {
-    document.body.classList.remove('dark-mode', 'auto-theme');
-    if(t === 'dark') document.body.classList.add('dark-mode');
-    if(t === 'auto') document.body.classList.add('auto-theme');
-    ui.theme.value = t;
+    document.body.classList.toggle('light-mode', t === 'light');
+    ui.d_theme.value = t; ui.m_theme.value = t;
   };
 
   // --- UI TOGGLES ---
-  const togglePanel = (panelId) => {
-    const p = ui[panelId];
-    const isOpen = p.classList.contains('open');
-    ui.closePanels();
-    if (!isOpen) p.classList.add('open');
+  const closeSheets = () => {
+    document.querySelectorAll('.bottom-sheet').forEach(s => s.classList.remove('open'));
+    document.querySelectorAll('.popover').forEach(p => p.classList.remove('open'));
+    ui.d_btnPins.classList.remove('active'); ui.d_btnSet.classList.remove('active');
+  };
+  const toggleSheet = (s) => { const o = s.classList.contains('open'); closeSheets(); if(!o) s.classList.add('open'); };
+  const togglePop = (p, btn) => { 
+    const o = p.classList.contains('open'); 
+    closeSheets(); 
+    if(!o) { p.classList.add('open'); btn.classList.add('active'); }
   };
 
   // --- LISTENERS ---
-  ui.search.oninput = (e) => doSearch(e.target.value);
-  ui.locate.onclick = locateOnce;
-  ui.save.onclick = savePin;
-  ui.share.onclick = () => { navigator.clipboard.writeText(location.href); alert("Map link copied!"); };
+  ui.d_search.oninput = (e) => doSearch(e.target.value, ui.d_sug);
+  ui.m_search.oninput = (e) => doSearch(e.target.value, ui.m_sug);
   
-  ui.layer.onchange = (e) => { STATE.layer = e.target.value; updateMap(true); };
-  ui.follow.onchange = toggleFollow;
-  ui.theme.onchange = (e) => applyTheme(e.target.value);
+  ui.d_locate.onclick = locateOnce; ui.m_locate.onclick = locateOnce;
+  ui.d_save.onclick = savePin; ui.m_save.onclick = savePin;
+  ui.d_share.onclick = () => { navigator.clipboard.writeText(location.href); alert("Link copied!"); };
   
-  ui.btnPins.onclick = () => togglePanel('panelPins');
-  ui.btnMenu.onclick = () => togglePanel('panelSettings');
+  ui.d_layer.onchange = (e) => { STATE.layer = e.target.value; updateMap(true); };
+  ui.m_layer.onchange = (e) => { STATE.layer = e.target.value; updateMap(true); };
+  
+  ui.d_follow.onchange = toggleFollow; ui.m_follow.onchange = toggleFollow;
+  ui.d_theme.onchange = (e) => applyTheme(e.target.value); ui.m_theme.onchange = (e) => applyTheme(e.target.value);
+  
+  // Desktop Nav Toggles
+  ui.d_btnPins.onclick = (e) => { e.stopPropagation(); togglePop(ui.popPins, ui.d_btnPins); };
+  ui.d_btnSet.onclick = (e) => { e.stopPropagation(); togglePop(ui.popSet, ui.d_btnSet); };
+  ui.popPins.onclick = (e) => e.stopPropagation();
+  ui.popSet.onclick = (e) => e.stopPropagation();
+
+  // Mobile Toggles
+  ui.m_btnSearch.onclick = () => { toggleSheet(ui.sheetSearch); setTimeout(() => ui.m_search.focus(), 100); };
+  ui.m_pinsBtn.onclick = () => toggleSheet(ui.sheetPins);
+  ui.m_menuBtn.onclick = () => toggleSheet(ui.sheetMenu);
   
   document.body.onclick = (e) => {
-    // Close suggestions if clicking outside
-    if(!e.target.closest('.omnibox') && !e.target.closest('.suggestions')) {
-      ui.sug.style.display = 'none';
-    }
-    // Close panels if clicking on map background
-    if(e.target.closest('#map-container')) {
-      ui.closePanels();
-    }
+    if(!e.target.closest('.bottom-sheet') && !e.target.closest('.mobile-dock') && !e.target.closest('.mobile-search-fab') && !e.target.closest('.gm-search-box') && !e.target.closest('.gm-tool-stack')) closeSheets();
+    if(!e.target.closest('.gm-search-box') && !e.target.closest('.m-input-container')) { ui.d_sug.style.display='none'; }
   };
 
   // Init
   const p = new URLSearchParams(location.search);
   if(p.has('lat')) { STATE.lat = parseFloat(p.get('lat')); STATE.lon = parseFloat(p.get('lon')); }
-  if(p.has('d')) { STATE.delta = parseFloat(p.get('d')); }
   if(p.has('l')) STATE.layer = p.get('l');
   
+  applyTheme('dark'); // Force dark mode as default startup state
   renderPins();
   updateMap();
   updateMarker();
