@@ -4652,9 +4652,9 @@ const vid = document.getElementById("video");
             </a>
         </div>
 
-        <% if (VideoData && VideoData.error) { %>
+        <% if (error) { %>
             <div class="backend-error">
-                <strong>Error:</strong> <%= VideoData.error %>
+                <strong>Error:</strong> <%= error %>
             </div>
         <% } %> 
 
