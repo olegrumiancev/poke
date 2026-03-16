@@ -6,7 +6,7 @@
 
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="css/yt-ukraine.svg" type="image/svg+xml" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#0c0c0c" />
   <meta name="description" content="Poke! Calendar — zero-JS calendar" />
   <meta property="og:title" content="Poke! Calendar" />
   <meta property="og:description" content="Navigate months without JavaScript needed" />
@@ -19,52 +19,53 @@
 
   <style>
     :root {
-       --bg: #0f172a;
-      --surface-1: #1e293b;
-      --surface-2: #334155;
-      --surface-glass: rgba(15, 23, 42, 0.75);
-      --border: #334155;
-      --border-hover: #475569;
+      /* Dark Theme Palette (Default) */
+      --bg: #09090b;
+      --surface-1: #18181b;
+      --surface-2: #27272a;
+      --surface-hover: #3f3f46;
+      --surface-glass: rgba(9, 9, 11, 0.75);
+      --border: #3f3f46;
+      --border-light: #27272a;
       
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
+      --text-main: #f4f4f5;
+      --text-muted: #a1a1aa;
       
-      --accent: #6366f1; /* Indigo */
-      --accent-hover: #4f46e5;
-      --accent-glow: rgba(99, 102, 241, 0.25);
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --accent-glow: rgba(139, 92, 246, 0.25);
       
-      --today-bg: rgba(99, 102, 241, 0.1);
-      --today-border: #6366f1;
+      --today-bg: rgba(139, 92, 246, 0.15);
+      --today-border: #8b5cf6;
 
-       --radius-lg: 16px;
+      /* Spacing & Layout */
+      --radius-lg: 16px;
       --radius-md: 10px;
       --radius-sm: 6px;
-      --shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
-      --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+      --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.4);
       --font-body: 'Inter', system-ui, -apple-system, sans-serif;
     }
 
     @media (prefers-color-scheme: light) {
       :root {
-        --bg: #f8fafc;
+        --bg: #f4f4f5;
         --surface-1: #ffffff;
-        --surface-2: #f1f5f9;
+        --surface-2: #f4f4f5;
+        --surface-hover: #e4e4e7;
         --surface-glass: rgba(255, 255, 255, 0.85);
-        --border: #e2e8f0;
-        --border-hover: #cbd5e1;
+        --border: #e4e4e7;
+        --border-light: #f4f4f5;
         
-        --text-main: #0f172a;
-        --text-muted: #64748b;
+        --text-main: #18181b;
+        --text-muted: #71717a;
         
-        --accent: #4f46e5;
-        --accent-hover: #4338ca;
-        --accent-glow: rgba(79, 70, 229, 0.2);
+        --accent: #6d28d9;
+        --accent-hover: #5b21b6;
+        --accent-glow: rgba(109, 40, 217, 0.15);
         
-        --today-bg: #eef2ff;
-        --today-border: #6366f1;
-        
-        --shadow-soft: 0 10px 30px -10px rgba(0, 0, 0, 0.1);
-        --shadow-glow: 0 0 20px rgba(79, 70, 229, 0.1);
+        --today-bg: #f5f3ff;
+        --today-border: #8b5cf6;
       }
     }
 
@@ -78,7 +79,7 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-      -webkit-font-smoothing: antialiased;
+      line-height: 1.5;
     }
 
     /* Navbar */
@@ -87,7 +88,7 @@
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      padding: 1rem 2rem;
+      padding: 1rem 5%;
       background: var(--surface-glass);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
@@ -97,25 +98,33 @@
       z-index: 100;
     }
 
-    .brand img { height: 2.2rem; width: auto; display: block; transition: transform 0.2s; }
-    .brand:hover img { transform: scale(1.05); }
+    .brand img { 
+      height: 24px; 
+      width: auto; 
+      display: block; 
+    }
     
     .year-info {
       display: flex;
-      gap: 1.5rem;
+      gap: 1.25rem;
       font-size: 0.85rem;
       color: var(--text-muted);
-      background: var(--surface-1);
+      background: var(--surface-2);
       padding: 0.5rem 1rem;
-      border-radius: var(--radius-lg);
+      border-radius: 100px;
       border: 1px solid var(--border);
     }
-    .year-info span strong { color: var(--text-main); font-weight: 600; }
+    .year-info span strong { 
+      color: var(--text-main); 
+      font-weight: 600; 
+    }
 
     /* Main Container */
     .main-wrapper {
-      width: min(100% - 2rem, 1000px);
-      margin: 3rem auto;
+      width: 100%;
+      max-width: 1100px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
       flex: 1;
     }
 
@@ -123,7 +132,7 @@
       background: var(--surface-1);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-soft), var(--shadow-glow);
+      box-shadow: var(--shadow-sm);
       padding: 2rem;
     }
 
@@ -138,10 +147,9 @@
     }
 
     .month-title {
-      font-size: 2.2rem;
-      font-weight: 800;
+      font-size: 1.75rem;
+      font-weight: 700;
       margin: 0;
-      letter-spacing: -0.03em;
       color: var(--text-main);
     }
 
@@ -151,13 +159,13 @@
     }
 
     .picker-input {
-      background: var(--surface-2);
+      background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text-main);
-      padding: 0.6rem 1rem;
-      border-radius: var(--radius-sm);
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius-md);
       font-family: inherit;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       outline: none;
       transition: border-color 0.2s;
     }
@@ -168,15 +176,14 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 0.6rem 1.2rem;
-      border-radius: var(--radius-sm);
-      font-weight: 600;
+      padding: 0.5rem 1.25rem;
+      border-radius: var(--radius-md);
+      font-weight: 500;
       text-decoration: none;
       transition: all 0.2s ease;
       cursor: pointer;
       border: none;
-      font-size: 0.95rem;
-      outline: none;
+      font-size: 0.9rem;
     }
 
     .btn-primary {
@@ -186,8 +193,6 @@
     }
     .btn-primary:hover { 
       background: var(--accent-hover); 
-      transform: translateY(-1px); 
-      box-shadow: 0 6px 16px var(--accent-glow);
     }
 
     .btn-secondary {
@@ -196,22 +201,21 @@
       border: 1px solid var(--border);
     }
     .btn-secondary:hover { 
-      border-color: var(--border-hover); 
-      background: var(--border);
+      background: var(--surface-hover); 
     }
 
     /* Calendar Grid */
     .calendar-table {
       width: 100%;
       border-collapse: separate;
-      border-spacing: 6px; 
+      border-spacing: 8px; /* Clean gap between squares */
       table-layout: fixed;
     }
 
     .calendar-table th {
-      padding: 0.5rem 0 1rem 0;
+      padding-bottom: 1rem;
       color: var(--text-muted);
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.05em;
@@ -219,45 +223,39 @@
 
     .calendar-table td {
       height: clamp(90px, 12vw, 130px);
-      vertical-align: top;
       background: var(--surface-2);
       border-radius: var(--radius-md);
       padding: 10px;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: all 0.2s ease;
       position: relative;
-      border: 1px solid transparent;
+      border: 1px solid var(--border-light);
     }
 
     /* Day Number */
     .day-num {
-      display: block;
-      font-weight: 600;
-      font-size: 1.1rem;
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      font-weight: 500;
+      font-size: 0.95rem;
       color: var(--text-main);
-      margin-bottom: 4px;
     }
 
     /* Empty Cells */
     .calendar-table td:empty {
       background: transparent;
-      border: 1px dashed var(--border);
+      border-color: transparent;
       pointer-events: none;
-      opacity: 0.5;
     }
 
     /* Interactive States */
     .calendar-table td:not(:empty) { 
       cursor: pointer; 
-      border: 1px solid var(--border);
     }
-    .calendar-table td:not(:empty):hover, 
-    .calendar-table td:not(:empty):focus {
-      background: var(--surface-1);
-      border-color: var(--accent);
-      transform: translateY(-3px);
-      box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-      z-index: 2;
-      outline: none;
+    
+    .calendar-table td:not(:empty):hover {
+      background: var(--surface-hover);
+      border-color: var(--border);
     }
 
     /* Today Modifier */
@@ -267,6 +265,7 @@
     }
     .calendar-table td.today .day-num { 
       color: var(--accent); 
+      font-weight: 700;
     }
 
     /* Note Indicator */
@@ -278,9 +277,10 @@
       border-radius: 50%;
       position: absolute;
       bottom: 12px;
-      right: 12px;
-      box-shadow: 0 0 8px var(--accent);
+      left: 12px;
+      box-shadow: 0 0 10px var(--accent-glow);
     }
+    
     .calendar-table td.has-note .note-indicator { display: block; }
 
     /* Navigation Footer */
@@ -292,25 +292,24 @@
       border-top: 1px solid var(--border);
     }
 
-    /* Modal Styling & Animations */
+    /* Modal Styling */
     #note-modal {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.6);
-      backdrop-filter: blur(0px);
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 1000;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.3s ease, backdrop-filter 0.3s ease;
+      transition: opacity 0.25s ease;
     }
+    
     #note-modal.open { 
       opacity: 1; 
       pointer-events: auto; 
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
     }
 
     .modal-content {
@@ -319,18 +318,19 @@
       padding: 2rem;
       border-radius: var(--radius-lg);
       width: min(90%, 450px);
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-      transform: scale(0.95) translateY(10px);
-      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: var(--shadow-lg);
+      transform: translateY(10px) scale(0.98);
+      transition: transform 0.25s ease;
     }
+
     #note-modal.open .modal-content {
-      transform: scale(1) translateY(0);
+      transform: translateY(0) scale(1);
     }
 
     .modal-header { 
       font-size: 1.25rem; 
-      font-weight: 700; 
-      margin-bottom: 1.2rem; 
+      font-weight: 600; 
+      margin-bottom: 1.25rem; 
       color: var(--text-main); 
     }
     
@@ -341,17 +341,19 @@
       border: 1px solid var(--border);
       color: var(--text-main);
       padding: 1rem;
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius-md);
       margin-bottom: 1.5rem;
-      resize: vertical;
+      resize: none;
       font-family: inherit;
       font-size: 0.95rem;
       outline: none;
       transition: border-color 0.2s;
     }
+    
     .modal-textarea:focus {
       border-color: var(--accent);
     }
+
     .modal-actions { 
       display: flex; 
       justify-content: flex-end; 
@@ -359,14 +361,14 @@
     }
 
     /* Mobile Adjustments */
-    @media (max-width: 600px) {
-      .navbar { padding: 1rem; }
-      .year-info { width: 100%; justify-content: center; margin-top: 1rem; }
-      .main-wrapper { margin: 1.5rem auto; width: min(100% - 1rem, 1000px); }
-      .calendar-card { padding: 1rem; }
+    @media (max-width: 768px) {
+      .navbar { flex-direction: column; gap: 1rem; }
+      .year-info { width: 100%; justify-content: center; }
+      .calendar-card { padding: 1rem; border-radius: 0; border-left: none; border-right: none; }
+      .main-wrapper { padding: 0; margin: 0; }
       .calendar-table td { height: 75px; padding: 6px; }
-      .day-num { font-size: 0.9rem; }
-      .month-title { font-size: 1.75rem; }
+      .day-num { top: 6px; right: 8px; font-size: 0.85rem; }
+      .note-indicator { bottom: 6px; left: 6px; width: 6px; height: 6px; }
       .controls { flex-direction: column; align-items: flex-start; }
       .date-form { width: 100%; }
       .picker-input { flex: 1; }
@@ -431,6 +433,7 @@
                   day.getMonth() === today.getMonth() &&
                   day.getFullYear() === today.getFullYear();
                 
+                // Format date for JS Data Attribute (YYYY-MM-DD)
                 const dateStr = day ? 
                    day.getFullYear() + '-' + 
                    String(day.getMonth() + 1).padStart(2, '0') + '-' + 
@@ -446,7 +449,7 @@
                 <% if (day) { %>
                   <span class="day-num"><%= day.getDate() %></span>
                   <div class="note-indicator" title="Has note"></div>
-                  <% } %>
+                <% } %>
               </td>
 
             <% if (idx % 7 === 6) { %></tr><% } %>
@@ -479,6 +482,7 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      // Elements
       const modal = document.getElementById('note-modal');
       const textarea = document.getElementById('note-text');
       const dateDisplay = document.getElementById('modal-date-display');
@@ -502,25 +506,30 @@
       
       updateIndicators();
 
+      // Event Delegation for Cell Clicks
       document.querySelector('.calendar-table tbody').addEventListener('click', (e) => {
         const td = e.target.closest('td');
         if (!td || !td.getAttribute('data-date')) return;
 
         activeDateKey = td.getAttribute('data-date');
         
+        // Load existing note
         const existingNote = localStorage.getItem('poke_note_' + activeDateKey) || '';
         textarea.value = existingNote;
         
+        // Format Date for Header
         const dateObj = new Date(activeDateKey);
         dateDisplay.textContent = dateObj.toLocaleDateString(undefined, { 
             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
         });
 
+        // Show Modal
         modal.classList.add('open');
         modal.setAttribute('aria-hidden', 'false');
         textarea.focus();
       });
 
+      // Save Logic
       saveBtn.addEventListener('click', () => {
         if (activeDateKey) {
           const text = textarea.value;
@@ -534,6 +543,7 @@
         }
       });
 
+      // Close Logic
       const closeModal = () => {
         modal.classList.remove('open');
         modal.setAttribute('aria-hidden', 'true');
@@ -542,16 +552,19 @@
 
       closeBtn.addEventListener('click', closeModal);
       
+      // Close on background click
       modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
       });
 
+      // Keyboard Accessibility
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && modal.classList.contains('open')) {
           closeModal();
         }
       });
       
+      // Allow 'Enter' key on grid cells to open modal
       document.querySelectorAll('td[data-date]').forEach(td => {
         td.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') td.click();
