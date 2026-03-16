@@ -1418,17 +1418,19 @@ Offical Discord Server! :3
 %>                          
 
 <%
-const cValues = [...new Set(
-  (VideoData.adaptiveFormats || [])
-    .map(format => {
-      try {
-        return format.url ? new URL(format.url).searchParams.get("c") : null;
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-)];
+let clientUsed = null;
+
+for (const format of (videodata.adaptiveFormats || [])) {
+  if (!format.url) continue;
+
+  try {
+    const c = new URL(format.url).searchParams.get("c");
+    if (c) {
+      clientUsed = c;
+      break;
+    }
+  } catch {}
+}
 %>
 
            <div class="div_box">
@@ -1447,7 +1449,7 @@ const cValues = [...new Set(
      
         PokeEncryptID: <%=sha384(VideoData.videoId)%> <br>
                       <% if (isvidious) { %>
-       Client Used:<%= JSON.stringify(cValues) %>
+       Client Used:<%= clientused %><br>
 
        Proxy/Companion URL : <%= u.replace("https://", "").replace(".poketube.fun", "") %> <br>
                           <% } %>
