@@ -20,16 +20,16 @@
 
   <style>
     :root {
-      /* Google Calendar Light Theme Vibe */
+      /* Google Calendar Light Theme */
       --bg: #ffffff;
       --surface-1: #ffffff;
-      --surface-2: #f1f3f4;
+      --surface-2: #f8f9fa;
       --border: #dadce0;
       
       --text-main: #3c4043;
       --text-muted: #70757a;
       
-      --accent: #1a73e8; /* Google Blue */
+      --accent: #1a73e8;
       --accent-hover: #1b66c9;
       --accent-faint: #e8f0fe;
       
@@ -37,13 +37,13 @@
       --today-text: #ffffff;
 
       --cell-hover: #f1f3f4;
-      --shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
-      --font-body: "Google Sans", Roboto, Arial, sans-serif;
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --font-body: "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        /* Google Calendar Dark Theme Vibe */
+        /* Google Calendar Dark Theme */
         --bg: #202124;
         --surface-1: #202124;
         --surface-2: #303134;
@@ -60,7 +60,7 @@
         --today-text: #202124;
 
         --cell-hover: #3c4043;
-        --shadow: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+        --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
       }
     }
 
@@ -84,11 +84,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 12px 24px;
-      background: var(--surface-1);
       border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 100;
     }
 
     .brand img { height: 28px; width: auto; display: block; }
@@ -104,22 +100,28 @@
     /* Main Container */
     .main-wrapper {
       width: 100%;
-      max-width: 1400px;
+      max-width: 1600px;
       margin: 0 auto;
-      padding: 1rem 2rem;
+      padding: 1.5rem 2rem;
       flex: 1;
       display: flex;
       flex-direction: column;
     }
 
-    /* Controls Header */
-    .controls {
+    /* Google Calendar Style Toolbar */
+    .toolbar {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 1rem;
+      margin-bottom: 1.5rem;
       gap: 1rem;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
     }
 
     .month-title {
@@ -127,7 +129,27 @@
       font-weight: 400;
       margin: 0;
       color: var(--text-main);
+      min-width: 200px;
     }
+
+    .nav-arrows {
+      display: flex;
+      gap: 0.25rem;
+    }
+
+    .btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      text-decoration: none;
+      color: var(--text-main);
+      transition: background 0.2s;
+      font-weight: bold;
+    }
+    .btn-icon:hover { background: var(--cell-hover); }
 
     .date-form {
       display: flex;
@@ -136,11 +158,11 @@
     }
 
     .picker-input {
-      background: transparent;
+      background: var(--surface-1);
       border: 1px solid var(--border);
       color: var(--text-main);
       padding: 8px 12px;
-      border-radius: 4px;
+      border-radius: 6px;
       font-family: inherit;
       font-size: 0.875rem;
       outline: none;
@@ -153,46 +175,44 @@
       align-items: center;
       justify-content: center;
       padding: 8px 16px;
-      border-radius: 4px;
+      border-radius: 6px;
       font-weight: 500;
       text-decoration: none;
-      transition: background 0.2s;
       cursor: pointer;
       border: 1px solid transparent;
       font-size: 0.875rem;
       font-family: inherit;
+      transition: all 0.2s ease;
     }
 
     .btn-primary {
       background: var(--accent);
-      color: white !important; /* Force white for light/dark mode consistency */
+      color: white !important;
     }
     .btn-primary:hover { background: var(--accent-hover); }
-
     .btn-secondary {
       background: transparent;
-      color: var(--accent);
+      color: var(--text-main);
       border-color: var(--border);
     }
-    .btn-secondary:hover { 
-      background: var(--surface-2); 
-    }
+    .btn-secondary:hover { background: var(--surface-2); }
 
     /* Calendar Grid */
     .calendar-table {
       width: 100%;
-      border-collapse: collapse; /* Removes gaps between cells */
+      border-collapse: collapse;
       table-layout: fixed;
-      flex: 1; /* Pushes footer down */
+      flex: 1;
     }
 
     .calendar-table th {
-      padding: 12px 0;
+      padding: 0 0 12px 0;
       color: var(--text-muted);
-      font-size: 0.75rem;
+      font-size: 0.65rem;
       font-weight: 500;
       text-transform: uppercase;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.5px;
+      text-align: center;
       border-bottom: 1px solid var(--border);
     }
 
@@ -203,37 +223,42 @@
       border: 1px solid var(--border);
       padding: 4px;
       transition: background 0.1s ease;
-      position: relative;
     }
+    
+    /* Remove outer borders for a cleaner flush look */
+    .calendar-table tr:first-child td { border-top: none; }
+    .calendar-table tr td:first-child { border-left: none; }
+    .calendar-table tr td:last-child { border-right: none; }
 
     /* Empty Cells */
     .calendar-table td:empty {
-      background: var(--surface-2); /* Slight grey to differentiate empty days */
+      background: var(--surface-2);
       pointer-events: none;
     }
 
     /* Interactive States */
     .calendar-table td:not(:empty) { cursor: pointer; }
-    .calendar-table td:not(:empty):hover {
-      background: var(--cell-hover);
-    }
-    .calendar-table td:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: -2px;
+    .calendar-table td:not(:empty):hover { background: var(--cell-hover); }
+
+    /* Layout inside the cell */
+    .day-header {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 4px;
     }
 
     /* Day Number Positioning */
     .day-num {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       font-weight: 400;
-      font-size: 0.875rem;
-      margin: 4px;
+      font-size: 0.8rem;
       color: var(--text-main);
+      margin-top: 4px;
     }
 
     /* Today Modifier */
@@ -243,32 +268,33 @@
       font-weight: 500;
     }
 
-    /* Note Indicator */
+    /* Event Chip (Notes) - Replaces the dot! */
     .note-indicator {
       display: none;
-      width: 8px;
-      height: 8px;
       background-color: var(--accent);
-      border-radius: 50%;
-      position: absolute;
-      top: 14px;
-      right: 14px;
+      color: #ffffff; /* Always white text on chip for readability */
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin: 0 2px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     
-    .calendar-table td.has-note .note-indicator { display: block; }
-
-    /* Navigation Footer */
-    .nav-footer {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 1rem;
+    .calendar-table td.has-note .note-indicator { 
+      display: block; 
     }
 
     /* Modal Styling */
     #note-modal {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.4); /* Lighter backdrop */
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(2px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -283,42 +309,44 @@
       background: var(--surface-1);
       padding: 24px;
       border-radius: 8px;
-      width: min(90%, 420px);
+      width: min(90%, 450px);
       box-shadow: var(--shadow);
     }
     .modal-header { 
-      font-size: 1.125rem; 
+      font-size: 1.25rem; 
       font-weight: 400; 
-      margin-bottom: 16px; 
+      margin-bottom: 20px; 
       color: var(--text-main); 
     }
     .modal-textarea {
       width: 100%;
-      height: 120px;
-      background: transparent;
+      height: 140px;
+      background: var(--surface-1);
       border: 1px solid var(--border);
       color: var(--text-main);
       padding: 12px;
-      border-radius: 4px;
+      border-radius: 6px;
       margin-bottom: 24px;
-      resize: vertical;
+      resize: none;
       font-family: inherit;
-      outline: none;
+      font-size: 1rem;
+      line-height: 1.5;
     }
     .modal-textarea:focus {
+      outline: none;
       border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-faint);
     }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
 
     /* Mobile Adjustments */
-    @media (max-width: 600px) {
+    @media (max-width: 768px) {
       .main-wrapper { padding: 1rem; }
-      .year-info { width: 100%; justify-content: flex-start; margin-top: 0.5rem; gap: 1rem; flex-wrap: wrap;}
+      .year-info { display: none; /* Hide extra info on small screens to save space */ }
+      .toolbar { flex-direction: column; align-items: flex-start; }
       .calendar-table td { height: 80px; }
-      .day-num { width: 24px; height: 24px; font-size: 0.8rem; }
-      .month-title { font-size: 1.25rem; }
-      .note-indicator { top: 8px; right: 8px; width: 6px; height: 6px;}
+      .day-num { width: 22px; height: 22px; font-size: 0.75rem; }
+      .note-indicator { font-size: 0.65rem; padding: 2px 4px; }
     }
   </style>
 </head>
@@ -338,10 +366,21 @@
   </nav>
 
   <div class="main-wrapper">
-    <div class="controls">
-      <h2 class="month-title">
-        <%= queryDate.toLocaleString('default', { month: 'long' }) %> <%= year %>
-      </h2>
+    
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <h2 class="month-title">
+          <%= queryDate.toLocaleString('default', { month: 'long' }) %> <%= year %>
+        </h2>
+        <div class="nav-arrows">
+          <a href="/calendar?date=<%= new Date(year, month - 1, 1).toISOString() %>" class="btn-icon" title="Previous month">
+            &#10094;
+          </a>
+          <a href="/calendar?date=<%= new Date(year, month + 1, 1).toISOString() %>" class="btn-icon" title="Next month">
+            &#10095;
+          </a>
+        </div>
+      </div>
       
       <form action="/calendar" method="get" class="date-form">
         <input 
@@ -351,7 +390,7 @@
           class="picker-input" 
           aria-label="Select Month"
         />
-        <button type="submit" class="btn btn-secondary">Go</button>
+        <button type="submit" class="btn btn-secondary">Jump to Date</button>
       </form>
     </div>
 
@@ -391,8 +430,10 @@
               <% if (day) { %> tabindex="0" role="gridcell" <% } %>
             >
               <% if (day) { %>
-                <span class="day-num"><%= day.getDate() %></span>
-                <div class="note-indicator" title="Has note"></div>
+                <div class="day-header">
+                  <span class="day-num"><%= day.getDate() %></span>
+                </div>
+                <div class="note-indicator"></div>
               <% } %>
             </td>
 
@@ -400,21 +441,12 @@
         <% }); %>
       </tbody>
     </table>
-
-    <div class="nav-footer">
-      <a href="/calendar?date=<%= new Date(year, month - 1, 1).toISOString() %>" class="btn btn-secondary">
-        &larr; Previous
-      </a>
-      <a href="/calendar?date=<%= new Date(year, month + 1, 1).toISOString() %>" class="btn btn-secondary">
-        Next &rarr;
-      </a>
-    </div>
   </div>
 
   <div id="note-modal" aria-hidden="true">
     <div class="modal-content">
       <div class="modal-header" id="modal-date-display">Date</div>
-      <textarea id="note-text" class="modal-textarea" placeholder="Add a reminder or note for this day..."></textarea>
+      <textarea id="note-text" class="modal-textarea" placeholder="Add title or note..."></textarea>
       <div class="modal-actions">
         <button id="close-modal" class="btn btn-secondary">Cancel</button>
         <button id="save-note" class="btn btn-primary">Save</button>
@@ -438,10 +470,15 @@
           if (!date) return;
           
           const note = localStorage.getItem('poke_note_' + date);
+          const indicator = td.querySelector('.note-indicator');
+          
           if (note && note.trim() !== "") {
             td.classList.add('has-note');
+            // This injects the text into the colored event chip!
+            if(indicator) indicator.textContent = note; 
           } else {
             td.classList.remove('has-note');
+            if(indicator) indicator.textContent = '';
           }
         });
       };
