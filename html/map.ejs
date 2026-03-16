@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>PokeMaps Pro</title>
+  <title>PokeMaps</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#202124" />
@@ -65,8 +65,7 @@
       pointer-events: none; z-index: 5;
     }
 
-    /* Marker */
-    .marker-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: flex; align-items: center; justify-content: center; }
+     .marker-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: flex; align-items: center; justify-content: center; }
     .center-marker {
       width: var(--marker-size); height: var(--marker-size); border-radius: 50%;
       background: var(--marker-color);
@@ -78,12 +77,10 @@
       width: 4px; height: 4px; background: rgba(0,0,0,0.6); border-radius: 50%;
     }
 
-    /* --- UI LAYER --- */
-    .ui-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+     .ui-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
     .ui-layer > * { pointer-events: auto; }
 
-    /* --- COMMON COMPONENTS --- */
-    .btn {
+     .btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
       border: none; background: transparent; color: var(--text-main);
       border-radius: var(--radius); padding: 8px 16px; font-size: 14px; font-weight: 500;
@@ -97,8 +94,7 @@
     }
     .btn-filled:hover { background: var(--accent-hover); }
 
-    /* Rich Dropdown / Auto-suggest */
-    .suggestions {
+     .suggestions {
       background: var(--panel-bg);
       border-radius: var(--radius);
       margin: 8px 0 0 0; padding: 8px 0; list-style: none;
@@ -118,8 +114,7 @@
     .sug-title { font-weight: 500; font-size: 14px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sug-sub { font-size: 13px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
-    /* Map Tool Stack (Google Maps Style) */
-    .gm-tool-stack { display: flex; flex-direction: column; gap: 0; background: var(--panel-bg); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+     .gm-tool-stack { display: flex; flex-direction: column; gap: 0; background: var(--panel-bg); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
     .gm-fab {
       width: 40px; height: 40px; border: none; background: transparent; color: var(--text-sub);
       display: flex; align-items: center; justify-content: center; cursor: pointer;
@@ -130,8 +125,7 @@
     .gm-fab.active { color: var(--accent); }
     .stack-spacer { height: 16px; background: transparent; }
 
-    /* Google Maps Popover Panels */
-    .popover {
+     .popover {
       position: absolute; right: 56px; /* Offset from tools */
       width: 320px; background: var(--panel-bg);
       border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px;
@@ -145,8 +139,7 @@
     @media (min-width: 769px) {
       .mobile-only { display: none !important; }
 
-      /* Search on Right */
-      .absolute-top-right {
+       .absolute-top-right {
         position: absolute; top: 16px; right: 16px; width: 380px; z-index: 50;
       }
 
@@ -277,16 +270,15 @@
     <div class="marker-overlay">
       <div id="center-marker" class="center-marker"></div>
     </div>
-    <div class="brand">PokeMaps Pro</div>
+    <div class="brand">PokeMaps!</div>
   </div>
 
   <div class="ui-layer">
 
     <div class="desktop-only absolute-top-right">
       <div class="gm-search-box">
-        <div class="brand-text">PokeMaps</div>
-        <div class="search-divider"></div>
-        <input type="text" id="d-search" class="search-input" placeholder="Search Google Maps..." autocomplete="off">
+         <div class="search-divider"></div>
+        <input type="text" id="d-search" class="search-input" placeholder="Search Poke Maps..." autocomplete="off">
         <button class="search-icon-btn"><svg class="icon"><use href="#icon-search"/></svg></button>
       </div>
       <ul id="d-suggestions" class="suggestions"></ul>
