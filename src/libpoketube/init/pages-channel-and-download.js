@@ -214,198 +214,200 @@ function channelurlfixer(text) {
   return updatedDescription;
 }
 
+app.get("/channel/", async (req, res) => {
+  const { fetch } = await import("undici");
+  var media_proxy = config.media_proxy;
 
-  app.get("/channel/", async (req, res) => {
-    const { fetch } = await import("undici");
-       var media_proxy = config.media_proxy;
+  if (req.useragent.source.includes("Pardus")) {
+    media_proxy = "https://media-proxy.ashley0143.xyz";
+  }
 
-      if (req.useragent.source.includes("Pardus")) {
-        var media_proxy = "https://media-proxy.ashley0143.xyz";
+  var ID = req.query.id;
+
+  if (!ID) {
+    return res.redirect("/search");
+  }
+
+  if (ID.endsWith("@youtube.com")) {
+    ID = ID.slice(0, -"@youtube.com".length);
+  }
+
+  if (ID.endsWith("@poketube.fun")) {
+    ID = ID.slice(0, -"@poketube.fun".length);
+  }
+
+  const tab = req.query.tab;
+  const cache = {};
+
+  async function fetchChannelPublishedJSON(id) {
+    const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`;
+    const res = await fetch(url, {
+      headers: {
+        accept: "application/atom+xml"
       }
+    });
 
-      var ID = req.query.id;
+    if (res.status === 404) return null;
+    if (!res.ok) console.log(`HTTP ${res.status} for ${url}`);
 
-      if (ID.endsWith("@youtube.com")) {
-        ID = ID.slice(0, -"@youtube.com".length);
-      }
+    const xml = await res.text();
+    const match = xml.match(/<feed[\s\S]*?<published>([^<]+)<\/published>/i);
+    if (!match) throw new Error("feed <published> not found");
 
-      if (ID.endsWith("@poketube.fun")) {
-        ID = ID.slice(0, -"@poketube.fun".length);
-      }
+    const iso = match[1].trim();
+    const date = new Date(iso);
 
-      const tab = req.query.tab;
-      const cache = {};
-      
-async function fetchChannelPublishedJSON(id) {
-  const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`;
-  const res = await fetch(url, { headers: { accept: "application/atom+xml" } });
-  
-   if (res.status === 404) return null;
-   if (!res.ok) console.log(`HTTP ${res.status} for ${url}`);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`invalid date: ${iso}`);
+    }
 
-  const xml = await res.text();
-  const match = xml.match(/<feed[\s\S]*?<published>([^<]+)<\/published>/i);
-  if (!match) throw new Error("feed <published> not found");
+    const published = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC"
+    }).format(date);
 
-  const iso = match[1].trim();
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) throw new Error(`invalid date: ${iso}`);
+    return {
+      ID: id,
+      published
+    };
+  }
 
-  const published = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC"
-  }).format(date);
+  const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
 
-  return { ID: id, published };
-}
+  const continuation = req.query.continuation
+    ? `&continuation=${req.query.continuation}`
+    : "";
+  const continuationl = req.query.continuationl
+    ? `&continuation=${req.query.continuationl}`
+    : "";
+  const continuations = req.query.continuations
+    ? `&continuation=${req.query.continuations}`
+    : "";
+  const sort_by = req.query.sort_by || "newest";
 
-const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
-
-      const continuation = req.query.continuation
-        ? `&continuation=${req.query.continuation}`
-        : "";
-      const continuationl = req.query.continuationl
-        ? `&continuation=${req.query.continuationl}`
-        : "";
-      const continuations = req.query.continuations
-        ? `&continuation=${req.query.continuations}`
-        : "";
-      const sort_by = req.query.sort_by || "newest";
-
-      const getChannelData = async (url) => {
-        try {
-          return await fetch(url, {
-            headers: {
-              'User-Agent': config.useragent,
-            },
-          })
-            .then((res) => res.text())
-            .then((txt) => getJson(txt));
-        } catch (error) {
-          return null;
+  const getChannelData = async (url) => {
+    try {
+      return await fetch(url, {
+        headers: {
+          "User-Agent": config.useragent
         }
-      };
+      })
+        .then((res) => res.text())
+        .then((txt) => getJson(txt));
+    } catch (error) {
+      return null;
+    }
+  };
 
-      const apiUrl = config.invapi + "/channels/";
-      const channelUrl = `${apiUrl}${ID}/${atob(
-        ChannelTabs.videos
-      )}?sort_by=${sort_by}${continuation}&h=yeahyeahy`;
+  const apiUrl = config.invapi + "/channels/";
+  const channelUrl = `${apiUrl}${ID}/${atob(ChannelTabs.videos)}?sort_by=${sort_by}${continuation}&h=${btoa(ChannelTabs.community)}`;
+  const shortsUrl = `${apiUrl}${ID}/${atob(ChannelTabs.shorts)}?sort_by=${sort_by}${continuation}&h=${btoa(ChannelTabs.community)}`;
+  const streamUrl = `${apiUrl}${ID}/${atob(ChannelTabs.streams)}?sort_by=${sort_by}${continuation}&h=${btoa(ChannelTabs.community)}`;
+  const communityUrl = `${apiUrl}${ID}/${atob(ChannelTabs.community)}?hl=en-US&h=${ChannelTabs.community}`;
+  const PlaylistUrl = `${apiUrl}${ID}/${atob(ChannelTabs.playlist)}?hl=en-US&h=${btoa(ChannelTabs.community)}`;
+  const releasesUrl = `${apiUrl}${ID}/releases?hl=en-US&h=${btoa(ChannelTabs.community)}`;
+  const channelINVUrl = `${apiUrl}${ID}/?h=${btoa(ChannelTabs.community)}`;
 
-      const shortsUrl = `${apiUrl}${ID}/${atob(
-        ChannelTabs.shorts
-      )}?sort_by=${sort_by}${continuation}&h=yeah`;
+  const pronoun = "no pronouns :c";
 
-      const streamUrl = `${apiUrl}${ID}/${atob(
-        ChannelTabs.streams
-      )}?sort_by=${sort_by}${continuation}&h=yee`;
+  var [tj, shorts, playlist, released, stream, c, cinv] = await Promise.all([
+    getChannelData(channelUrl),
+    getChannelData(shortsUrl),
+    getChannelData(PlaylistUrl),
+    getChannelData(releasesUrl),
+    getChannelData(streamUrl),
+    getChannelData(communityUrl),
+    getChannelData(channelINVUrl)
+  ]);
 
-      const communityUrl = `${apiUrl}${ID}/${atob(
-        ChannelTabs.community
-      )}?hl=en-US&h=ye`;
+  var bannedchannels = "";
+  var bypassQuery = "";
 
-      const PlaylistUrl = `${apiUrl}${ID}/${atob(
-        ChannelTabs.playlist
-      )}?hl=en-US&h=ye`;
+  var bypassExists = req.query.bypass === bypassQuery;
+  var tabExists = "tab" in req.query;
+  var continuationExists = "continuation" in req.query;
 
-   const releasesUrl = `${apiUrl}${ID}/releases?hl=en-US&h=y`;
+  if (
+    Array.isArray(bannedchannels) &&
+    bannedchannels.some((channel) => channel === ID) &&
+    !bypassExists &&
+    !tabExists &&
+    !continuationExists
+  ) {
+    cinv = {
+      error: `this channel may include disinformation. If you still wanna view content <a href="/channel?id=${ID}&bypass=${bypassQuery}">click here</a> to bypass this restriction.`
+    };
+  }
 
-      const channelINVUrl = `${apiUrl}${ID}/?h=ye`;
+  function getThumbnailUrl(video) {
+    const maxresDefaultThumbnail = video.videoThumbnails.find(
+      (thumbnail) => thumbnail.quality === "maxresdefault"
+    );
 
-      const pronoun = "no pronouns :c";
+    if (maxresDefaultThumbnail) {
+      return `https://vid.puffyan.us/vi/${video.videoId}/maxresdefault.jpg`;
+    }
 
-      
+    return `https://vid.puffyan.us/vi/${video.videoId}/hqdefault.jpg`;
+  }
 
-      var [tj, shorts, playlist, released, stream, c, cinv] = await Promise.all([
-        getChannelData(channelUrl),
-        getChannelData(shortsUrl),
-        getChannelData(PlaylistUrl),
-        getChannelData(releasesUrl),
-        getChannelData(streamUrl),
-        getChannelData(communityUrl),
-        getChannelData(channelINVUrl),
-      ]);
+  cache[ID] = {
+    result: {
+      tj,
+      shorts,
+      stream,
+      c,
+      cinv,
+      released
+    },
+    timestamp: Date.now()
+  };
 
-      var bannedchannels = ["none"];
-      var bypassQuery = "cG9rZXR1YmVjaGFubmVsYnlwYXNzbG9scGVvcGxldGhpbmt0aGlzaXNjZW5zb3JzaGlwLTQ1OTBh";
+  if (cache[ID] && Date.now() - cache[ID].timestamp < 3600000) {
+    var { tj, shorts, stream, c } = cache[ID].result;
+  }
 
-      var bypassExists = req.query.bypass === bypassQuery;
-      var tabExists = 'tab' in req.query;
-      var continuationExists = 'continuation' in req.query;
+  const subscribers = convert(cinv?.subCount || 0);
 
-      if (bannedchannels.some(channel => channel === ID) && !bypassExists && !tabExists && !continuationExists) {
-        var cinv = {
-          error: `this channel may include disinformation. If you still wanna view content <a href="/channel?id=${ID}&bypass=${bypassQuery}">click here</a> to bypass this restriction.`
-        };
-      }
+  let ChannelFirstVideoObject = {
+    subCountText: "0",
+    authorVerified: false
+  };
 
-      function getThumbnailUrl(video) {
-        const maxresDefaultThumbnail = video.videoThumbnails.find(
-          (thumbnail) => thumbnail.quality === "maxresdefault"
-        );
-
-        if (maxresDefaultThumbnail) {
-          return `https://vid.puffyan.us/vi/${video.videoId}/maxresdefault.jpg`;
-        } else {
-          return `https://vid.puffyan.us/vi/${video.videoId}/hqdefault.jpg`;
-        }
-      }
-
-      cache[ID] = {
-        result: {
-          tj,
-          shorts,
-          stream,
-          c,
-          cinv,
-        released,
-        },
-        timestamp: Date.now(),
-      };
-
-      if (cache[ID] && Date.now() - cache[ID].timestamp < 3600000) {
-        var { tj, shorts, stream, c } = cache[ID].result;
-      }
-
-      const subscribers = convert(cinv?.subCount || 0);
- 
-      let ChannelFirstVideoObject = {
-        subCountText: "0",
-        authorVerified: false,
-      };
-
-      renderTemplate(res, req, "channel.ejs", {
-        ID,
-        tab,
-        shorts,
-        firstVideo: ChannelFirstVideoObject,
-        j: "",
-        dnoreplace:"",
-        sort: sort_by,
-        channelurlfixer,
-        stream,
-        tj,
-        c,
-        createdAccountGetDate,
-        cinv,
-        embedchannelsubsfeed:req.query.embedchannelsubsfeed,
-        convert,
-        turntomins,
-        pronoun,
-        media_proxy_url: media_proxy,
-        getThumbnailUrl,
-        continuation,
-        released,
-        wiki: "",
-        getFirstLine,
-        isMobile: req.useragent.isMobile,
-        about:"",
-        playlist,
-        subs: typeof subscribers === "string"
-          ? subscribers.replace("subscribers", "")
-          : "None",
-       });
- 
+  renderTemplate(res, req, "channel.ejs", {
+    ID,
+    tab,
+    shorts,
+    firstVideo: ChannelFirstVideoObject,
+    j: "",
+    dnoreplace: "",
+    sort: sort_by,
+    channelurlfixer,
+    stream,
+    tj,
+    c,
+    createdAccountGetDate,
+    cinv,
+    embedchannelsubsfeed: req.query.embedchannelsubsfeed,
+    convert,
+    turntomins,
+    pronoun,
+    media_proxy_url: media_proxy,
+    getThumbnailUrl,
+    continuation,
+    released,
+    wiki: "",
+    getFirstLine,
+    isMobile: req.useragent.isMobile,
+    about: "",
+    playlist,
+    subs:
+      typeof subscribers === "string"
+        ? subscribers.replace("subscribers", "")
+        : "None"
   });
+});
+  
 };
