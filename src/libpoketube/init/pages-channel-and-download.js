@@ -36,7 +36,7 @@ function getJson(str) {
 }
 
 /**
- * Object representing base64-encoded protobuf values for channel tabs.
+ * Object representing base64-encoded values for channel tabs.
  * @typedef {Object} ChannelTabs
  * @property {string} community - Base64-encoded value for the community tab.
  * @property {string} shorts - Base64-encoded value for the shorts tab.
@@ -93,10 +93,7 @@ module.exports = function (app, config, renderTemplate) {
     const { fetch } = await import("undici");
 
     var media_proxy = config.media_proxy;
-
-    if (req.useragent.source.includes("Pardus")) {
-      var media_proxy = "https://media-proxy.ashley0143.xyz";
-    }
+ 
     var uaos = req.useragent.os;
     var IsOldWindows;
 
@@ -143,6 +140,7 @@ if (typeof query === 'string') {
     if (query && query.startsWith("Hey ChatGPT,") && query.length > 2) {
       res.redirect("https://chatgpt.com/?q=" + query + "- sent using pokeAI features");
     }
+    
 if (!query) {
 
   const invtrend = await fetch(`${config.invapi}/trending?type=Gaming`, {
@@ -329,7 +327,7 @@ const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
         getChannelData(channelINVUrl),
       ]);
 
-      var bannedchannels = [""];
+      var bannedchannels = ["none"];
       var bypassQuery = "cG9rZXR1YmVjaGFubmVsYnlwYXNzbG9scGVvcGxldGhpbmt0aGlzaXNjZW5zb3JzaGlwLTQ1OTBh";
 
       var bypassExists = req.query.bypass === bypassQuery;
