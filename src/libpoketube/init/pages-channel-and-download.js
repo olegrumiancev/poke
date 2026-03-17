@@ -168,7 +168,7 @@ if (!query) {
       if (req.query.from === 'hashtag') {
         searchUrl = `${config.invapi}/hashtag/${query}?hl=en-gb`;
       } else {
-        searchUrl = `${config.invapi}/search?q=${encodeURIComponent(query)}&page=${encodeURIComponent(continuation)}&date=${date}&type=${type}&duration=${duration}&sort=${sort}&hl=en-gb`;
+        searchUrl = `${config.invapi}/search?q=${encodeURIComponent(query)}&page=${encodeURIComponent(continuation)}&date=${date}&type=${type}&duration=${duration}&sort=${sort}&hl=en-gb&region=DE`;
       }
 
       const xmlData = await fetch(searchUrl, {
