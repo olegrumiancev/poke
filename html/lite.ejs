@@ -6,6 +6,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>410 Gone - PokeTube</title>
   <link rel="icon" href="/css/yt-ukraine.svg">
+  
+  <script>
+     const videoid = "<%= videoid %>";
+    const watchUrl = "/watch?v=" + videoid;
+    const redirectKey = "poke_auto_redirect_lite";
+
+     if (localStorage.getItem(redirectKey) === "true") {
+      window.location.replace(watchUrl);
+    }
+  </script>
+
   <style>
     :root {
       --bg: #f1f1f1;
@@ -132,6 +143,29 @@
       opacity: 0.9;
     }
 
+    /* Auto-redirect Checkbox */
+    .auto-redirect-wrapper {
+      margin-top: 25px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .auto-redirect-wrapper input[type="checkbox"] {
+      accent-color: var(--link);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      margin: 0;
+    }
+
+    .auto-redirect-wrapper label {
+      cursor: pointer;
+      user-select: none;
+    }
+
     /* Code Snippet styling */
     code {
       font-family: monospace;
@@ -184,6 +218,11 @@
             Return Home
           </a>
         </div>
+
+        <div class="auto-redirect-wrapper">
+          <input type="checkbox" id="auto-redirect-check">
+          <label for="auto-redirect-check">Always auto-redirect to main player</label>
+        </div>
       </div>
 
       <div class="image-side">
@@ -199,6 +238,20 @@
     </div>
   </main>
 
+  <script>
+     document.addEventListener("DOMContentLoaded", () => {
+      const checkbox = document.getElementById("auto-redirect-check");
+      
+      checkbox.addEventListener("change", (e) => {
+        if (e.target.checked) {
+           localStorage.setItem(redirectKey, "true");
+           window.location.replace(watchUrl);
+        } else {
+          localStorage.removeItem(redirectKey);
+        }
+      });
+    });
+  </script>
 </body>
 </html>
 <% } catch (error) { %>
