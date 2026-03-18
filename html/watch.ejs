@@ -1182,7 +1182,7 @@ Offical Discord Server! :3
   </div>
 </noscript>
    
-<video poster="<%- media_proxy_url %>/proxy?url=https://i.ytimg.com/vi/<%= VideoData.videoId %>/maxresdefault.jpg" class="video-js player video-ambient-container" id="video" style="border-radius: 16px; box-sizing: border-box; min-width: 100%; display: block;" preload>
+<video poster="<%- media_proxy_url %>/proxy?url=https://i.ytimg.com/vi/<%= VideoData.videoId %>/maxresdefault.jpg" class="video-js player video-ambient-container" id="video" crossorigin="anonymous" style="border-radius: 16px; box-sizing: border-box; min-width: 100%; display: block;" preload>
   <% if (isvidious) { %>
     <% if (!qua) { %>
       <% if (hasHD) { 
@@ -1191,7 +1191,7 @@ Offical Discord Server! :3
           if (format.itag == '302') hdItag = '302';
         });
       %>
-        <source src="<%=u%>/companion/latest_version?id=<%=VideoData.videoId%>&itag=<%=hdItag%>&local=true" type="video/mp4" label="hd720" selected="true">
+        <source src="<%=u%>/companion/latest_version?id=<%=VideoData.videoId%>&itag=<%=hdItag%>&local=true"  type="video/mp4" label="hd720" selected="true">
       <% } else { %>
         <source src="<%=u%>/companion/latest_version?id=<%=VideoData.videoId%>&itag=18&local=true" type="video/mp4" label="sd360" selected="true">
       <% } %>
