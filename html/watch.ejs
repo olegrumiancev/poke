@@ -2743,8 +2743,8 @@ const pauseHandler = (el) => {
   } catch {}
 };
 
-const urlParams = new URLSearchParams(window.location.search);
-const isMediumQuality = urlParams.get('quality') === 'medium';
+const ahfr = new URLSearchParams(window.location.search);
+const isMediumQuality = ahfr.get('quality') === 'medium';
 
 if (!isMediumQuality) {
   pauseHandler(AMvideo);
