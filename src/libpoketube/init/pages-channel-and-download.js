@@ -240,37 +240,11 @@ app.get("/channel/", async (req, res) => {
   const cache = {};
 
   async function fetchChannelPublishedJSON(id) {
-    const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`;
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/atom+xml"
-      }
-    });
 
-    if (res.status === 404) return null;
-    if (!res.ok) console.log(`HTTP ${res.status} for ${url}`);
-
-    const xml = await res.text();
-    const match = xml.match(/<feed[\s\S]*?<published>([^<]+)<\/published>/i);
-    if (!match) throw new Error("feed <published> not found");
-
-    const iso = match[1].trim();
-    const date = new Date(iso);
-
-    if (Number.isNaN(date.getTime())) {
-      throw new Error(`invalid date: ${iso}`);
-    }
-
-    const published = new Intl.DateTimeFormat("en-GB", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC"
-    }).format(date);
 
     return {
-      ID: id,
-      published
+      ID: "",
+      published:"",
     };
   }
 
