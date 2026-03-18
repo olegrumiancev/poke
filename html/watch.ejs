@@ -2643,7 +2643,7 @@ document.addEventListener('DOMContentLoaded', checkTheaterMode);
                <% if(!IsOldWindows) { %>
 
 <script>
- const AMvideo = document.getElementById("video");
+const AMvideo = document.getElementById("video");
 const canvas1 = document.getElementById("ambient-canvas-1");
 const canvas2 = document.getElementById("ambient-canvas-2");
 
@@ -2731,10 +2731,7 @@ window.addEventListener("load", () => { pageFullyLoaded = true; }, { once: true 
 
 const pauseHandler = (el) => {
   try {
-    el.addEventListener("play", () => {
-      if (!pageFullyLoaded) try { el.pause(); } catch {}
-    }, { passive: true });
-    
+     
     const origPause = el.pause.bind(el);
     el.pause = function () {
       if (isPlayPending) return;
@@ -2743,9 +2740,10 @@ const pauseHandler = (el) => {
   } catch {}
 };
 
-const ahfr = new URLSearchParams(window.location.search);
-const isMediumQuality = ahfr.get('quality') === 'medium';
+ const afaf = new URLSearchParams(window.location.search);
+const isMediumQuality = afaf.get('quality') === 'medium';
 
+// Only apply the pauseHandler if quality is NOT medium
 if (!isMediumQuality) {
   pauseHandler(AMvideo);
   if (AMaudio) pauseHandler(AMaudio);
@@ -2754,26 +2752,23 @@ if (!isMediumQuality) {
 const forcePlay = async () => {
   if (!pageFullyLoaded || isPlayPending) return;
   isPlayPending = true;
-  AMvideo.currentTime = 0;
-  if (AMaudio) AMaudio.currentTime = 0;
+ 
+  if (AMvideo.currentTime < 0.5) {
+      AMvideo.currentTime = 0;
+      if (AMaudio) AMaudio.currentTime = 0;
+  }
 
   try {
     const promises = [AMvideo.play()];
     if (AMaudio) promises.push(AMaudio.play());
     await Promise.all(promises);
-
-    if (AMvideo.currentTime > 0.5) {
-      AMvideo.currentTime = 0;
-      if (AMaudio) AMaudio.currentTime = 0;
-    }
   } catch (e) {
   } finally {
     setTimeout(() => { isPlayPending = false; }, 50);
   }
 };
 
-window.addEventListener("load", forcePlay, { once: true });
-
+ 
 const handleFullscreen = () => {
   canvas1.style.display = (document.fullscreenElement || !ambientEnabled) ? "none" : "block";
 };
