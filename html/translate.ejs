@@ -665,8 +665,7 @@
             textareas: document.querySelectorAll('textarea')
         };
 
-        // State Tracking (Pulling initial state from the native selects)
-        let state = {
+         let state = {
             currentFrom: DOM.nativeFrom.value,
             currentTo: DOM.nativeTo.value,
             recentFrom: [],
@@ -871,7 +870,7 @@
             }
         };
 
-        const debouncedTranslate = debounce(fetchTranslation, 300);
+        const debouncedTranslate = debounce(fetchTranslation, 100);
         DOM.input.addEventListener('input', debouncedTranslate);
 
         // Run Setup
