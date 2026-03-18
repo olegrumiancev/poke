@@ -2743,8 +2743,13 @@ const pauseHandler = (el) => {
   } catch {}
 };
 
-pauseHandler(AMvideo);
-if (AMaudio) pauseHandler(AMaudio);
+const urlParams = new URLSearchParams(window.location.search);
+const isMediumQuality = urlParams.get('quality') === 'medium';
+
+if (!isMediumQuality) {
+  pauseHandler(AMvideo);
+  if (AMaudio) pauseHandler(AMaudio);
+}
 
 const forcePlay = async () => {
   if (!pageFullyLoaded || isPlayPending) return;
