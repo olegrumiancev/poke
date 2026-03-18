@@ -3947,6 +3947,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (!coupledMode) {
+      // FIX: If user explicitly paused, playTogether must NOT restart video
+      if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
+        if (!getVideoPaused()) execProgrammaticVideoPause();
+        state.intendedPlaying = false;
+        updateMediaSessionPlaybackState();
+        return;
+      }
       if (getVideoPaused()) {
         try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
       }
@@ -4683,10 +4690,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (!coupledMode) {
-      // If audio element exists but has no source (quality=medium), keep it permanently silent.
-      // Browsers can spontaneously resume or fire events on audio elements in the DOM.
+      // Keep audio silent in non-coupled mode
       if (audio && !audio.paused) {
         try { audio.muted = true; audio.volume = 0; audio.pause(); } catch {}
+      }
+      // FIX: MQM enforcement — if user paused, force video paused and stop sync
+      if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
+        if (!getVideoPaused()) execProgrammaticVideoPause();
+        state.intendedPlaying = false;
+        scheduleSync();
+        return;
       }
       // Non-coupled: if intendedPlaying but video somehow stopped, restart it.
       // Guards: don't restart during user-initiated pauses, background transitions,
@@ -5057,6 +5070,14 @@ document.addEventListener("DOMContentLoaded", () => {
       // ── ANTI-LOOP ENFORCEMENT ──────────────────────────────────────────────
       try { if (videoEl.loop) { videoEl.loop = false; videoEl.removeAttribute("loop"); } } catch {}
       try { if (audio && audio.loop) { audio.loop = false; audio.removeAttribute("loop"); } } catch {}
+
+      // ── NON-COUPLED MQM ENFORCEMENT ───────────────────────────────────────────
+      // If user paused in non-coupled mode, ensure video stays paused every heartbeat.
+      // This catches any async path that restarted video between heartbeat ticks.
+      if (!coupledMode && MediumQualityManager.intentPaused && state.firstPlayCommitted) {
+        if (!getVideoPaused()) { execProgrammaticVideoPause(); }
+        state.intendedPlaying = false;
+      }
 
       // ── BPM stable-audio tracking ───────────────────────────────────────────
       // Feed audio play state into BackgroundPlaybackManager every heartbeat tick.
@@ -5611,7 +5632,63 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch {}
     });
     video.on("play", () => {
-      // ── ABSOLUTE PRIORITY: user preset play intent ────────────────────────────
+      // ── NON-COUPLED FAST PATH ─────────────────────────────────────────────────
+      // In non-coupled mode (SD/medium), bypass ALL coupled-mode logic entirely.
+      // There is no audio to sync — we only track intendedPlaying and respect MQM.
+      if (!coupledMode) {
+        // User explicitly paused via MQM → reject this play event unconditionally
+        if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
+          execProgrammaticVideoPause();
+          return;
+        }
+        // User preset play intent (set on pointerdown) → accept
+        if (state.userPlayIntentPresetAt > 0 && (now() - state.userPlayIntentPresetAt) < 2000) {
+          state.userPlayIntentPresetAt = 0;
+          MediumQualityManager.markUserPlayed();
+          state.intendedPlaying = true;
+          state.bufferHoldIntendedPlaying = true;
+          state.playSessionId++;
+          if (!state.firstPlayCommitted) {
+            state.firstPlayCommitted = true;
+            state.startupKickDone = true;
+            state.startupPhase = false;
+          }
+          clearMediaSessionForcedPause();
+          markMediaAction("play");
+          forceUnmuteForPlaybackIfAllowed();
+          updateMediaSessionPlaybackState();
+          return;
+        }
+        // Our own programmatic play (bg resume, stall recovery) → accept silently
+        if (state.isProgrammaticVideoPlay) {
+          if (!state.intendedPlaying && state.firstPlayCommitted) {
+            // Programmatic play but user paused → override it
+            execProgrammaticVideoPause();
+          }
+          return;
+        }
+        // Startup autoplay (before user has ever interacted) → accept
+        if (!state.firstPlayCommitted && wantsStartupAutoplay() && pageLoadedForAutoplay()) {
+          state.intendedPlaying = true;
+          state.bufferHoldIntendedPlaying = true;
+          state.firstPlayCommitted = true;
+          state.startupKickDone = true;
+          state.startupPhase = false;
+          markMediaAction("play");
+          forceUnmuteForPlaybackIfAllowed();
+          updateMediaSessionPlaybackState();
+          return;
+        }
+        // intendedPlaying already true → accept (expected, e.g. bg resume)
+        if (state.intendedPlaying) {
+          updateMediaSessionPlaybackState();
+          return;
+        }
+        // Anything else: unexpected play while user intended pause → reject
+        execProgrammaticVideoPause();
+        return;
+      }
+      // ── COUPLED MODE: ABSOLUTE PRIORITY: user preset play intent ──────────────
       // If user clicked within 2000ms and video was paused at click time, this
       // is definitively user-initiated play. Bypass ALL transition/grace guards.
       // Fixes quality=medium and any mode where isVisibilityTransitionActive()=true.
@@ -5737,7 +5814,51 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     video.on("pause", () => {
-      // ── ABSOLUTE PRIORITY: user preset pause intent ──────────────────────────
+      // ── NON-COUPLED FAST PATH ─────────────────────────────────────────────────
+      // In non-coupled mode (SD/medium), bypass ALL coupled-mode guards.
+      // Simple logic: user pause → honour. Spurious pause → counter-play or ignore.
+      if (!coupledMode) {
+        // 1. User preset pause intent → honour immediately
+        if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+          state.userPauseIntentPresetAt = 0;
+          MediumQualityManager.markUserPaused();
+          state.intendedPlaying = false;
+          state.bufferHoldIntendedPlaying = false;
+          state.playSessionId++;
+          state.videoWaiting = false;
+          state.userGesturePauseIntent = true;
+          setTimeout(() => { state.userGesturePauseIntent = false; }, 2000);
+          updateMediaSessionPlaybackState();
+          pauseHard();
+          return;
+        }
+        // 2. Our own programmatic pause → accept silently
+        if (state.isProgrammaticVideoPause) return;
+        // 3. User already in paused-intent state → accept (expected)
+        if (MediumQualityManager.intentPaused || !state.intendedPlaying) return;
+        // 4. intendedPlaying=true but browser paused us → counter-play if suppressed
+        if (inBgReturnGrace() || BringBackToTabManager.isLocked() ||
+            VisibilityGuard.shouldSuppress() || isVisibilityTransitionActive() ||
+            isAltTabTransitionActive()) {
+          VisibilityGuard.onPlayCalled();
+          const _vn = getVideoNode();
+          if (_vn && typeof _vn.play === "function") _vn.play().catch(() => {});
+          return;
+        }
+        // 5. Page hidden → flag for resume on return
+        if (document.visibilityState === "hidden") {
+          if (platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        // 6. Genuine foreground pause we can't explain → honour it
+        state.intendedPlaying = false;
+        state.bufferHoldIntendedPlaying = false;
+        state.playSessionId++;
+        updateMediaSessionPlaybackState();
+        pauseHard();
+        return;
+      }
+      // ── COUPLED MODE: ABSOLUTE PRIORITY: user preset pause intent ────────────
       // If user clicked within 2000ms and video was playing at click time, this
       // is definitively user-initiated pause. Bypass EVERY other guard.
       if (!state.isProgrammaticVideoPause && state.userPauseIntentPresetAt > 0 &&
@@ -5991,7 +6112,37 @@ document.addEventListener("DOMContentLoaded", () => {
       scheduleSync(0);
     });
     video.on("playing", () => {
-      // ── UltraStabilizer: notify video playing ────────────────────────────
+      // ── NON-COUPLED FAST PATH ─────────────────────────────────────────────────
+      if (!coupledMode) {
+        try { UltraStabilizer.onVideoPlaying(); } catch {}
+        // If user explicitly paused, this "playing" event is stale → kill it
+        if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
+          execProgrammaticVideoPause();
+          return;
+        }
+        if (!state.intendedPlaying && state.firstPlayCommitted && state.lastUserActionTime > 0) {
+          execProgrammaticVideoPause();
+          return;
+        }
+        // Commit first play
+        if (!state.firstPlayCommitted) {
+          if (pageLoadedForAutoplay() || (state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000)) {
+            state.firstPlayCommitted = true;
+            state.startupKickDone = true;
+            state.startupPhase = false;
+          } else {
+            execProgrammaticVideoPause();
+            return;
+          }
+        }
+        state.intendedPlaying = true;
+        state.videoWaiting = false;
+        state.videoStallSince = 0;
+        updateLastKnownGoodVT();
+        updateMediaSessionPlaybackState();
+        return;
+      }
+      // ── COUPLED MODE: UltraStabilizer: notify video playing ──────────────
       try { UltraStabilizer.onVideoPlaying(); } catch {}
       // Only clear videoWaiting when the browser truly has enough data (readyState >= 3).
       // playing can fire with readyState=2 during thin-buffer situations; clearing here
@@ -6779,8 +6930,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // One or both paused — perform full catch-up
         seamlessBgCatchUp().catch(() => {});
       } else {
-        // Non-coupled: just ensure video is playing
-        if (getVideoPaused() && !userPauseLockActive()) {
+        // Non-coupled: just ensure video is playing (but respect MQM pause)
+        if (getVideoPaused() && !userPauseLockActive() &&
+            !MediumQualityManager.intentPaused) {
           playTogether().catch(() => {});
         } else {
           scheduleSync(0);
