@@ -4698,8 +4698,9 @@ document.addEventListener("DOMContentLoaded", () => {
           !MediumQualityManager.shouldBlockAutoResume() &&
           state.userPauseIntentPresetAt === 0 &&
           !state.userGesturePauseIntent) {
-        // FIX: Additional guard — don't auto-resume if user recently gesture-paused
-        if ((now() - state.lastUserActionTime) > 2000 || !MediumQualityManager.intentPaused) {
+        // FIX: Triple-guard for non-coupled auto-resume
+        if (!MediumQualityManager.intentPaused &&
+            (now() - state.lastUserActionTime) > 2000) {
           try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
         }
       }
@@ -5107,6 +5108,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (bothPaused && (nowTs - state.lastUserActionTime) > 3000 &&
             !MediumQualityManager.shouldBlockAutoResume() &&
+            !MediumQualityManager.intentPaused &&
             !state.userGesturePauseIntent) {
           state.consistencyCheckPendingPlayUntil = nowTs + 2000;
           playTogether().catch(() => {});
@@ -5140,7 +5142,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!coupledMode && state.intendedPlaying && isHiddenBackground() &&
           getVideoPaused() && !state.seeking && !state.bgResumeInFlight &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !MediumQualityManager.shouldBlockAutoResume()) {
+          !MediumQualityManager.shouldBlockAutoResume() &&
+          !MediumQualityManager.intentPaused) {
         try {
           VisibilityGuard.onPlayCalled();
           const vn = getVideoNode();
@@ -5234,7 +5237,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // Runs every heartbeat to detect and correct state mismatches between
       // intended play state and actual video play state. Rate-limited internally.
       if (state.firstPlayCommitted && !state.startupPhase &&
-          !MediumQualityManager.shouldBlockAutoResume()) {
+          !MediumQualityManager.shouldBlockAutoResume() &&
+          !MediumQualityManager.intentPaused) {
         PlaybackStabilityManager.check(
           state,
           getVideoPaused,
@@ -5430,6 +5434,11 @@ document.addEventListener("DOMContentLoaded", () => {
             // path can re-enable it before the pause event fires.
             state.intendedPlaying = false;
             state.bufferHoldIntendedPlaying = false;
+            // FIX: Also mark MQM immediately so shouldBlockAutoResume()=true
+            // BEFORE any async "play"/"playing" events can check it.
+            MediumQualityManager.markUserPaused();
+            state.userGesturePauseIntent = true;
+            setTimeout(() => { state.userGesturePauseIntent = false; }, 2000);
           }
         }
         return;
@@ -5640,11 +5649,33 @@ document.addEventListener("DOMContentLoaded", () => {
       const isUserAction = (now() - state.lastUserActionTime) < 1500;
 
       if (isUserAction || userPlayIntentActive() || wantsStartupAutoplay()) {
-        // PAGE-LOAD GATE: if this is pure autoplay (no user gesture, no user intent)
-        // and the page hasn't finished loading yet, pause immediately and defer.
-        // window.load will call maybePrimeStartup/scheduleStartupAutoplayKick.
-        // User play actions (isUserAction / userPlayIntentActive) are never blocked.
+        // PAGE-LOAD GATE
         if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay()) {
+          execProgrammaticVideoPause();
+          return;
+        }
+
+        // ── FIX: SD/medium play/pause root cause ────────────────────────────────
+        // isUserAction is true after ANY pointer event — including PAUSE clicks.
+        // wantsStartupAutoplay() is always true (autoplay:true in config).
+        // Both paths reach here and set intendedPlaying=true, overriding user pause.
+        // Guard: if MQM says user explicitly paused, or intendedPlaying was already
+        // false and no explicit play-intent marker exists, this "play" event is
+        // spurious (buffering, preload, browser quirk). Pause immediately.
+        if (!coupledMode && MediumQualityManager.shouldBlockAutoResume()) {
+          execProgrammaticVideoPause();
+          return;
+        }
+        if (!coupledMode && !state.intendedPlaying && !userPlayIntentActive() &&
+            state.firstPlayCommitted) {
+          // intendedPlaying=false + no play intent = user paused. Don't override.
+          execProgrammaticVideoPause();
+          return;
+        }
+        // After first play committed, wantsStartupAutoplay() alone must not
+        // override a user pause. Only allow if there's actual user play intent.
+        if (state.firstPlayCommitted && !state.intendedPlaying &&
+            !isUserAction && !userPlayIntentActive()) {
           execProgrammaticVideoPause();
           return;
         }
@@ -5700,7 +5731,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!state.intendedPlaying) {
+      if (!state.intendedPlaying || (!coupledMode && MediumQualityManager.shouldBlockAutoResume())) {
         execProgrammaticVideoPause();
       }
     });
@@ -6010,8 +6041,10 @@ document.addEventListener("DOMContentLoaded", () => {
           // Before firstPlayCommitted, autoplay is legitimate. After it, paused=user's intent.
           (state.firstPlayCommitted && !state.intendedPlaying) ||
           // FIX: MQM guard — if MQM says user recently paused, always honour it.
-          // This prevents the "playing fires after pause" race in SD/medium quality.
-          MediumQualityManager.shouldBlockAutoResume();
+          MediumQualityManager.shouldBlockAutoResume() ||
+          // FIX: In non-coupled mode, intendedPlaying=false is ALWAYS authoritative
+          // after the user has interacted at least once (lastUserActionTime > 0).
+          (!coupledMode && !state.intendedPlaying && state.lastUserActionTime > 0);
 
         if (userExplicitlyPaused) {
           // User pause is authoritative — override autoplay
