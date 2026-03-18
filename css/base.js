@@ -5639,8 +5639,8 @@ try {
       } catch {}
     });
     video.on("play", () => {
-      // During seek-buffering, accept play events silently — buffer-wait owns resume
-      if (state.seekBuffering && state.intendedPlaying) return;
+      // During seeking or seek-buffering while user was playing, accept silently
+      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) return;
 
       if (!coupledMode) {
         if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
@@ -5811,8 +5811,8 @@ try {
     });
 
     video.on("pause", () => {
-      // During seek-buffering, ignore all pause events — buffer-wait owns resume
-      if (state.seekBuffering && state.intendedPlaying) return;
+      // During seeking or seek-buffering while user was playing, ignore pause events
+      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) return;
 
       if (!coupledMode) {
         if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
@@ -6087,8 +6087,7 @@ try {
         clearTimeout(state._stallAudioPauseTimer);
         state._stallAudioPauseTimer = null;
       }
-      // During seek-buffering, the buffer-wait owns resume — accept silently
-      if (state.seekBuffering && state.intendedPlaying) {
+      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) {
         state.videoWaiting = false;
         state.videoStallSince = 0;
         return;
@@ -6597,14 +6596,17 @@ try {
         }, SEEK_WATCHDOG_MS);
 
         if (coupledMode && audio) {
-          squelchAudioEvents(400);
-          try {
-            cancelActiveFade();
-            audio.volume = 0;
-            if (!audio.paused) audio.pause();
-          } catch {}
           if (isFinite(seekTime)) {
             safeSetAudioTime(seekTime);
+          }
+          // Only pause audio if user was NOT playing — preserve playback during seek
+          if (!state.intendedPlaying) {
+            squelchAudioEvents(400);
+            try {
+              cancelActiveFade();
+              audio.volume = 0;
+              if (!audio.paused) audio.pause();
+            } catch {}
           }
         }
 
