@@ -20,7 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
     controls: true,
     autoplay: true,
     preload: "auto",
-    errorDisplay: false
+    errorDisplay: true,
   });
   const qs = new URLSearchParams(window.location.search);
   const qua = qs.get("quality") || "";
