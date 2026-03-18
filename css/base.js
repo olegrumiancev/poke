@@ -756,7 +756,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let _lastUserPlayAt = 0;
     let _pauseSerial = 0;       // incremented on every user pause, used to detect stale resumes
 
-    const INTENT_WINDOW_MS = 4000; // intent stays "fresh" for 4s
+    const INTENT_WINDOW_MS = 120000; // FIX: 2min — effectively sticky until user plays again
 
     function markUserPaused() {
       if (!enabled) return;
@@ -2990,17 +2990,22 @@ document.addEventListener("DOMContentLoaded", () => {
           state.isProgrammaticAudioPlay = false;
         }
         softUnmuteAudio(120).catch(() => {});
-        // FIX: Safety net - if audio still paused 200ms later, force restart
+        // FIX: Multi-stage safety net for stuck audio after quiet seek
         const _qsSession = state.playSessionId;
-        setTimeout(() => {
-          if (_qsSession !== state.playSessionId || !state.intendedPlaying) return;
-          if (audio.paused && !getVideoPaused() && !state.seeking) {
+        [150, 400, 800].forEach(_qsDelay => {
+          setTimeout(() => {
+            if (_qsSession !== state.playSessionId || !state.intendedPlaying) return;
+            if (!audio.paused || getVideoPaused() || state.seeking) return;
+            if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
             state.isProgrammaticAudioPause = false;
             state.audioEventsSquelchedUntil = 0;
+            state.audioPauseUntil = 0;
+            const _vt = Number(video.currentTime()) || 0;
+            safeSetAudioTime(_vt);
             execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
             softUnmuteAudio(100).catch(() => {});
-          }
-        }, 200);
+          }, _qsDelay);
+        });
       }
     } catch {}
   }
@@ -3581,7 +3586,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     state.bgResumeInFlight = true;
-    state.bgCatchUpCooldownUntil = now() + 80; // FIX: reduced from 400ms for faster bg recovery
+    state.bgCatchUpCooldownUntil = now() + 50; // FIX: minimal cooldown for fastest bg recovery
 
     const mySession = state.playSessionId;
 
@@ -4363,15 +4368,19 @@ document.addEventListener("DOMContentLoaded", () => {
         state.strictBufferReason = "";
         state.strictBufferHoldFrames = 0;
         state.strictBufferHoldConfirmed = false;
+        state.audioPlayUntil = 0; // FIX: also clear audio play fence
+        state.startupAudioHoldUntil = 0; // FIX: clear startup hold
+        state.stateChangeCooldownUntil = 0; // FIX: clear cooldown
+        state.audioFadeCompleteUntil = 0; // FIX: clear fade wait
         cancelActiveFade();
         await ensureUnmutedIfNotUserMuted().catch(() => {});
         if (state.seekId === currentSeekId || !state.seeking) {
           await playTogether().catch(() => {});
         }
       }
-      // FIX: Post-seek audio guarantee with multiple retry windows
+      // FIX: Post-seek audio guarantee with aggressive retry windows
       const _seekGuaranteeSession = state.playSessionId;
-      [150, 400, 800, 1500].forEach(delay => {
+      [100, 250, 500, 900, 1500, 2500].forEach(delay => {
         setTimeout(() => {
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
@@ -4687,8 +4696,12 @@ document.addEventListener("DOMContentLoaded", () => {
           !mediaSessionForcedPauseActive() &&
           !BackgroundPlaybackManager.shouldSuppressAutoPause() &&
           !MediumQualityManager.shouldBlockAutoResume() &&
-          state.userPauseIntentPresetAt === 0) {
-        try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
+          state.userPauseIntentPresetAt === 0 &&
+          !state.userGesturePauseIntent) {
+        // FIX: Additional guard — don't auto-resume if user recently gesture-paused
+        if ((now() - state.lastUserActionTime) > 2000 || !MediumQualityManager.intentPaused) {
+          try { await Promise.resolve(execProgrammaticVideoPlay()); } catch {}
+        }
       }
       scheduleSync();
       return;
@@ -5092,14 +5105,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const aPaused = coupledMode ? (audio ? !!audio.paused : true) : false;
         const bothPaused = vPaused && (coupledMode ? aPaused : true);
 
-        if (bothPaused && (nowTs - state.lastUserActionTime) > 3000) {
+        if (bothPaused && (nowTs - state.lastUserActionTime) > 3000 &&
+            !MediumQualityManager.shouldBlockAutoResume() &&
+            !state.userGesturePauseIntent) {
           state.consistencyCheckPendingPlayUntil = nowTs + 2000;
           playTogether().catch(() => {});
         }
       }
 
-      // FIX: Enhanced background sync
-      if (coupledMode && state.intendedPlaying && isHiddenBackground() && !state.seeking) {
+      // FIX: Enhanced background sync with aggressive retry
+      if (state.intendedPlaying && isHiddenBackground() && !state.seeking) {
         const aPausedBg = audio ? !!audio.paused : true;
         const vPausedBg = getVideoPaused();
         if (!aPausedBg && vPausedBg && !state.bgSilentTimeSyncing) {
@@ -5124,8 +5139,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (!coupledMode && state.intendedPlaying && isHiddenBackground() &&
           getVideoPaused() && !state.seeking && !state.bgResumeInFlight &&
-          !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
-        try { const vn = getVideoNode(); if (vn) vn.play().catch(() => {}); } catch {}
+          !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
+          !MediumQualityManager.shouldBlockAutoResume()) {
+        try {
+          VisibilityGuard.onPlayCalled();
+          const vn = getVideoNode();
+          if (vn) vn.play().catch(() => {});
+        } catch {}
       }
 
       // Stuck buffer hold recovery: if strictBufferHold has been active for too long
@@ -5213,7 +5233,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // ── PlaybackStabilityManager check ──────────────────────────────────────
       // Runs every heartbeat to detect and correct state mismatches between
       // intended play state and actual video play state. Rate-limited internally.
-      if (state.firstPlayCommitted && !state.startupPhase) {
+      if (state.firstPlayCommitted && !state.startupPhase &&
+          !MediumQualityManager.shouldBlockAutoResume()) {
         PlaybackStabilityManager.check(
           state,
           getVideoPaused,
@@ -5403,8 +5424,13 @@ document.addEventListener("DOMContentLoaded", () => {
             // Video is paused → user wants to play
             state.intendedPlaying = true;
             state.userPlayUntil = now() + 600;
+          } else {
+            // FIX: Video is playing → user wants to pause
+            // Set intendedPlaying=false IMMEDIATELY on pointerdown so no async
+            // path can re-enable it before the pause event fires.
+            state.intendedPlaying = false;
+            state.bufferHoldIntendedPlaying = false;
           }
-          // (pause case is handled normally — the pause event fires AFTER video.pause())
         }
         return;
       }
@@ -5982,7 +6008,10 @@ document.addEventListener("DOMContentLoaded", () => {
           // KEY FIX: Once startup has completed, intendedPlaying=false means the user (or a
           // system event) explicitly paused. A stale "playing" event must NEVER override this.
           // Before firstPlayCommitted, autoplay is legitimate. After it, paused=user's intent.
-          (state.firstPlayCommitted && !state.intendedPlaying);
+          (state.firstPlayCommitted && !state.intendedPlaying) ||
+          // FIX: MQM guard — if MQM says user recently paused, always honour it.
+          // This prevents the "playing fires after pause" race in SD/medium quality.
+          MediumQualityManager.shouldBlockAutoResume();
 
         if (userExplicitlyPaused) {
           // User pause is authoritative — override autoplay
@@ -6422,6 +6451,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.audioPauseUntil = 0;
       state.audioPausedSince = 0;
       state.isProgrammaticAudioPause = false;
+      state.stateChangeCooldownUntil = 0;
+      state.audioFadeCompleteUntil = 0;
 
       // Safety watchdog: if seeked event never fires (slow network, rapid seeks),
       // force-finalize after SEEK_WATCHDOG_MS to prevent state.seeking staying true forever.
@@ -6603,7 +6634,25 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // ── FIX: Shot 1.5: 200ms intermediate ──────────────────────────────────
+    // ── Shot 1.25: 80ms quick-check ──────────────────────────────────────
+    setTimeout(() => {
+      if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+      if (!getVideoPaused()) {
+        BringBackToTabManager.onVideoConfirmedPlaying();
+        if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+          const vtEarly = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+          safeSetAudioTime(vtEarly);
+          execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
+        }
+        return;
+      }
+      // Quick retry
+      VisibilityGuard.onPlayCalled();
+      const vnE = getVideoNode();
+      if (vnE && typeof vnE.play === 'function') vnE.play().catch(() => {});
+    }, 80);
+
+    // ── Shot 1.5: 200ms intermediate ──────────────────────────────────────
     setTimeout(() => {
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
@@ -6705,8 +6754,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      // FIX: Enhanced retry guard with cooldown clearing
-      [400, 800, 1500].forEach(retryDelay => {
+      // FIX: Enhanced retry guard with cooldown clearing + audio sync
+      [300, 600, 1200, 2000].forEach(retryDelay => {
         setTimeout(() => {
           if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (!getVideoPaused()) {
