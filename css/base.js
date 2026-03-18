@@ -544,7 +544,9 @@ videoSyncRetryTs: 0,
 // consumed by play/pause handlers for bulletproof non-coupled/quality=medium support
 userPauseIntentPresetAt: 0,
 userPlayIntentPresetAt: 0,
-_stallAudioPauseTimer: null
+_stallAudioPauseTimer: null,
+seekBuffering: false,
+seekBufferResumeTimer: null
   };
 
 
@@ -2556,12 +2558,8 @@ _stallAudioPauseTimer: null
   }
 
   function incrementRapidPlayPause() {
-    // Don't count events during tab-return grace (spurious browser events expected)
-    // or while hidden (browser-throttled play/pause events are not user-initiated loops)
+    if (state.seekBuffering) return;
     if (inBgReturnGrace() || document.visibilityState === "hidden") return;
-    // Don't count events before the first committed play. During startup, multiple competing
-    // mechanisms (kick, forceAudioStartupPlay, retries) fire rapid play/pause events that are
-    // completely normal. Counting them triggers false loop-detection which kills autoplay.
     if (!state.firstPlayCommitted) return;
     const nowTs = now();
     if ((nowTs - state.rapidPlayPauseResetAt) > RAPID_PLAY_PAUSE_WINDOW_MS) {
@@ -2573,7 +2571,7 @@ _stallAudioPauseTimer: null
 
   // FIX: detectLoop no longer fires during seek/sync operations to prevent false positives
   function detectLoop() {
-    if (state.seeking || state.syncing || state.restarting) return false;
+    if (state.seeking || state.syncing || state.restarting || state.seekBuffering) return false;
     // Never fire loop detection before first committed play. The startup sequence g
     if (!state.firstPlayCommitted) return false;
     // Never fire loop detection during tab-return grace — spurious events are expected
@@ -3789,6 +3787,7 @@ try {
 
   function pauseHard() {
     state.userPauseIntentPresetAt = 0;
+    clearSeekBuffering();
     clearHiddenMediaSessionPlay();
     clearBgResumeRetryTimer();
     clearResumeAfterBufferTimer();
@@ -4178,6 +4177,108 @@ try {
     }
   }
 
+  function clearSeekBuffering() {
+    state.seekBuffering = false;
+    if (state.seekBufferResumeTimer) {
+      clearTimeout(state.seekBufferResumeTimer);
+      state.seekBufferResumeTimer = null;
+    }
+  }
+
+  function startSeekBufferWait(forCoupled) {
+    const wantedPlaying = state.seekWantedPlaying && state.intendedPlaying;
+    if (!wantedPlaying) return false;
+
+    const vNode = getVideoNode();
+    const vRS = Number(vNode?.readyState || 0);
+
+    // Also check buffered ranges at the seek position
+    const seekPos = Number(video.currentTime()) || 0;
+    let hasBufferAtPos = false;
+    try {
+      const buf = vNode.buffered;
+      for (let i = 0; i < buf.length; i++) {
+        if (buf.start(i) <= seekPos + 0.1 && buf.end(i) >= seekPos + 0.3) {
+          hasBufferAtPos = true;
+          break;
+        }
+      }
+    } catch {}
+
+    if (vRS >= HAVE_FUTURE_DATA && hasBufferAtPos) return false; // already buffered
+
+    // Enter seek-buffering state
+    state.seekBuffering = true;
+    state.strictBufferHold = true;
+    if (!state.bufferHoldSince) state.bufferHoldSince = now();
+    state.strictBufferReason = forCoupled ? "seek-buffer" : "seek-buffer-nc";
+    state.bufferHoldIntendedPlaying = true;
+    state.loopPreventionCooldownUntil = now() + 8000;
+
+    let done = false;
+    const resume = () => {
+      if (done) return;
+      done = true;
+      try { vNode.removeEventListener("canplay", onReady); } catch {}
+      try { vNode.removeEventListener("canplaythrough", onReady); } catch {}
+      try { vNode.removeEventListener("playing", onReady); } catch {}
+      try { clearTimeout(fallbackTimer); } catch {}
+      try { clearInterval(pollTimer); } catch {}
+      state.seekBuffering = false;
+      state.seekBufferResumeTimer = null;
+      state.strictBufferHold = false;
+      state.bufferHoldSince = 0;
+      state.strictBufferReason = "";
+      state.strictBufferHoldFrames = 0;
+      state.strictBufferHoldConfirmed = false;
+      if (!state.intendedPlaying || state.restarting) return;
+      if (forCoupled) {
+        state.seekResumeInFlight = true;
+        state.videoWaiting = false;
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+        state.stallAudioResumeHoldUntil = 0;
+        state.audioPauseUntil = 0;
+        state.audioEventsSquelchedUntil = 0;
+        state.isProgrammaticAudioPause = false;
+        playTogether().catch(() => {}).finally(() => { state.seekResumeInFlight = false; });
+      } else {
+        state.isProgrammaticVideoPlay = true;
+        try { video.play(); } catch {}
+        try { videoEl.play(); } catch {}
+        try {
+          const inner = video?.el?.()?.querySelector?.("video");
+          if (inner) inner.play().catch(() => {});
+        } catch {}
+        setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
+        updateMediaSessionPlaybackState();
+      }
+    };
+    const onReady = () => {
+      const rs = Number(vNode?.readyState || 0);
+      if (rs >= HAVE_FUTURE_DATA) resume();
+    };
+    try { vNode.addEventListener("canplay", onReady, { passive: true }); } catch {}
+    try { vNode.addEventListener("canplaythrough", onReady, { passive: true }); } catch {}
+    try { vNode.addEventListener("playing", onReady, { passive: true }); } catch {}
+    const pollTimer = setInterval(() => {
+      if (done) { clearInterval(pollTimer); return; }
+      const rs = Number(vNode?.readyState || 0);
+      let buffered = false;
+      try {
+        const pos = Number(video.currentTime()) || 0;
+        const buf = vNode.buffered;
+        for (let i = 0; i < buf.length; i++) {
+          if (buf.start(i) <= pos + 0.1 && buf.end(i) >= pos + 0.2) { buffered = true; break; }
+        }
+      } catch {}
+      if (rs >= HAVE_FUTURE_DATA || buffered) resume();
+    }, 300);
+    const fallbackTimer = setTimeout(resume, 10000);
+    state.seekBufferResumeTimer = fallbackTimer;
+    return true;
+  }
+
   async function finalizeSeekSync(currentSeekId) {
     if (!coupledMode) {
       if (state.seekId !== currentSeekId) return;
@@ -4188,57 +4289,16 @@ try {
       state.seekCooldownUntil = now() + 600;
       setFastSync(2200);
 
-      // FIX: If user was playing before seek, wait for buffer before resuming.
-      // Without this, video resumes into a thin buffer and immediately stalls.
       if (state.seekWantedPlaying && state.intendedPlaying) {
-        const vNode = getVideoNode();
-        const vRS = Number(vNode?.readyState || 0);
-        if (vRS < HAVE_FUTURE_DATA) {
-          // Not enough data buffered yet — hold and wait for canplay
-          state.strictBufferHold = true;
-          if (!state.bufferHoldSince) state.bufferHoldSince = now();
-          state.strictBufferReason = "seek-buffer-nc";
-          state.bufferHoldIntendedPlaying = true;
-          execProgrammaticVideoPause();
-          // Listen for canplay/canplaythrough to resume
-          let ncBufferDone = false;
-          const ncBufferTimeout = 10000;
-          const ncResume = () => {
-            if (ncBufferDone) return;
-            ncBufferDone = true;
-            try { vNode.removeEventListener("canplay", ncOnReady); } catch {}
-            try { vNode.removeEventListener("canplaythrough", ncOnReady); } catch {}
-            try { clearTimeout(ncFallback); } catch {}
-            if (!state.intendedPlaying || state.restarting || state.seeking) return;
-            state.strictBufferHold = false; state.bufferHoldSince = 0;
-            state.strictBufferReason = "";
-            state.strictBufferHoldFrames = 0;
-            state.strictBufferHoldConfirmed = false;
-            execProgrammaticVideoPlay();
-            updateMediaSessionPlaybackState();
-          };
-          const ncOnReady = () => {
-            const rs = Number(vNode?.readyState || 0);
-            if (rs >= HAVE_FUTURE_DATA) ncResume();
-          };
-          try { vNode.addEventListener("canplay", ncOnReady, { passive: true }); } catch {}
-          try { vNode.addEventListener("canplaythrough", ncOnReady, { passive: true }); } catch {}
-          const ncFallback = setTimeout(() => {
-            // Timeout: resume anyway if readyState improved at all, or force-resume
-            ncResume();
-          }, ncBufferTimeout);
-          // Also poll every 500ms in case events don't fire
-          const ncPoll = setInterval(() => {
-            if (ncBufferDone) { clearInterval(ncPoll); return; }
-            const rs2 = Number(vNode?.readyState || 0);
-            if (rs2 >= HAVE_FUTURE_DATA) { clearInterval(ncPoll); ncResume(); }
-          }, 500);
-          return;
-        }
+        if (startSeekBufferWait(false)) return;
         // Buffer already sufficient — just resume
-        if (getVideoPaused()) execProgrammaticVideoPlay();
+        if (getVideoPaused()) {
+          state.isProgrammaticVideoPlay = true;
+          try { video.play(); } catch {}
+          try { videoEl.play(); } catch {}
+          setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
+        }
       }
-
       scheduleSync(0);
       return;
     }
@@ -4297,17 +4357,13 @@ try {
       const vtCheck = Number(video.currentTime());
       const alreadyReady = isFinite(vtCheck) && bothPlayableAt(vtCheck);
       if (!alreadyReady) {
-        state.strictBufferHold = true;
-        if (!state.bufferHoldSince) state.bufferHoldSince = now();
-        state.strictBufferReason = "seek-buffer";
-        state.bufferHoldIntendedPlaying = state.intendedPlaying;
-        armResumeAfterBuffer(10000);
         if (state.seekId === currentSeekId) {
           state.seeking = false;
           state.firstSeekDone = true;
           state.seekCompleted = true;
           state.seekCooldownUntil = now() + 600;
         }
+        startSeekBufferWait(true);
         return;
       }
     }
@@ -4683,6 +4739,7 @@ try {
       // Guards: don't restart during user-initiated pauses, background transitions,
       // or when a seek/sync operation is in flight.
       if (state.intendedPlaying && getVideoPaused() &&
+        !state.seekBuffering && !state.seeking &&
         !userPauseLockActive() && !userPauseIntentActive() &&
         !mediaSessionForcedPauseActive() &&
         !BackgroundPlaybackManager.shouldSuppressAutoPause() &&
@@ -4712,7 +4769,7 @@ try {
     const aPaused = !!audio.paused;
 
     // ── HARD INVARIANT: in coupled mode, audio must NEVER play when video is pause
-    if (!BringBackToTabManager.isLocked()) {
+    if (!BringBackToTabManager.isLocked() && !state.seekBuffering) {
       if (!aPaused && vPaused && !isHiddenBackground() && !state.intendedPlaying) {
         execProgrammaticAudioPause(100);
       } else if (!aPaused && vPaused && !isHiddenBackground() &&
@@ -5582,11 +5639,10 @@ try {
       } catch {}
     });
     video.on("play", () => {
-      // ── NON-COUPLED FAST PATH ─────────────────────────────────────────────────
-      // In non-coupled mode (SD/medium), bypass ALL coupled-mode logic entirely.
-      // There is no audio to sync — we only track intendedPlaying and respect MQM.
+      // During seek-buffering, accept play events silently — buffer-wait owns resume
+      if (state.seekBuffering && state.intendedPlaying) return;
+
       if (!coupledMode) {
-        // User explicitly paused via MQM → reject this play event unconditionally
         if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
           execProgrammaticVideoPause();
           return;
@@ -5755,11 +5811,10 @@ try {
     });
 
     video.on("pause", () => {
-      // ── NON-COUPLED FAST PATH ─────────────────────────────────────────────────
-      // In non-coupled mode (SD/medium), bypass ALL coupled-mode guards.
-      // Simple logic: user pause → honour. Spurious pause → counter-play or ignore.
+      // During seek-buffering, ignore all pause events — buffer-wait owns resume
+      if (state.seekBuffering && state.intendedPlaying) return;
+
       if (!coupledMode) {
-        // 1. User preset pause intent → honour immediately
         if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
           state.userPauseIntentPresetAt = 0;
           MediumQualityManager.markUserPaused();
@@ -5999,7 +6054,7 @@ try {
 
       // Defer audio pause by 150ms — micro-stalls (<150ms) won't kill audio.
       // If video fires "playing" before the timer, the pause is cancelled.
-      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight) {
+      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering) {
         if (!state._stallAudioPauseTimer) {
           state._stallAudioPauseTimer = setTimeout(() => {
             state._stallAudioPauseTimer = null;
@@ -6031,6 +6086,12 @@ try {
       if (state._stallAudioPauseTimer) {
         clearTimeout(state._stallAudioPauseTimer);
         state._stallAudioPauseTimer = null;
+      }
+      // During seek-buffering, the buffer-wait owns resume — accept silently
+      if (state.seekBuffering && state.intendedPlaying) {
+        state.videoWaiting = false;
+        state.videoStallSince = 0;
+        return;
       }
       if (!coupledMode) {
         try { UltraStabilizer.onVideoPlaying(); } catch {}
@@ -6481,9 +6542,8 @@ try {
       video.on("seeking", () => {
         try { UltraStabilizer.onSeekStart(); } catch {}
         if (state.restarting) return;
-        // Background silent time sync — we set videoEl.currentTime directly to keep
-        // the progress bar in sync with audio. Ignore the resulting seeking event entirely.
         if (state.bgSilentTimeSyncing) return;
+        clearSeekBuffering();
         state.seekId++;
         const currentSeekId = state.seekId;
         state.strictBufferHold = false; state.bufferHoldSince = 0;
