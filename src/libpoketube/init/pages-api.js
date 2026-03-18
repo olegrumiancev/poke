@@ -31,7 +31,7 @@ module.exports = function (app, config, renderTemplate) {
   };
 
   app.get("/vi/:v/:t", async function (req, res) {
-    var url = `https://i.ytimg.com/vi/${req.params.v}/${req.params.t}`;
+    var url = `https://image-proxy.poketube.fun/?url=https://i.ytimg.com/vi/${req.params.v}/${req.params.t}`;
 
     let f = await modules.fetch(url + `?cachefixer=${btoa(Date.now())}`, {
       method: req.method,
@@ -42,7 +42,7 @@ module.exports = function (app, config, renderTemplate) {
   });
 
   app.get("/avatars/:v", async function (req, res) {
-    var url = `https://yt3.ggpht.com/${req.params.v}`;
+    var url = `https://image-proxy.poketube.fun/?url=https://yt3.ggpht.com/${req.params.v}`;
 
     let f = await modules.fetch(url + `?cachefixer=${btoa(Date.now())}`, {
       method: req.method,
@@ -86,7 +86,7 @@ module.exports = function (app, config, renderTemplate) {
 
 
   app.get("/ggpht/:v", async function (req, res) {
-    var url = `https://yt3.ggpht.com/${req.params.v}`;
+    var url = `https://image-proxy.poketube.fun/?url=https://yt3.ggpht.com/${req.params.v}`;
 
     let f = await modules.fetch(url + `?cachefixer=${btoa(Date.now())}`, {
       method: req.method,
