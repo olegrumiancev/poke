@@ -2643,7 +2643,7 @@ document.addEventListener('DOMContentLoaded', checkTheaterMode);
                <% if(!IsOldWindows) { %>
 
 <script>
-const AMvideo = document.getElementById("video");
+ const AMvideo = document.getElementById("video");
 const canvas1 = document.getElementById("ambient-canvas-1");
 const canvas2 = document.getElementById("ambient-canvas-2");
 
@@ -2731,7 +2731,6 @@ window.addEventListener("load", () => { pageFullyLoaded = true; }, { once: true 
 
 const pauseHandler = (el) => {
   try {
-     
     const origPause = el.pause.bind(el);
     el.pause = function () {
       if (isPlayPending) return;
@@ -2740,19 +2739,17 @@ const pauseHandler = (el) => {
   } catch {}
 };
 
- const afaf = new URLSearchParams(window.location.search);
-const isMediumQuality = afaf.get('quality') === 'medium';
+  const hasSD360 = !!AMvideo.querySelector('source[label="sd360"]');
 
-// Only apply the pauseHandler if quality is NOT medium
-if (!isMediumQuality) {
+ if (!hasSD360) {
   pauseHandler(AMvideo);
   if (AMaudio) pauseHandler(AMaudio);
 }
-
+ 
 const forcePlay = async () => {
   if (!pageFullyLoaded || isPlayPending) return;
   isPlayPending = true;
- 
+  
   if (AMvideo.currentTime < 0.5) {
       AMvideo.currentTime = 0;
       if (AMaudio) AMaudio.currentTime = 0;
@@ -2768,7 +2765,6 @@ const forcePlay = async () => {
   }
 };
 
- 
 const handleFullscreen = () => {
   canvas1.style.display = (document.fullscreenElement || !ambientEnabled) ? "none" : "block";
 };
