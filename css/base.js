@@ -954,6 +954,8 @@ _allowAudioTimeWrite: false
     if (!stateRef || !getVideoPausedFn) return;
     try {
       const n = performance.now();
+      // Tab-return immunity: skip all corrections during the immune window
+      if (stateRef.tabReturnImmuneUntil > n) return;
       const videoPaused = getVideoPausedFn();
       const intending = stateRef.intendedPlaying;
       const isHidden = document.visibilityState === "hidden";
@@ -1178,8 +1180,6 @@ _allowAudioTimeWrite: false
           } catch {}
           if (audio.paused) {
             cancelActiveFade();
-            // Start at volume 0 to prevent pop — fade in after stable
-            audio.volume = 0;
             audio.play().catch(() => {});
           }
         }
@@ -2401,6 +2401,7 @@ _allowAudioTimeWrite: false
   }
 
   function now() { return performance.now(); }
+  function isTabReturnImmune() { return state.tabReturnImmuneUntil > now(); }
   function markMediaAction(type) {
     state.lastMediaAction = type;
     state.lastMediaActionTs = now();
@@ -3945,8 +3946,9 @@ try {
   function ensureStartupZeroed() { forceZeroBeforeFirstPlay(); }
 
   async function playTogether() {
-    state.userPlayIntentPresetAt = 0; // consume any pending preset
-    if (detectLoop()) {
+    state.userPlayIntentPresetAt = 0;
+    // Never trigger loop detection during tab-return immunity
+    if (!(state.tabReturnImmuneUntil > now()) && detectLoop()) {
       state.intendedPlaying = false;
       pauseHard();
       return;
@@ -4633,7 +4635,7 @@ try {
         state.strictBufferReason = "";
         state.strictBufferHoldFrames = 0;
         state.strictBufferHoldConfirmed = false;
-        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 2000);
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 3000);
         updateMediaSessionPlaybackState();
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
@@ -4870,16 +4872,14 @@ try {
     const vPaused = getVideoPaused();
     const aPaused = !!audio.paused;
 
-    // ── HARD INVARIANT: in coupled mode, audio must NEVER play when video is pause
-    if (!BringBackToTabManager.isLocked() && !state.seekBuffering) {
+    // HARD INVARIANT: audio must NEVER play when video is paused (except during tab-return immunity)
+    if (!BringBackToTabManager.isLocked() && !state.seekBuffering && !(state.tabReturnImmuneUntil > now())) {
       if (!aPaused && vPaused && !isHiddenBackground() && !state.intendedPlaying) {
         execProgrammaticAudioPause(100);
       } else if (!aPaused && vPaused && !isHiddenBackground() &&
         !state.strictBufferHold && !state.videoWaiting &&
         !state.seeking && !state.syncing &&
         !state.bgPlaybackAllowed) {
-        // Also catch the case where intendedPlaying=true but video is still paused — audio should
-        // wait for video to resume, not play ahead solo.
         execProgrammaticAudioPause(100);
         }
     }
@@ -5903,6 +5903,8 @@ try {
         }
 
         if (state.isProgrammaticVideoPlay || state.restarting || state.seeking) return;
+        // Tab-return immunity: never pause a play event during the immune window
+        if (state.tabReturnImmuneUntil > now()) return;
 
         if (!coupledMode && state.intendedPlaying) {
           scheduleSync(0);
@@ -6164,8 +6166,8 @@ try {
       if (!state.startupPrimed || state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted)) return;
 
       // Defer audio pause by 150ms — micro-stalls (<150ms) won't kill audio.
-      // If video fires "playing" before the timer, the pause is cancelled.
-      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering) {
+      // Never kill audio during tab-return immunity — browser stalls are expected.
+      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(state.tabReturnImmuneUntil > now())) {
         if (!state._stallAudioPauseTimer) {
           state._stallAudioPauseTimer = setTimeout(() => {
             state._stallAudioPauseTimer = null;
@@ -6193,7 +6195,6 @@ try {
       scheduleSync(0);
     });
     video.on("playing", () => {
-      // Cancel deferred stall audio pause — video recovered before audio was killed
       if (state._stallAudioPauseTimer) {
         clearTimeout(state._stallAudioPauseTimer);
         state._stallAudioPauseTimer = null;
@@ -6201,6 +6202,20 @@ try {
       if (state.seeking || state.seekBuffering) {
         state.videoWaiting = false;
         state.videoStallSince = 0;
+        return;
+      }
+      // Tab-return immunity: video is playing — that's exactly what we want. Accept it.
+      if (state.tabReturnImmuneUntil > now()) {
+        state.videoWaiting = false;
+        state.videoStallSince = 0;
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+        updateMediaSessionPlaybackState();
+        if (!state.firstPlayCommitted) {
+          state.firstPlayCommitted = true;
+          state.startupKickDone = true;
+          state.startupPhase = false;
+        }
         return;
       }
       if (!coupledMode) {
@@ -6257,7 +6272,7 @@ try {
         }
       }
 
-      if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
+      if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !(state.tabReturnImmuneUntil > now())) {
         // ── CRITICAL FIX: never let autoplay override an explicit user pause ────────
         const userExplicitlyPaused =
         userPauseLockActive() ||        // userPauseLockUntil fence still active
@@ -6390,6 +6405,7 @@ try {
     });
     if (!coupledMode) return;
     const onAudioPlay = () => {
+      if (isTabReturnImmune()) return; // never fight audio during tab return
       if (!state.isProgrammaticAudioPlay && !state.isProgrammaticVideoPlay) incrementRapidPlayPause();
       if (detectLoop()) {
         state.intendedPlaying = false;
@@ -6443,6 +6459,7 @@ try {
       }
     };
     const onAudioPause = () => {
+      if (isTabReturnImmune()) return; // never fight audio during tab return
       if (!state.isProgrammaticAudioPause && !state.isProgrammaticVideoPause) incrementRapidPlayPause();
       if (detectLoop()) {
         state.intendedPlaying = false;
@@ -6832,6 +6849,10 @@ try {
     BringBackToTabManager.onTabReturn();
 
     // ── Shot 1: immediate rAF ─────────────────────────────────────────────────
+    // Save audio state ONCE at entry — don't touch volume if audio is already running
+    const _audioWasPaused = coupledMode && audio ? !!audio.paused : true;
+    const _savedVol = coupledMode && audio ? (audio.volume || targetVolFromVideo()) : 1;
+
     state.bbtabRetryRafId = requestAnimationFrame(() => {
       state.bbtabRetryRafId = null;
       if (state.tabReturnGen !== bbtGen) return;
@@ -6845,7 +6866,8 @@ try {
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
-          audio.volume = 0;
+          // Only zero volume if audio was paused when we entered — avoids pop
+          if (_audioWasPaused) audio.volume = 0;
           audio.play().catch(() => {});
         }
       }
@@ -6857,9 +6879,11 @@ try {
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
+        // Only touch audio if it's actually paused — never interrupt playing audio
         if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
           const vtEarly = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
           safeSetAudioTime(vtEarly);
+          if (_audioWasPaused) audio.volume = 0;
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
         return;
@@ -6885,7 +6909,10 @@ try {
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      if (coupledMode && audio && audio.paused) { audio.volume = 0; audio.play().catch(() => {}); }
+      if (coupledMode && audio && audio.paused) {
+        if (_audioWasPaused) audio.volume = 0;
+        audio.play().catch(() => {});
+      }
     }, 200);
 
     // ── Shot 2: 700ms fallback ──────────────────────────────────────────
@@ -6897,14 +6924,17 @@ try {
       if (!vPaused) {
         BringBackToTabManager.onVideoConfirmedPlaying();
         try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
-        if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+        if (coupledMode && audio) {
           const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
           const at = Number(audio.currentTime) || 0;
           if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
             try { audio.currentTime = vt; } catch {}
           }
-          execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
-          softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+          if (audio.paused && !state.isProgrammaticAudioPause) {
+            execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
+          }
+          // Smooth fade-in to target volume — prevents pop
+          softUnmuteAudio(200).catch(() => {});
         }
         setFastSync(800);
         scheduleSync(0);
@@ -6980,7 +7010,7 @@ try {
               const vtRetry = Number(video.currentTime()) || 0;
             safeSetAudioTime(vtRetry);
             execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
-            softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+            softUnmuteAudio(200).catch(() => {});
               }
               return;
           }
@@ -7054,7 +7084,7 @@ try {
         // Bump generation — invalidate stale timers from any previous cycle
         state.tabReturnGen++;
         // Hard pause immunity — reject ALL non-user pauses for 1.5s after tab return
-        if (state.intendedPlaying) state.tabReturnImmuneUntil = now() + 1500;
+        if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) state.tabReturnImmuneUntil = now() + 3000;
 
         try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
         VisibilityGuard.onTabShow();
@@ -7229,7 +7259,7 @@ try {
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
       // Hard pause immunity for tab return
-      if (state.intendedPlaying) state.tabReturnImmuneUntil = now() + 1500;
+      if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) state.tabReturnImmuneUntil = now() + 3000;
 
       try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
       VisibilityGuard.onTabShow();
