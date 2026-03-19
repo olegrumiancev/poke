@@ -20,7 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
     controls: true,
     autoplay: true,
     preload: "auto",
-    errorDisplay: true,
+    errorDisplay: false
   });
   const qs = new URLSearchParams(window.location.search);
   const qua = qs.get("quality") || "";
@@ -2558,7 +2558,7 @@ seekBufferResumeTimer: null
   }
 
   function incrementRapidPlayPause() {
-    if (state.seekBuffering) return;
+    if (state.seeking || state.seekBuffering) return;
     if (inBgReturnGrace() || document.visibilityState === "hidden") return;
     if (!state.firstPlayCommitted) return;
     const nowTs = now();
@@ -4282,6 +4282,26 @@ try {
   async function finalizeSeekSync(currentSeekId) {
     if (!coupledMode) {
       if (state.seekId !== currentSeekId) return;
+
+      // If user was playing and buffer isn't ready, transition seeking→seekBuffering with no gap
+      if (state.seekWantedPlaying && state.intendedPlaying) {
+        const vNode = getVideoNode();
+        const vRS = Number(vNode?.readyState || 0);
+        const seekPos = Number(video.currentTime()) || 0;
+        let hasBuffer = false;
+        try {
+          const buf = vNode.buffered;
+          for (let i = 0; i < buf.length; i++) {
+            if (buf.start(i) <= seekPos + 0.1 && buf.end(i) >= seekPos + 0.3) { hasBuffer = true; break; }
+          }
+        } catch {}
+        if (vRS < HAVE_FUTURE_DATA || !hasBuffer) {
+          state.seekBuffering = true;
+          state.strictBufferHold = true;
+          state.bufferHoldIntendedPlaying = true;
+        }
+      }
+
       state.seeking = false;
       state.firstSeekDone = true;
       state.pendingSeekTarget = null;
@@ -4357,6 +4377,10 @@ try {
       const vtCheck = Number(video.currentTime());
       const alreadyReady = isFinite(vtCheck) && bothPlayableAt(vtCheck);
       if (!alreadyReady) {
+        // Set seekBuffering BEFORE clearing seeking — no gap for events to sneak through
+        state.seekBuffering = true;
+        state.strictBufferHold = true;
+        state.bufferHoldIntendedPlaying = true;
         if (state.seekId === currentSeekId) {
           state.seeking = false;
           state.firstSeekDone = true;
@@ -5639,8 +5663,8 @@ try {
       } catch {}
     });
     video.on("play", () => {
-      // During seeking or seek-buffering while user was playing, accept silently
-      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) return;
+      // During seeking or seek-buffering, ignore — finalize owns state
+      if (state.seeking || state.seekBuffering) return;
 
       if (!coupledMode) {
         if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
@@ -5811,8 +5835,9 @@ try {
     });
 
     video.on("pause", () => {
-      // During seeking or seek-buffering while user was playing, ignore pause events
-      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) return;
+      // During seeking or seek-buffering, ignore pause events entirely —
+      // finalizeSeekSync / startSeekBufferWait owns the resume/pause decision
+      if (state.seeking || state.seekBuffering) return;
 
       if (!coupledMode) {
         if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
@@ -6087,7 +6112,7 @@ try {
         clearTimeout(state._stallAudioPauseTimer);
         state._stallAudioPauseTimer = null;
       }
-      if ((state.seeking || state.seekBuffering) && state.intendedPlaying) {
+      if (state.seeking || state.seekBuffering) {
         state.videoWaiting = false;
         state.videoStallSince = 0;
         return;
@@ -6554,6 +6579,10 @@ try {
         state.playRequestedDuringSeek = state.intendedPlaying;
         state.seekCompleted = false;
         state.firstSeekDone = true;
+        // Reset rapid-play-pause counter — seek events should never feed loop detection
+        state.rapidPlayPauseCount = 0;
+        state.rapidPlayPauseResetAt = now();
+        state.loopPreventionCooldownUntil = 0;
 
         if (!state.firstPlayCommitted) {
           state.firstPlayCommitted = true;
