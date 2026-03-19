@@ -2434,8 +2434,8 @@ _allowAudioTimeWrite: false
       if (audio.paused) { try { audio.play().catch(() => {}); } catch {} }
       // ONE smooth fade-in
       try { audio.volume = 0; } catch {}
-      softUnmuteAudio(250).catch(() => {});
-    }, 600);
+      softUnmuteAudio(80).catch(() => {});
+    }, 150);
   }
 
   function cancelTabReturnAudioMute() {
