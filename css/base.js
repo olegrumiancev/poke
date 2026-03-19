@@ -230,29 +230,28 @@ document.addEventListener("DOMContentLoaded", () => {
     // Ensure it can never accidentally play
     try { if (!audio.paused) audio.pause(); } catch {}
   }
-  try {
-    videoEl.loop = false;
-    videoEl.removeAttribute?.("loop");
-  } catch {}
-  try {
-    if (audio) {
-      audio.loop = false;
-      audio.removeAttribute?.("loop");
-    }
-  } catch {}
+  // Check if loop attribute was set in HTML before we override anything
+  try { if (videoEl.loop || videoEl.hasAttribute("loop")) _userExplicitLoop = true; } catch {}
+  try { if (audio && (audio.loop || audio.hasAttribute("loop"))) _userExplicitLoop = true; } catch {}
+  if (!isLoopDesired()) {
+    try { videoEl.loop = false; videoEl.removeAttribute?.("loop"); } catch {}
+    try { if (audio) { audio.loop = false; audio.removeAttribute?.("loop"); } } catch {}
+  }
+  let _userExplicitLoop = false;
   function isLoopDesired() {
-    // FIX: Only respect explicit loop requests via URL param or global flag.
-    // Do NOT check videoEl.loop - we set it to false at startup but video.js
-    // or browser extensions can silently re-enable it, causing unwanted looping.
-    return qs.get("loop") === "1" ||
+    return _userExplicitLoop ||
+    qs.get("loop") === "1" ||
     qs.get("loop") === "true" ||
     window.forceLoop === true;
   }
 
-   function enforceNoLoop(el) {
+  // ── NUCLEAR LOOP PREVENTION ─────────────────────────────────────────────────
+  function enforceNoLoop(el) {
     if (!el) return;
-    try { el.loop = false; el.removeAttribute("loop"); } catch {}
-    // Override the .loop property setter so nothing can set it to true
+    // Only strip loop if user doesn't want it
+    if (!isLoopDesired()) {
+      try { el.loop = false; el.removeAttribute("loop"); } catch {}
+    }
     try {
       const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "loop") ||
                    Object.getOwnPropertyDescriptor(el, "loop");
@@ -260,18 +259,23 @@ document.addEventListener("DOMContentLoaded", () => {
         Object.defineProperty(el, "loop", {
           get() { return isLoopDesired(); },
           set(v) {
-            // Only allow setting to true if isLoopDesired() agrees
-            if (v && !isLoopDesired()) {
-              try { el.removeAttribute("loop"); } catch {}
-              return;
+            if (v) {
+              // User or code is requesting loop — track it
+              _userExplicitLoop = true;
+              if (desc.set) desc.set.call(el, true);
+            } else {
+              // Setting loop=false — only honour if NOT desired
+              if (!isLoopDesired()) {
+                _userExplicitLoop = false;
+                if (desc.set) desc.set.call(el, false);
+                try { el.removeAttribute("loop"); } catch {}
+              }
             }
-            if (desc.set) desc.set.call(el, !!v && isLoopDesired());
           },
           configurable: true
         });
       }
     } catch {}
-    // MutationObserver: strip the loop attribute if anything adds it
     try {
       const obs = new MutationObserver(mutations => {
         for (const m of mutations) {
@@ -293,8 +297,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const origLoop = video.loop.bind(video);
       video.loop = function(val) {
         if (arguments.length === 0) return isLoopDesired();
-        if (val && !isLoopDesired()) return;
-        return origLoop(val && isLoopDesired());
+        if (val) { _userExplicitLoop = true; return origLoop(true); }
+        if (!isLoopDesired()) { _userExplicitLoop = false; return origLoop(false); }
+        return origLoop(isLoopDesired());
       };
     }
   } catch {}
@@ -412,9 +417,9 @@ document.addEventListener("DOMContentLoaded", () => {
     videoRepairCooldownUntil: 0,
     hardPauseVerifySerial: 0,
     startupPrimeStartedAt: performance.now(),
-lastKnownGoodVT: 0,
+                          lastKnownGoodVT: 0,
                           lastKnownGoodVTts: 0,
-startupAutoplayRetryTimer: null,
+                          startupAutoplayRetryTimer: null,
                           startupAutoplayRetryCount: 0,
                           driftStableFrames: 0,
                           lastDrift: 0,
@@ -509,6 +514,7 @@ seekCooldownUntil: 0,
 volumeSaveScheduled: false,
 lastBgReturnAt: 0,
 bgSuppressionSessionCount: 0,
+// NEW: Heartbeat & stall recovery
 heartbeatTimer: null,
 lastHeartbeatAt: 0,
 videoStallSince: 0,
@@ -3215,12 +3221,13 @@ try {
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // never start audio while video is paused in foreground, regardless of force.
+    // HARD INVARIANT: never start audio while video is paused in foreground, regardless of force.
     // This is belt-and-suspenders with shouldBlockNewAudioStart() — it catches async races where
     // force=true bypasses other guards but video has since paused between the call and execution.
     if (getVideoPaused() && !isHiddenBackground()) return false;
 
-     if (force) {
+    // CRITICAL FIX: Cancel any active volume fade before attempting to play.
+    if (force) {
       cancelActiveFade();
       state.isProgrammaticAudioPause = false;
     }
@@ -5121,9 +5128,11 @@ try {
       const elapsed = nowTs - state.lastHeartbeatAt;
       state.lastHeartbeatAt = nowTs;
 
-      // ── ANTI-LOOP ENFORCEMENT ──────────────────────────────────────────────
-      try { if (videoEl.loop) { videoEl.loop = false; videoEl.removeAttribute("loop"); } } catch {}
-      try { if (audio && audio.loop) { audio.loop = false; audio.removeAttribute("loop"); } } catch {}
+      // ── LOOP ATTRIBUTE ENFORCEMENT ──────────────────────────────────────────
+      if (!isLoopDesired()) {
+        try { if (videoEl.loop) { videoEl.loop = false; videoEl.removeAttribute("loop"); } } catch {}
+        try { if (audio && audio.loop) { audio.loop = false; audio.removeAttribute("loop"); } } catch {}
+      }
 
       // ── NON-COUPLED MQM ENFORCEMENT ───────────────────────────────────────────
       // If user paused in non-coupled mode, ensure video stays paused every heartbeat.
@@ -6183,7 +6192,8 @@ try {
       }
 
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
-         const userExplicitlyPaused =
+        // ── CRITICAL FIX: never let autoplay override an explicit user pause ────────
+        const userExplicitlyPaused =
         userPauseLockActive() ||        // userPauseLockUntil fence still active
         userPauseIntentActive() ||      // userPauseUntil fence still active
         state.userPauseIntentPresetAt > 0 ||  // preset set on pointerdown
@@ -6549,8 +6559,6 @@ try {
         // Reject if currentTime is near 0 — browser reset, not real end
         if (dur > 5 && ct < 1) return;
       } catch {}
-      try { videoEl.loop = false; videoEl.removeAttribute("loop"); } catch {}
-      try { audio.loop = false; audio.removeAttribute("loop"); } catch {}
       if (isLoopDesired()) restartLoop().catch(() => {});
       else pauseTogether();
     }, { passive: true });
@@ -6695,8 +6703,6 @@ try {
           if (dur > 1 && ct < dur - 2) return;
           if (dur > 5 && ct < 1) return;
         } catch {}
-        try { videoEl.loop = false; videoEl.removeAttribute("loop"); } catch {}
-        try { if (audio) { audio.loop = false; audio.removeAttribute("loop"); } } catch {}
         if (isLoopDesired()) restartLoop().catch(() => {});
         else pauseTogether();
       });
@@ -7368,7 +7374,8 @@ try {
       scheduleSync(0);
     };
 
-     const onAudioError = () => {
+    // Audio error → immediate switch
+    const onAudioError = () => {
       if (audioAlive) return; // had data before error, don't switch
       switchToNonCoupled("audio-error");
     };
