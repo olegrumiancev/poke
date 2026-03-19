@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  */
 
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
-document.addEventListener("DOMContentLoaded", () => {
+ document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -516,6 +516,8 @@ volumeSaveScheduled: false,
 lastBgReturnAt: 0,
 tabReturnGen: 0,
 tabReturnImmuneUntil: 0,
+tabReturnAudioMuted: false,
+tabReturnSettleTimer: null,
 bgSuppressionSessionCount: 0,
 // NEW: Heartbeat & stall recovery
 heartbeatTimer: null,
@@ -1178,10 +1180,13 @@ _allowAudioTimeWrite: false
               _audioPreAligned = true;
             }
           } catch {}
+          // Keep audio at volume 0 during tab-return — settle handler will fade in
+          try { if (state.tabReturnAudioMuted) audio.volume = 0; } catch {}
           if (audio.paused) {
             cancelActiveFade();
             audio.play().catch(() => {});
           }
+          try { if (state.tabReturnAudioMuted) audio.volume = 0; } catch {}
         }
       } catch {}
     }
@@ -2402,6 +2407,94 @@ _allowAudioTimeWrite: false
 
   function now() { return performance.now(); }
   function isTabReturnImmune() { return state.tabReturnImmuneUntil > now(); }
+
+  // ── CLEAN TAB-RETURN AUDIO HANDLER ──────────────────────────────────────
+  // Mutes audio instantly on tab return so all the retry shots are inaudible.
+  // After video is confirmed playing and stable, does ONE clean audio start
+  // with a smooth fade-in. No echo, no pop, no double-play.
+  function beginTabReturnAudioMute() {
+    if (!coupledMode || !audio) return;
+    // Kill any pending settle timer from a previous tab return
+    if (state.tabReturnSettleTimer) {
+      clearTimeout(state.tabReturnSettleTimer);
+      state.tabReturnSettleTimer = null;
+    }
+    // Instantly mute audio — all retry shots will play() at volume 0
+    state.tabReturnAudioMuted = true;
+    try { cancelActiveFade(); } catch {}
+    try { audio.volume = 0; } catch {}
+
+    const myGen = state.tabReturnGen;
+
+    // Poll until video is playing and stable, then do ONE clean audio start
+    let attempts = 0;
+    const settle = () => {
+      state.tabReturnSettleTimer = null;
+      if (state.tabReturnGen !== myGen) return; // stale
+      if (!state.intendedPlaying && !state.resumeOnVisible) {
+        // User paused — just unmute flag and leave audio silent
+        state.tabReturnAudioMuted = false;
+        return;
+      }
+      attempts++;
+      const vPaused = getVideoPaused();
+      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+      const vRS = (() => { try { return getVideoReadyState(); } catch { return 0; } })();
+
+      // Wait until: video playing + readyState >= 3 + position advancing, OR 30 attempts (3s max)
+      if (vPaused || vRS < 3) {
+        if (attempts < 30) {
+          state.tabReturnSettleTimer = setTimeout(settle, 100);
+        } else {
+          // Timeout — force unmute anyway
+          finalizeTabReturnAudio(myGen, vt);
+        }
+        return;
+      }
+      // Video is playing — wait one more tick to confirm it's stable
+      state.tabReturnSettleTimer = setTimeout(() => {
+        state.tabReturnSettleTimer = null;
+        if (state.tabReturnGen !== myGen) return;
+        const vt2 = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+        finalizeTabReturnAudio(myGen, vt2);
+      }, 150);
+    };
+    // Start polling after 200ms — give the preemptivePlay() and first retry shot time
+    state.tabReturnSettleTimer = setTimeout(settle, 200);
+  }
+
+  function finalizeTabReturnAudio(gen, videoTime) {
+    if (state.tabReturnGen !== gen) return;
+    if (!coupledMode || !audio) { state.tabReturnAudioMuted = false; return; }
+    if (!state.intendedPlaying && !state.resumeOnVisible) {
+      state.tabReturnAudioMuted = false;
+      return;
+    }
+    // Sync audio to video position
+    try {
+      const at = Number(audio.currentTime) || 0;
+      if (isFinite(videoTime) && Math.abs(at - videoTime) > 0.15) {
+        audio.currentTime = videoTime;
+      }
+    } catch {}
+    // Ensure audio is playing
+    if (audio.paused) {
+      try { audio.play().catch(() => {}); } catch {}
+    }
+    // Unmute flag — allow volume changes again
+    state.tabReturnAudioMuted = false;
+    // Smooth fade-in from 0 to target volume
+    try { audio.volume = 0; } catch {}
+    softUnmuteAudio(250).catch(() => {});
+  }
+
+  function cancelTabReturnAudioMute() {
+    if (state.tabReturnSettleTimer) {
+      clearTimeout(state.tabReturnSettleTimer);
+      state.tabReturnSettleTimer = null;
+    }
+    state.tabReturnAudioMuted = false;
+  }
   function markMediaAction(type) {
     state.lastMediaAction = type;
     state.lastMediaActionTs = now();
@@ -2438,7 +2531,8 @@ _allowAudioTimeWrite: false
 
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
-    state.tabReturnImmuneUntil = 0; // user pause overrides immunity
+    state.tabReturnImmuneUntil = 0;
+    cancelTabReturnAudioMute();
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
@@ -2784,6 +2878,7 @@ _allowAudioTimeWrite: false
 
   async function doVolumeFade(targetVol, ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
+    if (state.tabReturnAudioMuted && targetVol > 0) return; // block unmute during tab-return settle
     cancelActiveFade();
     const from = clamp01(audio.volume);
     const target = clamp01(targetVol);
@@ -2822,6 +2917,8 @@ _allowAudioTimeWrite: false
 
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
+    // During tab-return audio mute, block all unmute attempts — finalizeTabReturnAudio owns this
+    if (state.tabReturnAudioMuted) return;
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -2848,6 +2945,7 @@ _allowAudioTimeWrite: false
 
   function updateAudioGainImmediate() {
     if (!audio) return;
+    if (state.tabReturnAudioMuted) return;
     if (state.audioFading) return;
     try {
       const target = clamp01(targetVolFromVideo());
@@ -6866,10 +6964,11 @@ try {
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
-          // Only zero volume if audio was paused when we entered — avoids pop
-          if (_audioWasPaused) audio.volume = 0;
+          audio.volume = 0;
           audio.play().catch(() => {});
         }
+        // Enforce mute — settle handler will fade in cleanly
+        if (state.tabReturnAudioMuted) audio.volume = 0;
       }
     });
 
@@ -6883,9 +6982,10 @@ try {
         if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
           const vtEarly = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
           safeSetAudioTime(vtEarly);
-          if (_audioWasPaused) audio.volume = 0;
+          audio.volume = 0;
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
+        if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
         return;
       }
       VisibilityGuard.onPlayCalled();
@@ -6902,17 +7002,20 @@ try {
         if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
           const vtMid = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
           safeSetAudioTime(vtMid);
+          audio.volume = 0;
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
+        if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
         return;
       }
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
       if (coupledMode && audio && audio.paused) {
-        if (_audioWasPaused) audio.volume = 0;
+        audio.volume = 0;
         audio.play().catch(() => {});
       }
+      if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
     }, 200);
 
     // ── Shot 2: 700ms fallback ──────────────────────────────────────────
@@ -6931,10 +7034,11 @@ try {
             try { audio.currentTime = vt; } catch {}
           }
           if (audio.paused && !state.isProgrammaticAudioPause) {
+            audio.volume = 0;
             execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
           }
-          // Smooth fade-in to target volume — prevents pop
-          softUnmuteAudio(200).catch(() => {});
+          if (state.tabReturnAudioMuted) { audio.volume = 0; }
+          else { softUnmuteAudio(200).catch(() => {}); }
         }
         setFastSync(800);
         scheduleSync(0);
@@ -7009,8 +7113,10 @@ try {
               !shouldBlockNewAudioStart()) {
               const vtRetry = Number(video.currentTime()) || 0;
             safeSetAudioTime(vtRetry);
+            audio.volume = 0;
             execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
-            softUnmuteAudio(200).catch(() => {});
+            if (state.tabReturnAudioMuted) audio.volume = 0;
+            else softUnmuteAudio(200).catch(() => {});
               }
               return;
           }
@@ -7083,8 +7189,10 @@ try {
       if (newState === "visible") {
         // Bump generation — invalidate stale timers from any previous cycle
         state.tabReturnGen++;
-        // Hard pause immunity — reject ALL non-user pauses for 1.5s after tab return
-        if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) state.tabReturnImmuneUntil = now() + 3000;
+        if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) {
+          state.tabReturnImmuneUntil = now() + 3000;
+          beginTabReturnAudioMute();
+        }
 
         try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
         VisibilityGuard.onTabShow();
@@ -7195,8 +7303,9 @@ try {
         }
         setTimeout(() => { state.visibilityTransitionActive = false; }, VISIBILITY_TRANSITION_MS);
       } else {
-        // Invalidate all pending tab-return resume timers
         state.tabReturnGen++;
+        cancelTabReturnAudioMute();
+        state.tabReturnImmuneUntil = 0;
         if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
         if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
         if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
@@ -7231,7 +7340,8 @@ try {
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
       state.tabReturnGen++;
-      state.tabReturnImmuneUntil = 0; // clear immunity on blur
+      state.tabReturnImmuneUntil = 0;
+      cancelTabReturnAudioMute();
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
       if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
@@ -7258,8 +7368,10 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
-      // Hard pause immunity for tab return
-      if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) state.tabReturnImmuneUntil = now() + 3000;
+      if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) {
+        state.tabReturnImmuneUntil = now() + 3000;
+        beginTabReturnAudioMute();
+      }
 
       try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
       VisibilityGuard.onTabShow();
