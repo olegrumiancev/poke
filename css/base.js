@@ -2644,6 +2644,7 @@ _allowAudioTimeWrite: false
 
   function incrementRapidPlayPause() {
     if (state.seeking || state.seekBuffering) return;
+    if (state.tabReturnImmuneUntil > now()) return;
     if (inBgReturnGrace() || document.visibilityState === "hidden") return;
     if (!state.firstPlayCommitted) return;
     const nowTs = now();
@@ -2657,12 +2658,11 @@ _allowAudioTimeWrite: false
   // FIX: detectLoop no longer fires during seek/sync operations to prevent false positives
   function detectLoop() {
     if (state.seeking || state.syncing || state.restarting || state.seekBuffering) return false;
-    // Never fire loop detection before first committed play. The startup sequence g
     if (!state.firstPlayCommitted) return false;
-    // Never fire loop detection during tab-return grace — spurious events are expected
     if (inBgReturnGrace()) return false;
-    // Never fire when tab is not visible — background events are expected
     if (document.visibilityState === "hidden") return false;
+    // Never fire during tab-return or startup immunity
+    if (state.tabReturnImmuneUntil > now()) return false;
     if (now() < state.loopPreventionCooldownUntil) return true;
     if ((now() - state.lastUserActionTime) < 1500) return false;
     if (state.rapidPlayPauseCount >= MAX_LOOP_EVENTS) {
@@ -4758,6 +4758,8 @@ try {
         state.strictBufferHoldFrames = 0;
         state.strictBufferHoldConfirmed = false;
         state.startupPrimed = true;
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 3000);
+        if (!coupledMode) MediumQualityManager.markUserPlayed();
         updateMediaSessionPlaybackState();
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
@@ -5783,8 +5785,22 @@ try {
       } catch {}
     });
     video.on("play", () => {
-      // During seeking or seek-buffering, ignore — finalize owns state
       if (state.seeking || state.seekBuffering) return;
+      // TAB RETURN + STARTUP IMMUNITY: accept play unconditionally.
+      // This MUST be before any other check — nothing may pause during immunity.
+      if (state.tabReturnImmuneUntil > now()) {
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+        if (!coupledMode) MediumQualityManager.markUserPlayed();
+        if (!state.firstPlayCommitted) {
+          state.firstPlayCommitted = true;
+          state.startupKickDone = true;
+          clearStartupAutoplayRetryTimer();
+          setTimeout(() => { state.startupPhase = false; }, 500);
+        }
+        updateMediaSessionPlaybackState();
+        return;
+      }
 
       if (!coupledMode) {
         if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
@@ -6246,11 +6262,13 @@ try {
         state.videoStallSince = 0;
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
+        if (!coupledMode) MediumQualityManager.markUserPlayed();
         updateMediaSessionPlaybackState();
         if (!state.firstPlayCommitted) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPhase = false;
+          clearStartupAutoplayRetryTimer();
         }
         return;
       }
@@ -6879,7 +6897,8 @@ try {
     if (state.bbtabRetryTimer)    { clearTimeout(state.bbtabRetryTimer);         state.bbtabRetryTimer    = null; }
     if (state.bbtabAudioSyncTimer){ clearTimeout(state.bbtabAudioSyncTimer);     state.bbtabAudioSyncTimer = null; }
 
-    if (!state.intendedPlaying) return;
+    // During startup, intendedPlaying may still be false — allow if autoplay desired
+    if (!state.intendedPlaying && !wantsStartupAutoplay() && !state.resumeOnVisible) return;
     const bbtGen = state.tabReturnGen;
 
     BringBackToTabManager.onTabReturn();
