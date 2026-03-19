@@ -206,8 +206,24 @@
        THE WEB GOT WEIRD — PROBLEM SECTION
        ========================================== */
 
+    @keyframes heroGlow {
+      0%, 100% { opacity: 0.5; transform: scale(1) translate(0, 0); }
+      33% { opacity: 0.8; transform: scale(1.15) translate(30px, -20px); }
+      66% { opacity: 0.6; transform: scale(0.95) translate(-20px, 15px); }
+    }
+
+    @keyframes borderShimmer {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    @keyframes floatUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
     .poke-problem-section {
-      margin: 4.5em auto 3em;
+      margin: 5em auto 3.5em;
       max-width: 1260px;
       padding: 0 20px;
     }
@@ -217,121 +233,135 @@
     .ppb-hero {
       position: relative;
       overflow: hidden;
-      border-radius: 28px;
-      background:
-        linear-gradient(
-          135deg,
-          rgba(255, 171, 204, 0.16) 0%,
-          rgba(255, 255, 255, 0.07) 40%,
-          rgba(100, 60, 200, 0.13) 100%
-        );
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 32px;
+      background: linear-gradient(145deg, #1a0a1e 0%, #0d0a1a 50%, #0a0e1a 100%);
+      border: 1px solid rgba(255, 171, 204, 0.15);
       box-shadow:
-        0 24px 64px rgba(0, 0, 0, 0.28),
-        0 0 120px rgba(255, 171, 204, 0.06),
-        inset 0 1px 0 rgba(255, 255, 255, 0.14);
-      backdrop-filter: blur(18px) saturate(180%);
-      padding: 60px 64px 56px;
+        0 32px 80px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      padding: 72px 72px 64px;
       margin-bottom: 20px;
     }
 
     .ppb-hero::before {
       content: "";
       position: absolute;
-      top: -100px;
-      right: -60px;
-      width: 500px;
-      height: 500px;
+      top: -120px;
+      right: -80px;
+      width: 550px;
+      height: 550px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(255, 171, 204, 0.16), transparent 68%);
+      background: radial-gradient(circle, rgba(255, 100, 170, 0.2), rgba(255, 171, 204, 0.05) 50%, transparent 70%);
       pointer-events: none;
+      animation: heroGlow 8s ease-in-out infinite;
     }
 
     .ppb-hero::after {
       content: "";
       position: absolute;
-      bottom: -60px;
-      left: -40px;
-      width: 320px;
-      height: 320px;
+      bottom: -80px;
+      left: -60px;
+      width: 400px;
+      height: 400px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(100, 60, 200, 0.1), transparent 70%);
+      background: radial-gradient(circle, rgba(120, 80, 255, 0.15), rgba(100, 60, 200, 0.04) 50%, transparent 70%);
       pointer-events: none;
+      animation: heroGlow 10s ease-in-out infinite reverse;
     }
 
     .ppb-eyebrow {
-      display: inline-block;
-      margin: 0 0 18px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 24px;
       font-size: 11px;
-      letter-spacing: 0.24em;
+      letter-spacing: 0.28em;
       text-transform: uppercase;
-      color: #ffc8e0;
+      color: #ffb8d9;
       font-weight: 700;
-      background: rgba(255, 171, 204, 0.12);
-      border: 1px solid rgba(255, 171, 204, 0.2);
-      padding: 6px 14px;
+      background: rgba(255, 171, 204, 0.08);
+      border: 1px solid rgba(255, 171, 204, 0.18);
+      padding: 8px 18px;
       border-radius: 100px;
+      backdrop-filter: blur(8px);
+    }
+
+    .ppb-eyebrow::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ff8abf;
+      box-shadow: 0 0 8px #ff8abf;
+      animation: jumpPulse 2s ease-in-out infinite;
     }
 
     .ppb-hero-title {
-      margin: 0 0 22px;
-      font-size: clamp(3.8rem, 9.5vw, 8rem);
+      margin: 0 0 28px;
+      font-size: clamp(4rem, 10vw, 8.5rem);
       font-weight: 900;
-      line-height: 0.86;
-      letter-spacing: -0.03em;
-      background: linear-gradient(135deg, #fff 0%, #ffabcc 45%, #c084fc 100%);
+      line-height: 0.88;
+      letter-spacing: -0.04em;
+      background: linear-gradient(135deg, #ffffff 0%, #ffb8d9 35%, #c084fc 65%, #818cf8 100%);
+      background-size: 200% auto;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      filter: drop-shadow(0 4px 24px rgba(255, 171, 204, 0.22)) drop-shadow(0 16px 48px rgba(0, 0, 0, 0.22));
+      animation: borderShimmer 6s linear infinite;
+      filter: drop-shadow(0 4px 30px rgba(255, 171, 204, 0.25));
     }
 
     .ppb-hero-sub {
-      margin: 0 0 34px;
-      max-width: 620px;
-      font-size: 1.1rem;
-      line-height: 1.72;
-      color: #e0e0e0;
+      position: relative;
+      margin: 0 0 40px;
+      max-width: 580px;
+      font-size: 1.12rem;
+      line-height: 1.8;
+      color: rgba(255, 255, 255, 0.7);
     }
 
     .ppb-hero-actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 14px;
     }
 
     .ppb-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 48px;
-      padding: 0 28px;
-      border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      background: rgba(255, 255, 255, 0.09);
-      backdrop-filter: blur(10px);
-      color: #fff;
+      min-height: 52px;
+      padding: 0 32px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(12px);
+      color: rgba(255, 255, 255, 0.85);
       text-decoration: none;
       font-weight: 700;
-      font-size: 0.96rem;
-      transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+      font-size: 0.95rem;
+      letter-spacing: 0.01em;
+      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .ppb-btn:first-child {
-      background: linear-gradient(135deg, rgba(255, 171, 204, 0.28), rgba(192, 132, 252, 0.2));
-      border-color: rgba(255, 171, 204, 0.35);
+      background: linear-gradient(135deg, #ff8abf 0%, #c084fc 100%);
+      border: none;
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(255, 138, 191, 0.25);
     }
 
     .ppb-btn:hover {
-      transform: translateY(-2px);
-      border-color: rgba(255, 171, 204, 0.55);
-      background: rgba(255, 171, 204, 0.18);
-      box-shadow: 0 8px 24px rgba(255, 171, 204, 0.12);
+      transform: translateY(-3px);
+      border-color: rgba(255, 171, 204, 0.4);
+      background: rgba(255, 255, 255, 0.1);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
     }
 
     .ppb-btn:first-child:hover {
-      background: linear-gradient(135deg, rgba(255, 171, 204, 0.36), rgba(192, 132, 252, 0.28));
-      box-shadow: 0 8px 32px rgba(255, 171, 204, 0.18);
+      background: linear-gradient(135deg, #ff9fcb 0%, #cda0fc 100%);
+      box-shadow: 0 8px 36px rgba(255, 138, 191, 0.35);
     }
 
     /* ---- Two-column split: narrative + reasons ---- */
@@ -344,32 +374,41 @@
     }
 
     .ppb-narrative {
-      padding: 38px 40px;
-      border-radius: 24px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
-      border: 1px solid rgba(255, 255, 255, 0.13);
-      box-shadow:
-        0 16px 42px rgba(0, 0, 0, 0.16),
-        inset 0 1px 0 rgba(255, 255, 255, 0.08);
-      backdrop-filter: blur(14px) saturate(160%);
+      padding: 42px 44px;
+      border-radius: 26px;
+      background: linear-gradient(160deg, rgba(255, 171, 204, 0.06), rgba(120, 80, 255, 0.04));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .ppb-narrative::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(255, 171, 204, 0.4), rgba(192, 132, 252, 0.3), transparent);
     }
 
     .ppb-label {
-      display: block;
-      margin-bottom: 14px;
-      font-size: 11px;
-      letter-spacing: 0.22em;
+      display: inline-block;
+      margin-bottom: 16px;
+      font-size: 10.5px;
+      letter-spacing: 0.28em;
       text-transform: uppercase;
-      color: #ffc8e0;
+      color: #ff8abf;
       font-weight: 700;
     }
 
     .ppb-narrative h2 {
-      margin: 0 0 18px;
-      font-size: clamp(1.7rem, 3.2vw, 2.6rem);
+      margin: 0 0 20px;
+      font-size: clamp(1.8rem, 3.4vw, 2.8rem);
       font-weight: 900;
       line-height: 1.05;
-      background: linear-gradient(135deg, #fff, #ffd6e8);
+      background: linear-gradient(135deg, #fff 20%, #ffc8e0 80%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -377,47 +416,63 @@
 
     .ppb-narrative p {
       margin: 0;
-      font-size: 1.02rem;
-      line-height: 1.78;
-      color: #dcdcdc;
+      font-size: 1.04rem;
+      line-height: 1.82;
+      color: rgba(255, 255, 255, 0.6);
     }
 
     .ppb-reasons-list {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
     }
 
     .ppb-reason {
       display: flex;
       gap: 16px;
-      align-items: flex-start;
-      padding: 18px 20px;
+      align-items: center;
+      padding: 18px 22px;
       border-radius: 18px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-      backdrop-filter: blur(12px);
-      transition: border-color .18s ease, background .18s ease, transform .18s ease;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all .22s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .ppb-reason::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 20%;
+      bottom: 20%;
+      width: 3px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, #ff8abf, #c084fc);
+      opacity: 0;
+      transition: opacity .22s ease;
     }
 
     .ppb-reason:hover {
-      border-color: rgba(255, 171, 204, 0.24);
-      background: linear-gradient(160deg, rgba(255, 171, 204, 0.09), rgba(255, 255, 255, 0.04));
-      transform: translateX(4px);
+      background: rgba(255, 171, 204, 0.06);
+      border-color: rgba(255, 171, 204, 0.15);
+      transform: translateX(6px);
+    }
+
+    .ppb-reason:hover::before {
+      opacity: 1;
     }
 
     .ppb-reason-n {
       flex-shrink: 0;
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(255, 171, 204, 0.15);
-      border: 1px solid rgba(255, 171, 204, 0.28);
-      color: #ffd6e8;
+      background: linear-gradient(135deg, rgba(255, 138, 191, 0.15), rgba(192, 132, 252, 0.1));
+      border: 1px solid rgba(255, 171, 204, 0.2);
+      color: #ffb8d9;
       font-size: 12px;
       font-weight: 800;
       letter-spacing: 0.04em;
@@ -426,15 +481,15 @@
     .ppb-reason-body strong {
       display: block;
       color: #fff;
-      font-size: 0.96rem;
-      margin-bottom: 4px;
+      font-size: 0.95rem;
+      margin-bottom: 3px;
     }
 
     .ppb-reason-body span {
       display: block;
-      color: #c8c8c8;
+      color: rgba(255, 255, 255, 0.5);
       font-size: 13.5px;
-      line-height: 1.52;
+      line-height: 1.55;
     }
 
     /* ---- Problem cards grid ---- */
@@ -449,43 +504,57 @@
     .ppb-card {
       position: relative;
       overflow: hidden;
-      padding: 22px 20px 20px;
-      border-radius: 20px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      box-shadow:
-        0 8px 24px rgba(0, 0, 0, 0.12),
-        inset 0 1px 0 rgba(255, 255, 255, 0.07);
-      backdrop-filter: blur(12px);
-      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+      padding: 26px 22px 22px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .ppb-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 22px;
+      opacity: 0;
+      background: linear-gradient(135deg, rgba(255, 138, 191, 0.08), rgba(192, 132, 252, 0.05));
+      transition: opacity .25s ease;
+      pointer-events: none;
     }
 
     .ppb-card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(255, 171, 204, 0.34);
-      background: linear-gradient(160deg, rgba(255, 171, 204, 0.1), rgba(255, 255, 255, 0.05));
+      transform: translateY(-6px);
+      border-color: rgba(255, 171, 204, 0.25);
       box-shadow:
-        0 16px 40px rgba(0, 0, 0, 0.18),
-        0 0 40px rgba(255, 171, 204, 0.06),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        0 20px 50px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 171, 204, 0.06);
+    }
+
+    .ppb-card:hover::after {
+      opacity: 1;
     }
 
     .ppb-card-n {
-      width: 36px;
-      height: 36px;
+      position: relative;
+      z-index: 1;
+      width: 38px;
+      height: 38px;
       border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(255, 171, 204, 0.14);
-      border: 1px solid rgba(255, 171, 204, 0.22);
-      color: #ffd6e8;
+      background: linear-gradient(135deg, rgba(255, 138, 191, 0.18), rgba(192, 132, 252, 0.12));
+      border: 1px solid rgba(255, 171, 204, 0.2);
+      color: #ffb8d9;
       font-size: 12px;
       font-weight: 800;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
 
     .ppb-card h3 {
+      position: relative;
+      z-index: 1;
       margin: 0 0 8px;
       font-size: 1.0rem;
       font-weight: 700;
@@ -493,27 +562,38 @@
     }
 
     .ppb-card p {
+      position: relative;
+      z-index: 1;
       margin: 0;
       font-size: 13.5px;
-      color: #cdcdcd;
-      line-height: 1.56;
+      color: rgba(255, 255, 255, 0.5);
+      line-height: 1.6;
     }
 
     /* ---- Answer strip ---- */
 
     .ppb-answer {
-      padding: 22px 32px;
-      border-radius: 20px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow:
-        0 8px 28px rgba(0, 0, 0, 0.14),
-        inset 0 1px 0 rgba(255, 255, 255, 0.07);
-      backdrop-filter: blur(14px);
+      position: relative;
+      padding: 28px 36px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, rgba(255, 138, 191, 0.08), rgba(192, 132, 252, 0.05));
+      border: 1px solid rgba(255, 171, 204, 0.15);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
       text-align: center;
-      font-size: 1.05rem;
-      line-height: 1.72;
-      color: #d8d8d8;
+      font-size: 1.08rem;
+      line-height: 1.76;
+      color: rgba(255, 255, 255, 0.65);
+      overflow: hidden;
+    }
+
+    .ppb-answer::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 20%;
+      right: 20%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 171, 204, 0.3), transparent);
     }
 
     .ppb-answer strong {
@@ -525,81 +605,92 @@
        ========================================== */
 
     .poke-watch-section {
-      margin: 4.5em auto 2.5em;
+      margin: 5.5em auto 3em;
       max-width: 1200px;
       padding: 0 20px;
     }
 
     .poke-watch-heading {
       text-align: center;
-      font-size: clamp(2.2rem, 5.5vw, 3.8rem);
+      font-size: clamp(2.4rem, 6vw, 4.2rem);
       font-weight: 900;
-      letter-spacing: -0.02em;
-      margin-bottom: 0.2em;
-      background: linear-gradient(135deg, #fff 0%, #ffabcc 50%, #c084fc 100%);
+      letter-spacing: -0.03em;
+      margin-bottom: 0.15em;
+      background: linear-gradient(135deg, #ffffff 0%, #ffb8d9 40%, #c084fc 75%, #818cf8 100%);
+      background-size: 200% auto;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      filter: drop-shadow(0 2px 12px rgba(255, 171, 204, 0.15));
+      animation: borderShimmer 6s linear infinite;
+      filter: drop-shadow(0 2px 16px rgba(255, 171, 204, 0.18));
     }
 
     .poke-watch-subheading {
       text-align: center;
-      max-width: 680px;
-      margin: 0 auto 2.2em;
-      line-height: 1.72;
-      color: #ccc;
+      max-width: 640px;
+      margin: 0 auto 2.5em;
+      line-height: 1.76;
+      color: rgba(255, 255, 255, 0.55);
       font-size: 1.06rem;
     }
 
     .poke-watch-shell {
       position: relative;
       border-radius: 28px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-shadow:
-        0 20px 56px rgba(0, 0, 0, 0.26),
-        0 0 100px rgba(255, 171, 204, 0.04),
-        inset 0 1px 0 rgba(255, 255, 255, 0.14);
-      backdrop-filter: blur(18px) saturate(180%);
-      padding: 30px;
+        0 28px 70px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      padding: 32px;
+      overflow: hidden;
+    }
+
+    .poke-watch-shell::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 171, 204, 0.25), rgba(192, 132, 252, 0.2), transparent);
     }
 
     .poke-watch-tabs {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 8px;
       justify-content: center;
-      margin-bottom: 22px;
+      margin-bottom: 26px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 6px;
     }
 
     .poke-watch-tab {
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.06);
-      color: #fff;
-      border-radius: 14px;
-      padding: 12px 26px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.6);
+      border-radius: 12px;
+      padding: 11px 28px;
       font: inherit;
       font-weight: 700;
-      font-size: 0.95rem;
+      font-size: 0.93rem;
       cursor: pointer;
-      backdrop-filter: blur(8px);
-      transition: transform .16s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
+      transition: all .22s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .poke-watch-tab:hover {
-      transform: translateY(-1px);
-      border-color: rgba(255, 171, 204, 0.3);
-      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      background: rgba(255, 255, 255, 0.06);
     }
 
     .poke-watch-tab[aria-selected="true"] {
-      background: linear-gradient(135deg, rgba(255, 171, 204, 0.24), rgba(192, 132, 252, 0.16));
-      border-color: rgba(255, 171, 204, 0.58);
-      box-shadow:
-        0 0 0 3px rgba(255, 171, 204, 0.1),
-        0 4px 16px rgba(255, 171, 204, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.14);
+      background: linear-gradient(135deg, rgba(255, 138, 191, 0.2), rgba(192, 132, 252, 0.14));
+      border-color: rgba(255, 171, 204, 0.3);
+      color: #fff;
+      box-shadow: 0 4px 18px rgba(255, 138, 191, 0.12);
     }
 
     .poke-watch-panels {
@@ -608,60 +699,58 @@
 
     .poke-watch-panel {
       display: none;
-      animation: pokeFade .22s ease;
+      animation: pokeFade .3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .poke-watch-panel.is-active {
       display: grid;
       grid-template-columns: 1fr 1.65fr;
-      gap: 24px;
+      gap: 32px;
       align-items: center;
     }
 
     .poke-watch-panel-copy {
-      padding: 8px 4px;
+      padding: 12px 8px;
     }
 
     .poke-watch-panel-copy h3 {
-      margin: 0 0 14px;
-      font-size: clamp(1.3rem, 2.6vw, 1.9rem);
+      margin: 0 0 16px;
+      font-size: clamp(1.4rem, 2.8vw, 2rem);
       font-weight: 800;
       line-height: 1.15;
-      background: linear-gradient(135deg, #fff, #ffd6e8);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: #fff;
     }
 
     .poke-watch-panel-copy p {
       margin: 0;
       font-size: 1rem;
-      color: #c8c8c8;
-      line-height: 1.72;
+      color: rgba(255, 255, 255, 0.55);
+      line-height: 1.76;
     }
 
     .poke-watch-shot {
       width: 100%;
       display: block;
       border-radius: 18px;
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.3);
       box-shadow:
-        0 10px 32px rgba(0, 0, 0, 0.22),
-        0 0 60px rgba(255, 171, 204, 0.04);
+        0 16px 48px rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(255, 255, 255, 0.03) inset;
       object-fit: cover;
-      transition: transform .25s ease, box-shadow .25s ease;
+      transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .poke-watch-shot:hover {
-      transform: scale(1.015);
+      transform: scale(1.02);
       box-shadow:
-        0 14px 40px rgba(0, 0, 0, 0.28),
-        0 0 80px rgba(255, 171, 204, 0.06);
+        0 20px 56px rgba(0, 0, 0, 0.4),
+        0 0 60px rgba(255, 171, 204, 0.05);
+      border-color: rgba(255, 171, 204, 0.15);
     }
 
     @keyframes pokeFade {
-      from { opacity: 0; transform: translateY(6px); }
+      from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0);   }
     }
 
@@ -670,62 +759,82 @@
        ========================================== */
 
     .poke-faq-section {
-      margin: 4.5em auto 2.5em;
-      max-width: 1200px;
+      margin: 5.5em auto 3em;
+      max-width: 800px;
       padding: 0 20px;
     }
 
     .poke-faq-heading {
       text-align: center;
-      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-size: clamp(2.2rem, 5.5vw, 4rem);
       font-weight: 900;
-      letter-spacing: -0.02em;
-      margin-bottom: 0.2em;
-      background: linear-gradient(135deg, #fff 0%, #ffabcc 50%, #c084fc 100%);
+      letter-spacing: -0.03em;
+      margin-bottom: 0.15em;
+      background: linear-gradient(135deg, #ffffff 0%, #ffb8d9 40%, #c084fc 75%, #818cf8 100%);
+      background-size: 200% auto;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      filter: drop-shadow(0 2px 12px rgba(255, 171, 204, 0.15));
+      animation: borderShimmer 6s linear infinite;
+      filter: drop-shadow(0 2px 16px rgba(255, 171, 204, 0.18));
     }
 
     .poke-faq-subheading {
       text-align: center;
-      max-width: 720px;
-      margin: 0 auto 2em;
-      line-height: 1.72;
-      color: #ccc;
-      font-size: 1.03rem;
+      max-width: 520px;
+      margin: 0 auto 2.5em;
+      line-height: 1.76;
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 1.04rem;
     }
 
     .poke-faq-list {
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }
 
     .poke-faq-item {
-      border-radius: 22px;
-      background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      box-shadow:
-        0 16px 42px rgba(0, 0, 0, 0.16),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(16px) saturate(180%);
-      padding: 20px 22px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.15);
+      padding: 22px 26px;
       overflow: hidden;
-      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .poke-faq-item::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: linear-gradient(180deg, #ff8abf, #c084fc);
+      opacity: 0;
+      transition: opacity .25s ease;
     }
 
     .poke-faq-item:hover {
-      border-color: rgba(255, 171, 204, 0.22);
-      background: linear-gradient(160deg, rgba(255, 171, 204, 0.08), rgba(255, 255, 255, 0.04));
+      border-color: rgba(255, 171, 204, 0.12);
+      background: rgba(255, 171, 204, 0.03);
+    }
+
+    .poke-faq-item:hover::before {
+      opacity: 0.5;
     }
 
     .poke-faq-item[open] {
-      border-color: rgba(255, 171, 204, 0.3);
+      border-color: rgba(255, 171, 204, 0.2);
+      background: rgba(255, 171, 204, 0.04);
       box-shadow:
-        0 16px 42px rgba(0, 0, 0, 0.16),
-        0 0 40px rgba(255, 171, 204, 0.04),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        0 12px 36px rgba(0, 0, 0, 0.2),
+        0 0 40px rgba(255, 171, 204, 0.03);
+    }
+
+    .poke-faq-item[open]::before {
+      opacity: 1;
     }
 
     .poke-faq-item summary {
@@ -736,9 +845,14 @@
       justify-content: space-between;
       gap: 18px;
       color: #fff;
-      font-size: 1.02rem;
-      font-weight: 800;
+      font-size: 1.04rem;
+      font-weight: 700;
       line-height: 1.4;
+      transition: color .2s ease;
+    }
+
+    .poke-faq-item:hover summary {
+      color: #ffd6e8;
     }
 
     .poke-faq-item summary::-webkit-details-marker {
@@ -746,35 +860,38 @@
     }
 
     .poke-faq-item summary::after {
-      content: "+";
+      content: "";
       flex-shrink: 0;
-      width: 34px;
-      height: 34px;
-      border-radius: 12px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      background: rgba(255, 171, 204, 0.14);
-      border: 1px solid rgba(255, 171, 204, 0.26);
-      color: #ffd6e8;
-      font-size: 1.25rem;
-      line-height: 1;
-      transition: transform .18s ease, background .18s ease, border-color .18s ease;
+      background: rgba(255, 171, 204, 0.08);
+      border: 1px solid rgba(255, 171, 204, 0.15);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23ffb8d9' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M7 2v10M2 7h10'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .poke-faq-item[open] summary::after {
       transform: rotate(45deg);
-      background: rgba(255, 171, 204, 0.22);
-      border-color: rgba(255, 171, 204, 0.4);
+      background-color: rgba(255, 138, 191, 0.15);
+      border-color: rgba(255, 171, 204, 0.35);
+      box-shadow: 0 0 12px rgba(255, 138, 191, 0.15);
     }
 
     .poke-faq-a {
-      margin-top: 14px;
-      color: #d5d5d5;
-      font-size: 0.98rem;
-      line-height: 1.76;
-      max-width: 930px;
-      animation: pokeFade .25s ease;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 0.97rem;
+      line-height: 1.8;
+      max-width: 700px;
+      animation: pokeFade .3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     /* ==========================================
@@ -797,15 +914,15 @@
       }
 
       .poke-watch-panel-copy {
-        margin-bottom: 16px;
+        margin-bottom: 20px;
         text-align: center;
       }
     }
 
     @media (max-width: 700px) {
       .ppb-hero {
-        padding: 34px 24px 30px;
-        border-radius: 22px;
+        padding: 40px 26px 34px;
+        border-radius: 24px;
       }
 
       .ppb-hero-title {
@@ -813,8 +930,8 @@
       }
 
       .ppb-narrative {
-        padding: 26px 22px;
-        border-radius: 20px;
+        padding: 28px 24px;
+        border-radius: 22px;
       }
 
       .ppb-grid {
@@ -823,18 +940,23 @@
 
       .ppb-card {
         border-radius: 18px;
-        padding: 18px 16px;
+        padding: 20px 18px;
       }
 
       .ppb-answer {
-        padding: 18px 20px;
-        font-size: 0.98rem;
+        padding: 22px 22px;
+        font-size: 1rem;
         border-radius: 18px;
       }
 
       .poke-watch-shell {
         padding: 18px;
         border-radius: 22px;
+      }
+
+      .poke-watch-tabs {
+        padding: 5px;
+        border-radius: 14px;
       }
 
       .poke-watch-tab {
@@ -855,8 +977,8 @@
       }
 
       .poke-faq-item {
-        border-radius: 18px;
-        padding: 16px 16px;
+        border-radius: 16px;
+        padding: 18px 18px;
       }
 
       .poke-faq-item summary {
