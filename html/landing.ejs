@@ -203,653 +203,439 @@
     }
 
     /* ==========================================
-       ANIMATIONS
+       THE WEB GOT WEIRD — PROBLEM SECTION
        ========================================== */
 
-    @keyframes pokeFade {
-      from { opacity: 0; transform: translateY(10px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes blobFloat1 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      25% { transform: translate(60px, -40px) scale(1.1); }
-      50% { transform: translate(-30px, -80px) scale(0.95); }
-      75% { transform: translate(-60px, -20px) scale(1.05); }
-    }
-
-    @keyframes blobFloat2 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      25% { transform: translate(-50px, 50px) scale(1.05); }
-      50% { transform: translate(40px, 20px) scale(1.15); }
-      75% { transform: translate(20px, -40px) scale(0.9); }
-    }
-
-    @keyframes blobFloat3 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      33% { transform: translate(40px, 60px) scale(1.08); }
-      66% { transform: translate(-50px, 30px) scale(0.92); }
-    }
-
-    @keyframes gradientShift {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
-
-    @keyframes glowPulse {
-      0%, 100% { opacity: 0.4; transform: scale(1); }
-      50% { opacity: 0.7; transform: scale(1.05); }
-    }
-
-    @keyframes borderRotate {
-      0% { --angle: 0deg; }
-      100% { --angle: 360deg; }
-    }
-
-    /* ==========================================
-       THE WEB GOT WEIRD
-       ========================================== */
-
-    .pk-weird {
-      position: relative;
-      margin: 5em auto 4em;
-      max-width: 1200px;
+    .poke-problem-section {
+      margin: 5em auto 3em;
+      max-width: 1100px;
       padding: 0 20px;
-      overflow: visible;
     }
 
-    /* Floating background blobs */
-    .pk-weird-bg {
-      position: absolute;
-      inset: -100px;
-      pointer-events: none;
-      z-index: 0;
-      overflow: hidden;
-    }
+    /* ---- Hero — centered ---- */
 
-    .pk-blob {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.5;
-    }
-
-    .pk-blob--1 {
-      width: 400px;
-      height: 400px;
-      background: radial-gradient(circle, rgba(255, 120, 180, 0.35), transparent 70%);
-      top: -50px;
-      right: 5%;
-      animation: blobFloat1 12s ease-in-out infinite;
-    }
-
-    .pk-blob--2 {
-      width: 350px;
-      height: 350px;
-      background: radial-gradient(circle, rgba(140, 100, 255, 0.3), transparent 70%);
-      bottom: 0;
-      left: 0;
-      animation: blobFloat2 15s ease-in-out infinite;
-    }
-
-    .pk-blob--3 {
-      width: 250px;
-      height: 250px;
-      background: radial-gradient(circle, rgba(100, 200, 255, 0.2), transparent 70%);
-      top: 40%;
-      left: 50%;
-      animation: blobFloat3 10s ease-in-out infinite;
-    }
-
-    .pk-weird-inner {
-      position: relative;
-      z-index: 1;
+    .ppb-hero {
       text-align: center;
-      padding: 80px 40px 60px;
-      border-radius: 32px;
-      background: rgba(12, 8, 24, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      backdrop-filter: blur(40px) saturate(180%);
-      box-shadow:
-        0 40px 100px rgba(0, 0, 0, 0.4),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.2);
-      margin-bottom: 24px;
-      overflow: hidden;
+      padding: 0 20px 48px;
+      margin-bottom: 48px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
 
-    /* animated top border */
-    .pk-weird-inner::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, #ff78b4, #a78bfa, #60c0ff, #ff78b4, transparent);
-      background-size: 300% 100%;
-      animation: gradientShift 4s linear infinite;
-    }
-
-    .pk-weird-title {
-      margin: 0 0 28px;
-      font-size: clamp(4rem, 11vw, 9rem);
+    .ppb-hero-title {
+      margin: 0 0 24px;
+      font-size: clamp(3.5rem, 9vw, 7.5rem);
       font-weight: 900;
-      line-height: 0.88;
-      letter-spacing: -0.05em;
-      background: linear-gradient(135deg, #fff 0%, #ffb0d0 30%, #c9a0ff 60%, #80d0ff 100%);
-      background-size: 300% 300%;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: gradientShift 6s ease infinite;
-      filter: drop-shadow(0 4px 40px rgba(255, 140, 200, 0.3));
-    }
-
-    .pk-weird-sub {
-      margin: 0 auto 40px;
-      max-width: 540px;
-      font-size: 1.1rem;
-      line-height: 1.8;
-      color: rgba(255, 255, 255, 0.6);
-    }
-
-    .pk-weird-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 14px;
-      justify-content: center;
-    }
-
-    /* Buttons */
-    .pk-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      height: 50px;
-      padding: 0 32px;
-      border-radius: 25px;
-      font-weight: 700;
-      font-size: 0.95rem;
-      text-decoration: none;
-      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
-      position: relative;
-    }
-
-    .pk-btn--primary {
-      background: linear-gradient(135deg, #ff78b4, #a78bfa);
+      line-height: 0.9;
+      letter-spacing: -0.04em;
       color: #fff;
-      border: none;
-      box-shadow: 0 4px 24px rgba(255, 120, 180, 0.3), 0 0 60px rgba(255, 120, 180, 0.1);
+      text-shadow: 0 4px 40px rgba(255, 171, 204, 0.15);
     }
 
-    .pk-btn--primary:hover {
-      transform: translateY(-3px) scale(1.03);
-      box-shadow: 0 8px 40px rgba(255, 120, 180, 0.45), 0 0 80px rgba(255, 120, 180, 0.15);
-    }
-
-    .pk-btn--ghost {
-      background: rgba(255, 255, 255, 0.06);
-      color: rgba(255, 255, 255, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(10px);
-    }
-
-    .pk-btn--ghost:hover {
-      transform: translateY(-2px);
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.25);
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
-    }
-
-    /* Reason cards — 4 columns */
-    .pk-reasons {
-      position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-
-    .pk-reason-card {
-      position: relative;
-      padding: 28px 24px;
-      border-radius: 24px;
-      background: rgba(12, 8, 24, 0.5);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      backdrop-filter: blur(20px);
-      text-align: center;
-      transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
-      overflow: hidden;
-    }
-
-    .pk-reason-card::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      border-radius: 24px;
-      background: linear-gradient(135deg, rgba(255, 120, 180, 0.08), rgba(160, 120, 255, 0.05));
-      opacity: 0;
-      transition: opacity .3s ease;
-      pointer-events: none;
-    }
-
-    .pk-reason-card:hover {
-      transform: translateY(-6px);
-      border-color: rgba(255, 171, 204, 0.2);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 40px rgba(255, 120, 180, 0.06);
-    }
-
-    .pk-reason-card:hover::before {
-      opacity: 1;
-    }
-
-    .pk-reason-icon {
-      position: relative;
-      z-index: 1;
-      width: 48px;
-      height: 48px;
-      margin: 0 auto 16px;
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .pk-reason-card strong {
-      position: relative;
-      z-index: 1;
-      display: block;
-      color: #fff;
-      font-size: 0.95rem;
-      margin-bottom: 8px;
-    }
-
-    .pk-reason-card span {
-      position: relative;
-      z-index: 1;
-      display: block;
-      color: rgba(255, 255, 255, 0.45);
-      font-size: 0.85rem;
-      line-height: 1.55;
-    }
-
-    /* Answer strip */
-    .pk-answer-strip {
-      position: relative;
-      z-index: 1;
-      text-align: center;
-      padding: 32px 40px;
-      border-radius: 24px;
-      background: rgba(12, 8, 24, 0.5);
-      border: 1px solid rgba(255, 171, 204, 0.1);
-      backdrop-filter: blur(20px);
-      overflow: hidden;
-    }
-
-    .pk-answer-glow {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 300px;
-      height: 100px;
-      transform: translate(-50%, -50%);
-      background: radial-gradient(ellipse, rgba(255, 120, 180, 0.12), transparent 70%);
-      pointer-events: none;
-      animation: glowPulse 3s ease-in-out infinite;
-    }
-
-    .pk-answer-strip p {
-      position: relative;
-      z-index: 1;
-      margin: 0;
+    .ppb-hero-sub {
+      margin: 0 auto 36px;
+      max-width: 560px;
       font-size: 1.08rem;
-      line-height: 1.7;
+      line-height: 1.78;
       color: rgba(255, 255, 255, 0.55);
     }
 
-    .pk-answer-strip strong {
+    .ppb-hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .ppb-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 46px;
+      padding: 0 28px;
+      border-radius: 23px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.8);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.92rem;
+      transition: all .2s ease;
+    }
+
+    .ppb-btn:first-child {
+      background: #ff8abf;
+      border-color: transparent;
       color: #fff;
-      font-size: 1.12rem;
+    }
+
+    .ppb-btn:hover {
+      transform: translateY(-2px);
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .ppb-btn:first-child:hover {
+      background: #ff9fcb;
+      box-shadow: 0 6px 24px rgba(255, 138, 191, 0.3);
+    }
+
+    /* ---- Narrative — centered intro ---- */
+
+    .ppb-narrative {
+      text-align: center;
+      max-width: 620px;
+      margin: 0 auto 40px;
+      padding: 0;
+    }
+
+    .ppb-narrative h2 {
+      margin: 0 0 14px;
+      font-size: clamp(1.5rem, 3vw, 2.2rem);
+      font-weight: 800;
+      line-height: 1.1;
+      color: #fff;
+    }
+
+    .ppb-narrative p {
+      margin: 0;
+      font-size: 1.02rem;
+      line-height: 1.76;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    /* ---- Reasons — 2x2 grid ---- */
+
+    .ppb-reasons-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .ppb-reason {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 20px 22px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all .2s ease;
+    }
+
+    .ppb-reason:hover {
+      background: rgba(255, 171, 204, 0.04);
+      border-color: rgba(255, 171, 204, 0.12);
+    }
+
+    .ppb-reason-n {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 171, 204, 0.1);
+      color: #ffb8d9;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .ppb-reason-body strong {
+      display: block;
+      color: #fff;
+      font-size: 0.93rem;
+      margin-bottom: 3px;
+    }
+
+    .ppb-reason-body span {
+      display: block;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ---- Answer strip ---- */
+
+    .ppb-answer {
+      text-align: center;
+      padding: 24px 28px;
+      border-radius: 16px;
+      background: rgba(255, 171, 204, 0.06);
+      border: 1px solid rgba(255, 171, 204, 0.1);
+      font-size: 1.04rem;
+      line-height: 1.72;
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    .ppb-answer strong {
+      color: #fff;
     }
 
     /* ==========================================
        WATCH WHATEVER U WANT
        ========================================== */
 
-    .pk-watch {
-      margin: 6em auto 4em;
-      max-width: 1000px;
+    .poke-watch-section {
+      margin: 5em auto 3em;
+      max-width: 900px;
       padding: 0 20px;
       text-align: center;
     }
 
-    .pk-watch-title {
-      font-size: clamp(2.2rem, 6vw, 4rem);
+    .poke-watch-heading {
+      font-size: clamp(2rem, 5.5vw, 3.5rem);
       font-weight: 900;
-      letter-spacing: -0.04em;
+      letter-spacing: -0.03em;
       margin-bottom: 0.15em;
-      background: linear-gradient(135deg, #fff 0%, #ffb0d0 40%, #c9a0ff 70%, #80d0ff 100%);
-      background-size: 300% 300%;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: gradientShift 6s ease infinite;
+      color: #fff;
+      text-shadow: 0 2px 20px rgba(255, 171, 204, 0.12);
     }
 
-    .pk-watch-sub {
-      max-width: 520px;
+    .poke-watch-subheading {
+      max-width: 540px;
       margin: 0 auto 2em;
-      line-height: 1.75;
+      line-height: 1.72;
       color: rgba(255, 255, 255, 0.5);
-      font-size: 1.05rem;
+      font-size: 1.04rem;
     }
 
-    /* Tabs */
-    .pk-watch-tabs {
+    .poke-watch-tabs {
       display: inline-flex;
-      gap: 0;
-      margin-bottom: 32px;
+      gap: 4px;
+      margin-bottom: 28px;
       background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.07);
-      border-radius: 16px;
-      padding: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      padding: 4px;
     }
 
-    .pk-watch-tab {
+    .poke-watch-tab {
       border: none;
       background: transparent;
-      color: rgba(255, 255, 255, 0.45);
-      border-radius: 12px;
-      padding: 10px 28px;
+      color: rgba(255, 255, 255, 0.5);
+      border-radius: 11px;
+      padding: 10px 24px;
       font: inherit;
       font-weight: 700;
-      font-size: 0.92rem;
+      font-size: 0.9rem;
       cursor: pointer;
-      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
-      position: relative;
+      transition: all .2s ease;
     }
 
-    .pk-watch-tab:hover {
-      color: rgba(255, 255, 255, 0.8);
-    }
-
-    .pk-watch-tab[aria-selected="true"] {
-      background: linear-gradient(135deg, rgba(255, 120, 180, 0.2), rgba(160, 120, 255, 0.15));
+    .poke-watch-tab:hover {
       color: #fff;
-      box-shadow: 0 4px 20px rgba(255, 120, 180, 0.12);
+      background: rgba(255, 255, 255, 0.05);
     }
 
-    /* Stage container */
-    .pk-watch-stage {
+    .poke-watch-tab[aria-selected="true"] {
+      background: rgba(255, 171, 204, 0.15);
+      color: #fff;
+    }
+
+    .poke-watch-panels {
       position: relative;
-    }
-
-    .pk-watch-stage-glow {
-      position: absolute;
-      top: 10%;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 60%;
-      height: 200px;
-      background: radial-gradient(ellipse, rgba(255, 120, 180, 0.08), rgba(160, 120, 255, 0.04), transparent 70%);
-      filter: blur(40px);
-      pointer-events: none;
-      z-index: 0;
     }
 
     .poke-watch-panel {
       display: none;
-      animation: pokeFade .3s cubic-bezier(0.4, 0, 0.2, 1);
+      animation: pokeFade .25s ease;
     }
 
     .poke-watch-panel.is-active {
       display: block;
-      position: relative;
-      z-index: 1;
     }
 
-    /* Browser mockup frame */
-    .pk-watch-browser {
-      border-radius: 20px;
-      background: rgba(12, 8, 24, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow:
-        0 40px 100px rgba(0, 0, 0, 0.4),
-        0 0 80px rgba(255, 120, 180, 0.04),
-        inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      overflow: hidden;
-      margin-bottom: 24px;
-      backdrop-filter: blur(20px);
-      transition: all .3s ease;
-    }
-
-    .pk-watch-browser:hover {
-      border-color: rgba(255, 171, 204, 0.15);
-      box-shadow:
-        0 40px 100px rgba(0, 0, 0, 0.45),
-        0 0 100px rgba(255, 120, 180, 0.06),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-      transform: translateY(-4px);
-    }
-
-    .pk-browser-dots {
-      display: flex;
-      gap: 7px;
-      padding: 14px 18px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-    }
-
-    .pk-browser-dots i {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      display: block;
-    }
-
-    .pk-browser-dots i:nth-child(1) { background: #ff5f57; }
-    .pk-browser-dots i:nth-child(2) { background: #febc2e; }
-    .pk-browser-dots i:nth-child(3) { background: #28c840; }
-
-    .pk-watch-img {
+    .poke-watch-shot {
       width: 100%;
       display: block;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.2);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       object-fit: cover;
+      margin-bottom: 20px;
     }
 
-    .pk-watch-caption {
+    .poke-watch-panel-copy {
       text-align: center;
-      max-width: 480px;
+      max-width: 500px;
       margin: 0 auto;
     }
 
-    .pk-watch-caption h3 {
+    .poke-watch-panel-copy h3 {
       margin: 0 0 8px;
       font-size: 1.2rem;
       font-weight: 700;
       color: #fff;
     }
 
-    .pk-watch-caption p {
+    .poke-watch-panel-copy p {
       margin: 0;
       font-size: 0.95rem;
       color: rgba(255, 255, 255, 0.45);
-      line-height: 1.7;
+      line-height: 1.68;
+    }
+
+    @keyframes pokeFade {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     /* ==========================================
        FAQ
        ========================================== */
 
-    .pk-faq {
-      margin: 6em auto 4em;
-      max-width: 800px;
+    .poke-faq-section {
+      margin: 5em auto 3em;
+      max-width: 1100px;
       padding: 0 20px;
     }
 
-    .pk-faq-title {
+    .poke-faq-heading {
       text-align: center;
-      font-size: clamp(2.2rem, 5.5vw, 4rem);
+      font-size: clamp(2rem, 5vw, 3.5rem);
       font-weight: 900;
-      letter-spacing: -0.04em;
+      letter-spacing: -0.03em;
       margin-bottom: 0.15em;
-      background: linear-gradient(135deg, #fff 0%, #ffb0d0 40%, #c9a0ff 70%, #80d0ff 100%);
-      background-size: 300% 300%;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: gradientShift 6s ease infinite;
+      color: #fff;
+      text-shadow: 0 2px 20px rgba(255, 171, 204, 0.12);
     }
 
-    .pk-faq-sub {
+    .poke-faq-subheading {
       text-align: center;
-      max-width: 400px;
+      max-width: 420px;
       margin: 0 auto 2.5em;
-      line-height: 1.75;
+      line-height: 1.72;
       color: rgba(255, 255, 255, 0.5);
       font-size: 1.02rem;
     }
 
-    .pk-faq-grid {
+    .poke-faq-list {
       display: grid;
-      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
     }
 
-    .pk-faq-item {
-      border-radius: 18px;
-      background: rgba(12, 8, 24, 0.5);
+    .poke-faq-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .poke-faq-item {
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.06);
-      backdrop-filter: blur(16px);
-      padding: 0;
+      padding: 18px 20px;
       overflow: hidden;
-      transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: all .2s ease;
     }
 
-    .pk-faq-item:hover {
-      border-color: rgba(255, 171, 204, 0.15);
+    .poke-faq-item:hover {
+      border-color: rgba(255, 171, 204, 0.12);
       background: rgba(255, 171, 204, 0.03);
     }
 
-    .pk-faq-item[open] {
-      border-color: rgba(255, 171, 204, 0.2);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), 0 0 40px rgba(255, 120, 180, 0.03);
+    .poke-faq-item[open] {
+      border-color: rgba(255, 171, 204, 0.18);
+      background: rgba(255, 171, 204, 0.04);
     }
 
-    .pk-faq-item summary {
+    .poke-faq-item summary {
       list-style: none;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 20px 24px;
+      gap: 14px;
       color: #fff;
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-weight: 700;
-      line-height: 1.4;
-      transition: color .2s ease;
+      line-height: 1.35;
     }
 
-    .pk-faq-item:hover summary {
-      color: #ffd0e8;
-    }
-
-    .pk-faq-item summary::-webkit-details-marker {
+    .poke-faq-item summary::-webkit-details-marker {
       display: none;
     }
 
-    .pk-faq-item summary::after {
-      content: "";
+    .poke-faq-item summary::after {
+      content: "+";
       flex-shrink: 0;
-      width: 28px;
-      height: 28px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, rgba(255, 120, 180, 0.1), rgba(160, 120, 255, 0.08));
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23ffb8d9' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M6 1v10M1 6h10'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: center;
-      transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 171, 204, 0.08);
+      color: #ffb8d9;
+      font-size: 1.1rem;
+      font-weight: 400;
+      line-height: 1;
+      transition: all .2s ease;
     }
 
-    .pk-faq-item[open] summary::after {
-      transform: rotate(45deg);
-      background-color: rgba(255, 120, 180, 0.15);
-      border-color: rgba(255, 171, 204, 0.25);
-      box-shadow: 0 0 16px rgba(255, 120, 180, 0.15);
+    .poke-faq-item[open] summary::after {
+      content: "\2212";
+      background: rgba(255, 171, 204, 0.15);
     }
 
-    .pk-faq-body {
-      padding: 0 24px 20px;
+    .poke-faq-a {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
       color: rgba(255, 255, 255, 0.5);
-      font-size: 0.93rem;
-      line-height: 1.78;
-      animation: pokeFade .3s cubic-bezier(0.4, 0, 0.2, 1);
+      font-size: 0.9rem;
+      line-height: 1.72;
+      animation: pokeFade .25s ease;
     }
 
     /* ==========================================
        RESPONSIVE
        ========================================== */
 
-    @media (max-width: 900px) {
-      .pk-reasons {
-        grid-template-columns: repeat(2, 1fr);
+    @media (max-width: 800px) {
+      .ppb-reasons-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .poke-faq-list {
+        grid-template-columns: 1fr;
+      }
+
+      .poke-faq-col {
+        gap: 12px;
       }
     }
 
     @media (max-width: 700px) {
-      .pk-weird-inner {
-        padding: 50px 24px 40px;
-        border-radius: 24px;
+      .ppb-hero {
+        padding: 0 10px 36px;
       }
 
-      .pk-weird-title {
-        font-size: clamp(3rem, 14vw, 5.5rem);
+      .ppb-hero-title {
+        font-size: clamp(2.8rem, 13vw, 5rem);
       }
 
-      .pk-reasons {
-        grid-template-columns: 1fr;
-        gap: 12px;
+      .ppb-reason {
+        padding: 16px 16px;
       }
 
-      .pk-reason-card {
-        padding: 22px 20px;
-        border-radius: 18px;
+      .ppb-answer {
+        padding: 18px 18px;
+        font-size: 0.98rem;
       }
 
-      .pk-answer-strip {
-        padding: 24px 22px;
-        border-radius: 18px;
-      }
-
-      .pk-watch-tabs {
-        flex-wrap: wrap;
-        border-radius: 14px;
-      }
-
-      .pk-watch-tab {
-        flex: 1;
-        text-align: center;
-        padding: 10px 16px;
+      .poke-watch-tab {
+        padding: 9px 18px;
         font-size: 0.85rem;
       }
 
-      .pk-watch-browser {
-        border-radius: 16px;
-      }
-
-      .pk-faq-item summary {
-        padding: 16px 18px;
-        font-size: 0.93rem;
-      }
-
-      .pk-faq-body {
-        padding: 0 18px 16px;
-        font-size: 0.88rem;
+      .poke-watch-shot {
+        border-radius: 12px;
       }
 
       .problem-jump {
@@ -857,6 +643,14 @@
         height: 52px;
         border-radius: 18px;
         bottom: 20px;
+      }
+
+      .poke-faq-item {
+        padding: 16px 16px;
+      }
+
+      .poke-faq-item summary {
+        font-size: 0.9rem;
       }
     }
   </style>
@@ -910,97 +704,104 @@ Take back control of how you explore the internet! Watch videos, translate text,
       </svg>
     </button>
  
-    <!-- ==============================================
-         THE WEB GOT WEIRD
-         ============================================== -->
-    <section class="pk-weird" id="why-poke">
-      <div class="pk-weird-bg">
-        <div class="pk-blob pk-blob--1"></div>
-        <div class="pk-blob pk-blob--2"></div>
-        <div class="pk-blob pk-blob--3"></div>
-      </div>
+    <section class="poke-problem-section" id="why-poke">
 
-      <div class="pk-weird-inner">
-        <h1 class="pk-weird-title">THE WEB<br>GOT WEIRD.</h1>
-        <p class="pk-weird-sub">
+      <!-- Hero statement — centered -->
+      <div class="ppb-hero">
+         <h1 class="ppb-hero-title">THE WEB<br>GOT WEIRD.</h1>
+        <p class="ppb-hero-sub">
           ads on every surface. tracking on every click. dark patterns right where the buttons should be.
           the internet stopped feeling like yours... Poke is the calmer place.
         </p>
-        <div class="pk-weird-actions">
-          <a class="pk-btn pk-btn--primary" href="/search">Start Discovering!</a>
-          <a class="pk-btn pk-btn--ghost" href="/privacy">Read the privacy policy</a>
+        <div class="ppb-hero-actions">
+          <a class="ppb-btn" href="/search">Start Discovering!</a>
+          <a class="ppb-btn" href="/privacy">Read the privacy policy</a>
         </div>
       </div>
 
-      <div class="pk-reasons">
-        <div class="pk-reason-card">
-          <div class="pk-reason-icon">
-            <svg width="22" height="22" fill="none" stroke="#ffb8d9" stroke-width="1.6" stroke-linecap="round"><path d="M1 1l20 20M21 1L1 21"/></svg>
+      <!-- Narrative intro — centered -->
+      <div class="ppb-narrative">
+         <h2>a softer corner of the internet.</h2>
+        <p>
+          no weird little traps, no lecture wall when u just wanna watch something.
+          poke strips it all back so u can actually use the web! without the web using you back :3
+        </p>
+      </div>
+
+      <!-- Reasons — 2x2 grid -->
+      <div class="ppb-reasons-grid">
+        <div class="ppb-reason">
+          <div class="ppb-reason-n">01</div>
+          <div class="ppb-reason-body">
+            <strong>Tracking everywhere</strong>
+            <span>your watch habits and clicks shouldn’t be somebody else’s product.</span>
           </div>
-          <strong>Tracking everywhere</strong>
-          <span>your watch habits and clicks shouldn’t be somebody else’s product.</span>
         </div>
-        <div class="pk-reason-card">
-          <div class="pk-reason-icon">
-            <svg width="22" height="22" fill="none" stroke="#c3a0ff" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="6" width="18" height="12" rx="3"/><path d="M6 10h4M6 14h8"/></svg>
+        <div class="ppb-reason">
+          <div class="ppb-reason-n">02</div>
+          <div class="ppb-reason-body">
+            <strong>Pages drowning in noise</strong>
+            <span>ads & clutter... all fighting for ur attention around the actual content.</span>
           </div>
-          <strong>Pages drowning in noise</strong>
-          <span>ads & clutter... all fighting for ur attention around the actual content.</span>
         </div>
-        <div class="pk-reason-card">
-          <div class="pk-reason-icon">
-            <svg width="22" height="22" fill="none" stroke="#88d4ff" stroke-width="1.6" stroke-linecap="round"><rect x="4" y="2" width="14" height="18" rx="3"/><path d="M9 15h4"/></svg>
+        <div class="ppb-reason">
+          <div class="ppb-reason-n">03</div>
+          <div class="ppb-reason-body">
+            <strong>Lock-in and control</strong>
+            <span>giant platforms shouldn’t get to decide how the whole web feels to use.</span>
           </div>
-          <strong>Lock-in and control</strong>
-          <span>giant platforms shouldn’t get to decide how the whole web feels to use.</span>
         </div>
-        <div class="pk-reason-card">
-          <div class="pk-reason-icon">
-            <svg width="22" height="22" fill="none" stroke="#ffda8a" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="9"/><path d="M11 7v4l3 3"/></svg>
+        <div class="ppb-reason">
+          <div class="ppb-reason-n">04</div>
+          <div class="ppb-reason-body">
+            <strong>Real-world harm</strong>
+            <span>tech shouldn’t scale propaganda, mass surveillance, or worse.</span>
           </div>
-          <strong>Real-world harm</strong>
-          <span>tech shouldn’t scale propaganda, mass surveillance, or worse.</span>
         </div>
       </div>
 
-      <div class="pk-answer-strip">
-        <div class="pk-answer-glow"></div>
-        <p><strong>Poke exists for ppl who are tired of all that.</strong><br>
-        a privacy app that’s calmer, lighter, and just nicer to use :3</p>
+      <!-- Answer strip -->
+      <div class="ppb-answer">
+        <strong>Poke exists for ppl who are tired of all that.</strong>
+        a privacy app that’s calmer, lighter, and just nicer to use :3
       </div>
+
     </section>
 
     <!-- ==============================================
          WATCH WHATEVER U WANT
          ============================================== -->
-    <section class="pk-watch" >
-      <h1 class="pk-watch-title">WATCH WHATEVER U WANT</h1>
-      <p class="pk-watch-sub">
+    <section class="poke-watch-section">
+      <h1 class="poke-watch-heading">WATCH WHATEVER U WANT</h1>
+      <p class="poke-watch-subheading">
         news, gaming, music.. whatever ur into. watch it all without big tech watching you back!
       </p>
 
-      <div class="pk-watch-tabs" role="tablist" aria-label="Content categories">
-        <button class="pk-watch-tab" type="button" role="tab"
+      <!-- Tabs outside the shell -->
+      <div class="poke-watch-tabs" role="tablist" aria-label="Content categories">
+        <button class="poke-watch-tab" type="button" role="tab"
           id="watch-tab-news" aria-controls="watch-panel-news"
-          aria-selected="true" data-target="news">News</button>
-        <button class="pk-watch-tab" type="button" role="tab"
+          aria-selected="true" data-target="news">
+          News
+        </button>
+        <button class="poke-watch-tab" type="button" role="tab"
           id="watch-tab-gaming" aria-controls="watch-panel-gaming"
-          aria-selected="false" data-target="gaming">Gaming</button>
-        <button class="pk-watch-tab" type="button" role="tab"
+          aria-selected="false" data-target="gaming">
+          Gaming
+        </button>
+        <button class="poke-watch-tab" type="button" role="tab"
           id="watch-tab-music" aria-controls="watch-panel-music"
-          aria-selected="false" data-target="music">Music</button>
+          aria-selected="false" data-target="music">
+          Music
+        </button>
       </div>
 
-      <div class="pk-watch-stage">
-        <div class="pk-watch-stage-glow"></div>
+      <div class="poke-watch-panels">
 
         <div class="poke-watch-panel is-active" id="watch-panel-news"
           role="tabpanel" aria-labelledby="watch-tab-news">
-          <div class="pk-watch-browser">
-            <div class="pk-browser-dots"><i></i><i></i><i></i></div>
-            <img class="pk-watch-img" src="/static/poke-screenshot-news.webp" alt="Poke showing a news screenshot" />
-          </div>
-          <div class="pk-watch-caption">
+          <img class="poke-watch-shot" src="/static/poke-screenshot-news.webp" alt="Poke showing a news screenshot" />
+          <div class="poke-watch-panel-copy">
             <h3>Stay up with the news, minus all the noise</h3>
             <p> no paywalls nagging u, no tracking what you clicked. just the actual stuff.</p>
           </div>
@@ -1008,11 +809,8 @@ Take back control of how you explore the internet! Watch videos, translate text,
 
         <div class="poke-watch-panel" id="watch-panel-gaming"
           role="tabpanel" aria-labelledby="watch-tab-gaming" hidden>
-          <div class="pk-watch-browser">
-            <div class="pk-browser-dots"><i></i><i></i><i></i></div>
-            <img class="pk-watch-img" src="/static/poke-screenshot-gaming.webp" alt="Poke showing a gaming screenshot" />
-          </div>
-          <div class="pk-watch-caption">
+          <img class="poke-watch-shot" src="/static/poke-screenshot-gaming.webp" alt="Poke showing a gaming screenshot" />
+          <div class="poke-watch-panel-copy">
             <h3>Watch gaming content, totally clutter-free</h3>
             <p>Watch tottally epic gamer moments without ads!</p>
           </div>
@@ -1020,83 +818,85 @@ Take back control of how you explore the internet! Watch videos, translate text,
 
         <div class="poke-watch-panel" id="watch-panel-music"
           role="tabpanel" aria-labelledby="watch-tab-music" hidden>
-          <div class="pk-watch-browser">
-            <div class="pk-browser-dots"><i></i><i></i><i></i></div>
-            <img class="pk-watch-img" src="/static/poke-screenshot-music.webp" alt="Poke showing a music screenshot" />
-          </div>
-          <div class="pk-watch-caption">
+          <img class="poke-watch-shot" src="/static/poke-screenshot-music.webp" alt="Poke showing a music screenshot" />
+          <div class="poke-watch-panel-copy">
             <h3>Listen to whatever fits ur mood today</h3>
             <p>find new music, find good and bad music, explore genres — all without being profiled for it.</p>
           </div>
         </div>
+
       </div>
     </section>
 
     <!-- ==============================================
          FAQ
          ============================================== -->
-    <section class="pk-faq" id="faq">
-      <h1 class="pk-faq-title">FAQ!!</h1>
-      <p class="pk-faq-sub">
+    <section class="poke-faq-section" id="faq">
+      <h1 class="poke-faq-heading">FAQ!!</h1>
+      <p class="poke-faq-subheading">
         lil things people ask a lot about poke :3
       </p>
 
-      <div class="pk-faq-grid">
-        <details class="pk-faq-item">
-          <summary>is poke legal?</summary>
-          <div class="pk-faq-body">
-            yeah. poke is a privacy-focused layer for publicly available youtube data. in the united states, 17 u.s.c. § 512(a) covers intermediaries that transmit material without modifying it, and in the european union, directive 2001/29/ec covers temporary and incidental copies. poke does not rehost or redistribute copyrighted videos.
-          </div>
-        </details>
+      <div class="poke-faq-list">
+        <div class="poke-faq-col">
+          <details class="poke-faq-item">
+            <summary>is poke legal?</summary>
+            <div class="poke-faq-a">
+              yeah. poke is a privacy-focused layer for publicly available youtube data. in the united states, 17 u.s.c. § 512(a) covers intermediaries that transmit material without modifying it, and in the european union, directive 2001/29/ec covers temporary and incidental copies. poke does not rehost or redistribute copyrighted videos.
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>who owns poke?</summary>
-          <div class="pk-faq-body">
-            poke was founded by ashley íris celeste and is built with love by ashley íris and amazing contributors :3
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>who owns poke?</summary>
+            <div class="poke-faq-a">
+              poke was founded by ashley íris celeste and is built with love by ashley íris and amazing contributors :3
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>is poke private?</summary>
-          <div class="pk-faq-body">
-            yep!! poke is made to let u watch, search, and explore without ads or tracking following u around.
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>is poke private?</summary>
+            <div class="poke-faq-a">
+              yep!! poke is made to let u watch, search, and explore without ads or tracking following u around.
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>does poke have every youtube video?</summary>
-          <div class="pk-faq-body">
-            yes — if it’s publicly available on youtube, poke can show it :3
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>does poke have every youtube video?</summary>
+            <div class="poke-faq-a">
+              yes — if it’s publicly available on youtube, poke can show it :3
+            </div>
+          </details>
+        </div>
 
-        <details class="pk-faq-item">
-          <summary>how many people use poke?</summary>
-          <div class="pk-faq-body">
-            we don’t really know (privacy!) — but our best guess is here: <a href="/api/stats?view=human" style="color:#fff; text-decoration: underline;">/api/stats</a>
-          </div>
-        </details>
+        <div class="poke-faq-col">
+          <details class="poke-faq-item">
+            <summary>how many people use poke?</summary>
+            <div class="poke-faq-a">
+              we don’t really know (privacy!) — but our best guess is here: <a href="/api/stats?view=human" style="color:#fff; text-decoration: underline;">/api/stats</a>
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>why poke over youtube?</summary>
-          <div class="pk-faq-body">
-            poke is more lightweight, doesn’t shove ads at u, lets u download videos, and it’s really really really fast :3
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>why poke over youtube?</summary>
+            <div class="poke-faq-a">
+              poke is more lightweight, doesn’t shove ads at u, lets u download videos, and it’s really really really fast :3
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>how does poke protect my privacy?</summary>
-          <div class="pk-faq-body">
-            we proxy requests through our server so requests come from one shared ip (kinda like a private vpn layer), not yours.
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>how does poke protect my privacy?</summary>
+            <div class="poke-faq-a">
+              we proxy requests through our server so requests come from one shared ip (kinda like a private vpn layer), not yours.
+            </div>
+          </details>
 
-        <details class="pk-faq-item">
-          <summary>is fish legal in poke?</summary>
-          <div class="pk-faq-body">
-            fish.
-          </div>
-        </details>
+          <details class="poke-faq-item">
+            <summary>is fish legal in poke?</summary>
+            <div class="poke-faq-a">
+              fish.
+            </div>
+          </details>
+        </div>
       </div>
     </section>
 
@@ -1472,7 +1272,7 @@ Take back control of how you explore the internet! Watch videos, translate text,
 
     <script>
        (function () {
-        var tabs   = document.querySelectorAll('.pk-watch-tab');
+        var tabs   = document.querySelectorAll('.poke-watch-tab');
         var panels = document.querySelectorAll('.poke-watch-panel');
 
         function activateTab(name) {
