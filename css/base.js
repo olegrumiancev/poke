@@ -1161,16 +1161,25 @@ _allowAudioTimeWrite: false
       _bgPlayConfirmed = false;
 
       try {
-        // Step 1: Fire play() on the raw HTMLVideoElement IMMEDIATELY,
         const vn = getVideoNode();
         if (vn && typeof vn.play === 'function') {
           vn.play().catch(() => {});
           _preemptiveFired = true;
         }
-
-        // Step 2: Fire audio.play() SIMULTANEOUSLY with video — no seek.
-        if (coupledMode && audio && audio.paused) {
-          audio.play().catch(() => {});
+        if (coupledMode && audio) {
+          // Sync audio time to video BEFORE playing — eliminates desync gap
+          try {
+            const vt = Number(video.currentTime()) || 0;
+            if (isFinite(vt) && Math.abs((audio.currentTime || 0) - vt) > 0.15) {
+              audio.currentTime = vt;
+              _audioPreAligned = true;
+            }
+          } catch {}
+          if (audio.paused) {
+            cancelActiveFade();
+            audio.volume = state.savedAudioVolume || 1;
+            audio.play().catch(() => {});
+          }
         }
       } catch {}
     }
@@ -3111,9 +3120,10 @@ _allowAudioTimeWrite: false
 
   function shouldBlockNewAudioStart() {
     if (!coupledMode) return false;
-    // Block audio during seeking/buffering — seek finalize owns audio restart
     if (state.seeking || state.seekBuffering) return true;
     if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return true;
+    // During tab-return grace, don't block audio even if video is momentarily paused
+    if (inBgReturnGrace() || BringBackToTabManager.isLocked()) return false;
 
     if (getVideoPaused() && !isHiddenBackground()) return true;
 
@@ -6813,8 +6823,15 @@ try {
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
-        audio.play().catch(() => {});
+      if (coupledMode && audio) {
+        // Immediately sync audio position and start playing — no delay
+        const vtNow = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+        if (isFinite(vtNow)) safeSetAudioTime(vtNow);
+        if (audio.paused) {
+          cancelActiveFade();
+          audio.volume = state.savedAudioVolume || 1;
+          audio.play().catch(() => {});
+        }
       }
     });
 
@@ -7046,13 +7063,12 @@ try {
         state.mediaErrorCount = 0;
 
         if (platform.chromiumOnlyBrowser) {
-          // Extended settling windows on tab return to absorb Chromium's spurious pause burst
-          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 3500);
-          state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 2000);
-          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 4000);
-          setChromiumPauseEventSuppress(BG_RETURN_GRACE_MS);
-          setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
-          setChromiumAutoPauseBlock(BG_RETURN_GRACE_MS);
+          state.chromiumBgSettlingUntil = Math.max(state.chromiumBgSettlingUntil, now() + 400);
+          state.chromiumAudioStartLockUntil = 0; // Don't block audio on tab return
+          state.mediaSessionPauseBlockedUntil = Math.max(state.mediaSessionPauseBlockedUntil, now() + 800);
+          setChromiumPauseEventSuppress(800);
+          setChromiumBgPauseBlock(800);
+          setChromiumAutoPauseBlock(800);
         }
         state.rapidToggleDetected = false;
         state.rapidToggleUntil = 0;
