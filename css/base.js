@@ -3946,6 +3946,9 @@ try {
     if (startupSettleActive() && !_immediateAction && !userPauseIntentActive() && !mediaSessionForcedPauseActive()) return;
     state.intendedPlaying = false;
     state.bufferHoldIntendedPlaying = false;
+    state.resumeOnVisible = false;
+    state.bgHiddenWasPlaying = false;
+    state.tabReturnImmuneUntil = 0;
     state.strictBufferHold = false; state.bufferHoldSince = 0;
     state.strictBufferReason = "";
     state.strictBufferHoldFrames = 0;
@@ -5779,9 +5782,9 @@ try {
     });
     video.on("play", () => {
       if (state.seeking || state.seekBuffering) return;
-      // TAB RETURN + STARTUP IMMUNITY: accept play unconditionally.
-      // This MUST be before any other check — nothing may pause during immunity.
-      if (state.tabReturnImmuneUntil > now()) {
+      // TAB RETURN + STARTUP IMMUNITY: accept play if we were playing or during startup.
+      // Never override an explicit user pause.
+      if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
         if (!coupledMode) MediumQualityManager.markUserPlayed();
@@ -5967,9 +5970,10 @@ try {
 
     video.on("pause", () => {
       if (state.seeking || state.seekBuffering) return;
-      // HARD IMMUNITY: after tab return, reject ALL pause events for 1.5s.
-      // Only a real user click (userPauseIntentPresetAt) can override this.
+      // HARD IMMUNITY: after tab return, reject pause events if we were playing or in startup.
+      // Never fight the user's explicit pause.
       if (state.tabReturnImmuneUntil > now() &&
+          (state.intendedPlaying || !state.firstPlayCommitted) &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
         const _vn = getVideoNode();
         if (_vn && typeof _vn.play === 'function') _vn.play().catch(() => {});
@@ -6250,7 +6254,7 @@ try {
         return;
       }
       // Tab-return immunity: video is playing — that's exactly what we want. Accept it.
-      if (state.tabReturnImmuneUntil > now()) {
+      if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
         state.videoWaiting = false;
         state.videoStallSince = 0;
         state.intendedPlaying = true;
@@ -6889,8 +6893,9 @@ try {
     if (state.bbtabRetryTimer)    { clearTimeout(state.bbtabRetryTimer);         state.bbtabRetryTimer    = null; }
     if (state.bbtabAudioSyncTimer){ clearTimeout(state.bbtabAudioSyncTimer);     state.bbtabAudioSyncTimer = null; }
 
-    // During startup, intendedPlaying may still be false — allow if autoplay desired
-    if (!state.intendedPlaying && !wantsStartupAutoplay() && !state.resumeOnVisible) return;
+    // Only allow if: was playing, OR resume flagged, OR startup hasn't committed yet
+    if (!state.intendedPlaying && !state.resumeOnVisible &&
+        !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
     const bbtGen = state.tabReturnGen;
 
     BringBackToTabManager.onTabReturn();
@@ -6904,8 +6909,7 @@ try {
       state.bbtabRetryRafId = null;
       if (state.tabReturnGen !== bbtGen) return;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-      // During startup, intendedPlaying may be false — force it if autoplay wanted
-      if (!state.intendedPlaying && wantsStartupAutoplay()) {
+      if (!state.intendedPlaying && !state.firstPlayCommitted && wantsStartupAutoplay()) {
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
       }
@@ -6927,7 +6931,7 @@ try {
     // ── Shot 1.25: 80ms quick-check ──────────────────────────────────────
     setTimeout(() => {
       if (state.tabReturnGen !== bbtGen) return;
-      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
+      if (!state.intendedPlaying && !state.firstPlayCommitted && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6946,7 +6950,7 @@ try {
     // ── Shot 1.5: 200ms intermediate ──────────────────────────────────────
     setTimeout(() => {
       if (state.tabReturnGen !== bbtGen) return;
-      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
+      if (!state.intendedPlaying && !state.firstPlayCommitted && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6969,7 +6973,7 @@ try {
     state.bbtabRetryTimer = setTimeout(() => {
       state.bbtabRetryTimer = null;
       if (state.tabReturnGen !== bbtGen) return;
-      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
+      if (!state.intendedPlaying && !state.firstPlayCommitted && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       const vPaused = getVideoPaused();
       if (!vPaused) {
@@ -7006,7 +7010,8 @@ try {
   function _doBringBackRetry() {}
 
   function executeSeamlessWakeup() {
-    if (!state.intendedPlaying && !wantsStartupAutoplay() && !state.resumeOnVisible) return;
+    if (!state.intendedPlaying && !state.resumeOnVisible &&
+        !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
     if (state.wakeupTimer) return;
     clearTimeout(state.wakeupTimer);
     state.wakeupTimer = null;
@@ -7192,11 +7197,17 @@ try {
         }
 
         if (state.intendedPlaying) {
+          // INSTANT play — don't wait for rAF or any timer
+          try {
+            const _vn = getVideoNode();
+            if (_vn && _vn.paused) _vn.play().catch(() => {});
+            if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+          } catch {}
+
           if (platform.useBgControllerRetry) {
             state.resumeOnVisible = false;
             state.bgHiddenWasPlaying = false;
 
-            // ALWAYS start the bring-back retry loop when intendedPlaying=true on
             startBringBackRetry();
             executeSeamlessWakeup();
 
@@ -7347,10 +7358,13 @@ try {
       }
 
       if (state.intendedPlaying) {
-        // Arm BBTM for ALL browsers — not just Chromium. Firefox and Safari also
-        // need the BBTM lock so the pause handler drops their spurious pauses.
+        // INSTANT play — don't wait for rAF
+        try {
+          const _vn = getVideoNode();
+          if (_vn && _vn.paused) _vn.play().catch(() => {});
+          if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+        } catch {}
         BringBackToTabManager.onTabReturn();
-        // Fire startBringBackRetry immediately (not in a 50ms timeout).
         if (document.visibilityState === "visible") {
           startBringBackRetry();
           executeSeamlessWakeup();
