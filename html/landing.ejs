@@ -221,14 +221,15 @@
       background:
         linear-gradient(
           135deg,
-          rgba(255, 171, 204, 0.14) 0%,
-          rgba(255, 255, 255, 0.07) 50%,
-          rgba(100, 60, 200, 0.1) 100%
+          rgba(255, 171, 204, 0.16) 0%,
+          rgba(255, 255, 255, 0.07) 40%,
+          rgba(100, 60, 200, 0.13) 100%
         );
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.16);
       box-shadow:
-        0 24px 64px rgba(0, 0, 0, 0.24),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        0 24px 64px rgba(0, 0, 0, 0.28),
+        0 0 120px rgba(255, 171, 204, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.14);
       backdrop-filter: blur(18px) saturate(180%);
       padding: 60px 64px 56px;
       margin-bottom: 20px;
@@ -259,13 +260,17 @@
     }
 
     .ppb-eyebrow {
-      display: block;
+      display: inline-block;
       margin: 0 0 18px;
       font-size: 11px;
       letter-spacing: 0.24em;
       text-transform: uppercase;
       color: #ffc8e0;
       font-weight: 700;
+      background: rgba(255, 171, 204, 0.12);
+      border: 1px solid rgba(255, 171, 204, 0.2);
+      padding: 6px 14px;
+      border-radius: 100px;
     }
 
     .ppb-hero-title {
@@ -273,11 +278,12 @@
       font-size: clamp(3.8rem, 9.5vw, 8rem);
       font-weight: 900;
       line-height: 0.86;
-      color: #fff;
       letter-spacing: -0.03em;
-      text-shadow:
-        0 4px 24px rgba(255, 171, 204, 0.18),
-        0 16px 48px rgba(0, 0, 0, 0.22);
+      background: linear-gradient(135deg, #fff 0%, #ffabcc 45%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 4px 24px rgba(255, 171, 204, 0.22)) drop-shadow(0 16px 48px rgba(0, 0, 0, 0.22));
     }
 
     .ppb-hero-sub {
@@ -299,7 +305,7 @@
       align-items: center;
       justify-content: center;
       min-height: 48px;
-      padding: 0 24px;
+      padding: 0 28px;
       border-radius: 14px;
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(255, 255, 255, 0.09);
@@ -308,13 +314,24 @@
       text-decoration: none;
       font-weight: 700;
       font-size: 0.96rem;
-      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+
+    .ppb-btn:first-child {
+      background: linear-gradient(135deg, rgba(255, 171, 204, 0.28), rgba(192, 132, 252, 0.2));
+      border-color: rgba(255, 171, 204, 0.35);
     }
 
     .ppb-btn:hover {
       transform: translateY(-2px);
       border-color: rgba(255, 171, 204, 0.55);
       background: rgba(255, 171, 204, 0.18);
+      box-shadow: 0 8px 24px rgba(255, 171, 204, 0.12);
+    }
+
+    .ppb-btn:first-child:hover {
+      background: linear-gradient(135deg, rgba(255, 171, 204, 0.36), rgba(192, 132, 252, 0.28));
+      box-shadow: 0 8px 32px rgba(255, 171, 204, 0.18);
     }
 
     /* ---- Two-column split: narrative + reasons ---- */
@@ -351,8 +368,11 @@
       margin: 0 0 18px;
       font-size: clamp(1.7rem, 3.2vw, 2.6rem);
       font-weight: 900;
-      line-height: 1.0;
-      color: #fff;
+      line-height: 1.05;
+      background: linear-gradient(135deg, #fff, #ffd6e8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
 
     .ppb-narrative p {
@@ -378,12 +398,13 @@
       border: 1px solid rgba(255, 255, 255, 0.11);
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
       backdrop-filter: blur(12px);
-      transition: border-color .18s ease, background .18s ease;
+      transition: border-color .18s ease, background .18s ease, transform .18s ease;
     }
 
     .ppb-reason:hover {
       border-color: rgba(255, 171, 204, 0.24);
       background: linear-gradient(160deg, rgba(255, 171, 204, 0.09), rgba(255, 255, 255, 0.04));
+      transform: translateX(4px);
     }
 
     .ppb-reason-n {
@@ -440,9 +461,13 @@
     }
 
     .ppb-card:hover {
-      transform: translateY(-3px);
+      transform: translateY(-4px);
       border-color: rgba(255, 171, 204, 0.34);
       background: linear-gradient(160deg, rgba(255, 171, 204, 0.1), rgba(255, 255, 255, 0.05));
+      box-shadow:
+        0 16px 40px rgba(0, 0, 0, 0.18),
+        0 0 40px rgba(255, 171, 204, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
 
     .ppb-card-n {
@@ -511,7 +536,11 @@
       font-weight: 900;
       letter-spacing: -0.02em;
       margin-bottom: 0.2em;
-      color: #fff;
+      background: linear-gradient(135deg, #fff 0%, #ffabcc 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 2px 12px rgba(255, 171, 204, 0.15));
     }
 
     .poke-watch-subheading {
@@ -524,14 +553,16 @@
     }
 
     .poke-watch-shell {
+      position: relative;
       border-radius: 28px;
       background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.16);
       box-shadow:
-        0 20px 56px rgba(0, 0, 0, 0.22),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        0 20px 56px rgba(0, 0, 0, 0.26),
+        0 0 100px rgba(255, 171, 204, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.14);
       backdrop-filter: blur(18px) saturate(180%);
-      padding: 26px;
+      padding: 30px;
     }
 
     .poke-watch-tabs {
@@ -563,11 +594,12 @@
     }
 
     .poke-watch-tab[aria-selected="true"] {
-      background: rgba(255, 171, 204, 0.2);
+      background: linear-gradient(135deg, rgba(255, 171, 204, 0.24), rgba(192, 132, 252, 0.16));
       border-color: rgba(255, 171, 204, 0.58);
       box-shadow:
         0 0 0 3px rgba(255, 171, 204, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        0 4px 16px rgba(255, 171, 204, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.14);
     }
 
     .poke-watch-panels {
@@ -594,8 +626,11 @@
       margin: 0 0 14px;
       font-size: clamp(1.3rem, 2.6vw, 1.9rem);
       font-weight: 800;
-      line-height: 1.1;
-      color: #fff;
+      line-height: 1.15;
+      background: linear-gradient(135deg, #fff, #ffd6e8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
 
     .poke-watch-panel-copy p {
@@ -611,8 +646,18 @@
       border-radius: 18px;
       border: 1px solid rgba(255, 255, 255, 0.14);
       background: rgba(0, 0, 0, 0.2);
-      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.22);
+      box-shadow:
+        0 10px 32px rgba(0, 0, 0, 0.22),
+        0 0 60px rgba(255, 171, 204, 0.04);
       object-fit: cover;
+      transition: transform .25s ease, box-shadow .25s ease;
+    }
+
+    .poke-watch-shot:hover {
+      transform: scale(1.015);
+      box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.28),
+        0 0 80px rgba(255, 171, 204, 0.06);
     }
 
     @keyframes pokeFade {
@@ -636,7 +681,11 @@
       font-weight: 900;
       letter-spacing: -0.02em;
       margin-bottom: 0.2em;
-      color: #fff;
+      background: linear-gradient(135deg, #fff 0%, #ffabcc 50%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 2px 12px rgba(255, 171, 204, 0.15));
     }
 
     .poke-faq-subheading {
@@ -663,6 +712,20 @@
       backdrop-filter: blur(16px) saturate(180%);
       padding: 20px 22px;
       overflow: hidden;
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+
+    .poke-faq-item:hover {
+      border-color: rgba(255, 171, 204, 0.22);
+      background: linear-gradient(160deg, rgba(255, 171, 204, 0.08), rgba(255, 255, 255, 0.04));
+    }
+
+    .poke-faq-item[open] {
+      border-color: rgba(255, 171, 204, 0.3);
+      box-shadow:
+        0 16px 42px rgba(0, 0, 0, 0.16),
+        0 0 40px rgba(255, 171, 204, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12);
     }
 
     .poke-faq-item summary {
@@ -711,6 +774,7 @@
       font-size: 0.98rem;
       line-height: 1.76;
       max-width: 930px;
+      animation: pokeFade .25s ease;
     }
 
     /* ==========================================
