@@ -6644,17 +6644,14 @@ try {
         }, SEEK_WATCHDOG_MS);
 
         if (coupledMode && audio) {
+          squelchAudioEvents(400);
+          try {
+            cancelActiveFade();
+            audio.volume = 0;
+            if (!audio.paused) audio.pause();
+          } catch {}
           if (isFinite(seekTime)) {
-            safeSetAudioTime(seekTime);
-          }
-          // Only pause audio if user was NOT playing — preserve playback during seek
-          if (!state.intendedPlaying) {
-            squelchAudioEvents(400);
-            try {
-              cancelActiveFade();
-              audio.volume = 0;
-              if (!audio.paused) audio.pause();
-            } catch {}
+            audio.currentTime = seekTime;
           }
         }
 
@@ -6685,7 +6682,9 @@ try {
         state.lastKnownGoodVTts = now();
         if (coupledMode && audio) {
           squelchAudioEvents(150);
-          safeSetAudioTime(newTime);
+          try {
+            if (isFinite(newTime) && newTime >= 0) audio.currentTime = newTime;
+          } catch {}
         }
         state.driftStableFrames = 0;
         state.lastDrift = 0;
