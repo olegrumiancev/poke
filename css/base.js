@@ -2414,7 +2414,7 @@ _allowAudioTimeWrite: false
     if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
     state.tabReturnAudioMuted = true; // repurposed: now means "frozen, don't touch"
     // DON'T set audio.volume = 0. Leave it as-is.
-    // After 400ms, unfreeze and do one clean sync
+    // After 150ms, unfreeze and do one clean sync
     state.tabReturnSettleTimer = setTimeout(() => {
       state.tabReturnSettleTimer = null;
       state.tabReturnAudioMuted = false;
@@ -2426,12 +2426,11 @@ _allowAudioTimeWrite: false
         if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
       } catch {}
       if (audio.paused) { try { audio.play().catch(() => {}); } catch {} }
-      // Ensure volume is correct (no fade needed — it was never zeroed)
       try {
         const tv = targetVolFromVideo();
         if (Math.abs(audio.volume - tv) > 0.02) audio.volume = tv;
       } catch {}
-    }, 400);
+    }, 150);
   }
 
   function cancelTabReturnAudioMute() {
@@ -5834,7 +5833,7 @@ try {
           return;
         }
         // Startup autoplay (before user has ever interacted) → accept
-        if (!state.firstPlayCommitted && wantsStartupAutoplay() && pageLoadedForAutoplay()) {
+        if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
           state.intendedPlaying = true;
           state.bufferHoldIntendedPlaying = true;
           state.firstPlayCommitted = true;
@@ -5889,8 +5888,8 @@ try {
         const isUserAction = (now() - state.lastUserActionTime) < 1500;
 
         if (isUserAction || userPlayIntentActive() || wantsStartupAutoplay()) {
-          // PAGE-LOAD GATE
-          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay()) {
+          // PAGE-LOAD GATE — skip if startup autoplay is desired
+          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay() && !wantsStartupAutoplay()) {
             execProgrammaticVideoPause();
             return;
           }
@@ -6284,7 +6283,7 @@ try {
         }
         // Commit first play
         if (!state.firstPlayCommitted) {
-          if (pageLoadedForAutoplay() || (state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000)) {
+          if (wantsStartupAutoplay() || pageLoadedForAutoplay() || (state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000)) {
             state.firstPlayCommitted = true;
             state.startupKickDone = true;
             state.startupPhase = false;
@@ -6312,8 +6311,7 @@ try {
       state.videoStallSince = 0;
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
-        // PAGE-LOAD GATE: don't commit the first play before window.load unless
-        if (pageLoadedForAutoplay() || state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000) {
+        if (wantsStartupAutoplay() || pageLoadedForAutoplay() || state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
@@ -7006,7 +7004,7 @@ try {
   function _doBringBackRetry() {}
 
   function executeSeamlessWakeup() {
-    if (!state.intendedPlaying) return;
+    if (!state.intendedPlaying && !wantsStartupAutoplay() && !state.resumeOnVisible) return;
     if (state.wakeupTimer) return;
     clearTimeout(state.wakeupTimer);
     state.wakeupTimer = null;
@@ -7041,9 +7039,12 @@ try {
         // One or both paused — perform full catch-up
         seamlessBgCatchUp().catch(() => {});
       } else {
-        // Non-coupled: just ensure video is playing (but respect MQM pause)
+        // Non-coupled: ensure video is playing. During immunity, clear MQM block.
+        if (state.tabReturnImmuneUntil > now()) MediumQualityManager.markUserPlayed();
         if (getVideoPaused() && !userPauseLockActive() &&
           !MediumQualityManager.intentPaused) {
+          state.intendedPlaying = true;
+          state.bufferHoldIntendedPlaying = true;
           playTogether().catch(() => {});
           } else {
             scheduleSync(0);
