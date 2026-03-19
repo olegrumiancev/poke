@@ -314,6 +314,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const vjsInner = video?.el?.()?.querySelector?.("video");
       if (vjsInner && vjsInner !== videoEl) enforceNoLoop(vjsInner);
     } catch {}
+
+  // Gate audio.play() — block during seeking/seekBuffering so nothing can restart audio mid-seek
+  if (audio && typeof audio.play === "function") {
+    const _origAudioPlay = audio.play.bind(audio);
+    audio.play = function() {
+      if (state.seeking || state.seekBuffering) {
+        return Promise.resolve();
+      }
+      return _origAudioPlay();
+    };
+  }
+
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
     const metaDesc = document.querySelector('meta[name="twitter:description"]')?.content || "";
     let stats = "";
@@ -3083,9 +3095,10 @@ seekBufferResumeTimer: null
 
   function shouldBlockNewAudioStart() {
     if (!coupledMode) return false;
+    // Block audio during seeking/buffering — seek finalize owns audio restart
+    if (state.seeking || state.seekBuffering) return true;
     if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return true;
 
-    // ── HARD INVARIANT: audio must NEVER start when video is paused in the foregro
     if (getVideoPaused() && !isHiddenBackground()) return true;
 
     if (state.startupPhase && !state.firstPlayCommitted) return false;
@@ -3221,9 +3234,10 @@ try {
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // HARD INVARIANT: never start audio while video is paused in foreground, regardless of force.
-    // This is belt-and-suspenders with shouldBlockNewAudioStart() — it catches async races where
-    // force=true bypasses other guards but video has since paused between the call and execution.
+    // HARD INVARIANT: never start audio during seeking or seek-buffering.
+    // Only finalizeSeekSync/playTogether may restart audio after seek completes.
+    if (state.seeking || state.seekBuffering) return false;
+
     if (getVideoPaused() && !isHiddenBackground()) return false;
 
     // CRITICAL FIX: Cancel any active volume fade before attempting to play.
