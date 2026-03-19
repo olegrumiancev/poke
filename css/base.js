@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  */
 
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -2408,90 +2408,45 @@ _allowAudioTimeWrite: false
   function now() { return performance.now(); }
   function isTabReturnImmune() { return state.tabReturnImmuneUntil > now(); }
 
-  // ── CLEAN TAB-RETURN AUDIO HANDLER ──────────────────────────────────────
-  // Mutes audio instantly on tab return so all the retry shots are inaudible.
-  // After video is confirmed playing and stable, does ONE clean audio start
-  // with a smooth fade-in. No echo, no pop, no double-play.
+  // ── TAB-RETURN AUDIO MUTE ────────────────────────────────────────────
+  // Mutes audio for a short window so all retry shots are inaudible,
+  // then does ONE fade-in. No gen tracking, no polling — just a hard timer.
   function beginTabReturnAudioMute() {
     if (!coupledMode || !audio) return;
-    // Kill any pending settle timer from a previous tab return
-    if (state.tabReturnSettleTimer) {
-      clearTimeout(state.tabReturnSettleTimer);
-      state.tabReturnSettleTimer = null;
-    }
-    // Instantly mute audio — all retry shots will play() at volume 0
+    if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
     state.tabReturnAudioMuted = true;
     try { cancelActiveFade(); } catch {}
     try { audio.volume = 0; } catch {}
-
-    const myGen = state.tabReturnGen;
-
-    // Poll until video is playing and stable, then do ONE clean audio start
-    let attempts = 0;
-    const settle = () => {
+    // After 600ms, unconditionally unmute with a fade-in.
+    // 600ms is enough for all retry shots to finish their play() calls.
+    // No gen checks — if user alt-tabs away before 600ms, blur handler cancels.
+    state.tabReturnSettleTimer = setTimeout(() => {
       state.tabReturnSettleTimer = null;
-      if (state.tabReturnGen !== myGen) return; // stale
-      if (!state.intendedPlaying && !state.resumeOnVisible) {
-        // User paused — just unmute flag and leave audio silent
-        state.tabReturnAudioMuted = false;
-        return;
-      }
-      attempts++;
-      const vPaused = getVideoPaused();
-      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-      const vRS = (() => { try { return getVideoReadyState(); } catch { return 0; } })();
-
-      // Wait until: video playing + readyState >= 3 + position advancing, OR 30 attempts (3s max)
-      if (vPaused || vRS < 3) {
-        if (attempts < 30) {
-          state.tabReturnSettleTimer = setTimeout(settle, 100);
-        } else {
-          // Timeout — force unmute anyway
-          finalizeTabReturnAudio(myGen, vt);
-        }
-        return;
-      }
-      // Video is playing — wait one more tick to confirm it's stable
-      state.tabReturnSettleTimer = setTimeout(() => {
-        state.tabReturnSettleTimer = null;
-        if (state.tabReturnGen !== myGen) return;
-        const vt2 = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-        finalizeTabReturnAudio(myGen, vt2);
-      }, 150);
-    };
-    // Start polling after 200ms — give the preemptivePlay() and first retry shot time
-    state.tabReturnSettleTimer = setTimeout(settle, 200);
-  }
-
-  function finalizeTabReturnAudio(gen, videoTime) {
-    if (state.tabReturnGen !== gen) return;
-    if (!coupledMode || !audio) { state.tabReturnAudioMuted = false; return; }
-    if (!state.intendedPlaying && !state.resumeOnVisible) {
       state.tabReturnAudioMuted = false;
-      return;
-    }
-    // Sync audio to video position
-    try {
-      const at = Number(audio.currentTime) || 0;
-      if (isFinite(videoTime) && Math.abs(at - videoTime) > 0.15) {
-        audio.currentTime = videoTime;
-      }
-    } catch {}
-    // Ensure audio is playing
-    if (audio.paused) {
-      try { audio.play().catch(() => {}); } catch {}
-    }
-    // Unmute flag — allow volume changes again
-    state.tabReturnAudioMuted = false;
-    // Smooth fade-in from 0 to target volume
-    try { audio.volume = 0; } catch {}
-    softUnmuteAudio(250).catch(() => {});
+      if (!coupledMode || !audio) return;
+      if (!state.intendedPlaying) return;
+      // Sync audio position to video one final time
+      try {
+        const vt = Number(video.currentTime()) || 0;
+        const at = Number(audio.currentTime) || 0;
+        if (isFinite(vt) && Math.abs(at - vt) > 0.15) audio.currentTime = vt;
+      } catch {}
+      if (audio.paused) { try { audio.play().catch(() => {}); } catch {} }
+      // ONE smooth fade-in
+      try { audio.volume = 0; } catch {}
+      softUnmuteAudio(250).catch(() => {});
+    }, 600);
   }
 
   function cancelTabReturnAudioMute() {
     if (state.tabReturnSettleTimer) {
       clearTimeout(state.tabReturnSettleTimer);
       state.tabReturnSettleTimer = null;
+    }
+    // If we were muted, restore volume immediately
+    if (state.tabReturnAudioMuted && coupledMode && audio) {
+      state.tabReturnAudioMuted = false;
+      try { audio.volume = targetVolFromVideo(); } catch {}
     }
     state.tabReturnAudioMuted = false;
   }
@@ -2532,7 +2487,7 @@ _allowAudioTimeWrite: false
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
     state.tabReturnImmuneUntil = 0;
-    cancelTabReturnAudioMute();
+    cancelTabReturnAudioMute(); // user pause clears tab-return mute
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
