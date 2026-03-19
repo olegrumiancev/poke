@@ -4341,11 +4341,11 @@ try {
     const v = getVideoNode();
     const vtAtFinalize = Number(video.currentTime());
 
-    // Sync audio to video position immediately before anything else
+    // Sync audio to exact video position — direct set, no guards
     if (isFinite(vtAtFinalize) && coupledMode && audio) {
       const atCurrent = Number(audio.currentTime);
-      if (Math.abs(atCurrent - vtAtFinalize) > 0.03) {
-        safeSetAudioTime(vtAtFinalize);
+      if (Math.abs(atCurrent - vtAtFinalize) > 0.05) {
+        try { audio.currentTime = vtAtFinalize; } catch {}
       }
     }
 
@@ -4413,12 +4413,13 @@ try {
     state.strictBufferHoldFrames = 0;
     state.strictBufferHoldConfirmed = false;
 
-    // Final position sync: re-check video position (it may have changed during buffer wait)
-    // and ensure audio is precisely aligned before resuming.
+    // Final position sync before resuming — direct set, no guards
     const vt2 = Number(video.currentTime());
     if (isFinite(vt2) && coupledMode && audio) {
       const at2 = Number(audio.currentTime);
-      if (Math.abs(at2 - vt2) > 0.03) safeSetAudioTime(vt2);
+      if (Math.abs(at2 - vt2) > 0.05) {
+        try { audio.currentTime = vt2; } catch {}
+      }
     }
 
     if (state.seekId !== currentSeekId) return;
@@ -4479,7 +4480,7 @@ try {
           state.videoStallAudioPaused = false;
           state.stallAudioResumeHoldUntil = 0;
           const vt = Number(video.currentTime()) || 0;
-          safeSetAudioTime(vt);
+          try { if (isFinite(vt)) audio.currentTime = vt; } catch {}
           execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 })
           .then(ok => { if (ok) softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {}); })
           .catch(() => {});
@@ -6537,13 +6538,15 @@ try {
     audio.addEventListener("playing", () => { try { UltraStabilizer.onAudioPlaying(); } catch {} }, { passive: true });
     audio.addEventListener("pause", onAudioPause, { passive: true });
     audio.addEventListener("seeking", () => {
+      // Only react if this is a user-initiated audio seek, not our programmatic sync
       if (state.restarting || !state.seeking) return;
-      execProgrammaticVideoPause();
-      execProgrammaticAudioPause(500);
+      if (state.seekCompleted || state.seekBuffering) return;
+      // Don't pause — the video seeked handler owns the flow
     }, { passive: true });
     audio.addEventListener("seeked", () => {
       if (state.restarting || !state.seeking) return;
-      scheduleSeekFinalize(0, state.seekId);
+      if (state.seekCompleted || state.seekBuffering) return;
+      // Don't schedule finalize — video's seeked handler does that
     }, { passive: true });
     audio.addEventListener("ended", () => {
       if (state.restarting) return;
@@ -6613,7 +6616,18 @@ try {
 
         clearSeekSyncFinalizeTimer();
         clearSeekWatchdog();
-        const seekTime = Number(video.currentTime());
+        // Get seek target from multiple sources — video.js currentTime() may
+        // not reflect the target yet during 'seeking', so also check the native element.
+        const vjsTime = Number(video.currentTime());
+        const nativeTime = Number(videoEl.currentTime);
+        const innerEl = video?.el?.()?.querySelector?.("video");
+        const innerTime = innerEl ? Number(innerEl.currentTime) : NaN;
+        // Use pendingSeekTarget if it was set by mediaSession/keyboard handlers,
+        // otherwise pick the most likely seek target (they should all agree after seeking fires)
+        const seekTime = state.pendingSeekTarget != null ? Number(state.pendingSeekTarget) :
+          isFinite(nativeTime) ? nativeTime :
+          isFinite(vjsTime) ? vjsTime :
+          isFinite(innerTime) ? innerTime : 0;
         state.pendingSeekTarget = seekTime;
         state.lastKnownGoodVT = seekTime;
         state.lastKnownGoodVTts = now();
@@ -6633,8 +6647,6 @@ try {
         state.strictBufferHold = false;
         state.bufferHoldSince = 0;
 
-        // Safety watchdog: if seeked event never fires (slow network, rapid seeks),
-        // force-finalize after SEEK_WATCHDOG_MS to prevent state.seeking staying true forever.
         const watchdogSeekId = state.seekId;
         state.seekWatchdogTimer = setTimeout(() => {
           state.seekWatchdogTimer = null;
@@ -6643,16 +6655,14 @@ try {
           }
         }, SEEK_WATCHDOG_MS);
 
+        // Immediately pause+mute audio. Actual time sync happens in 'seeked'.
         if (coupledMode && audio) {
-          squelchAudioEvents(400);
+          squelchAudioEvents(600);
           try {
             cancelActiveFade();
             audio.volume = 0;
             if (!audio.paused) audio.pause();
           } catch {}
-          if (isFinite(seekTime)) {
-            audio.currentTime = seekTime;
-          }
         }
 
         if (!state.intendedPlaying) {
@@ -6667,9 +6677,6 @@ try {
       video.on("seeked", () => {
         if (state.restarting) return;
         clearSeekWatchdog();
-        // CRITICAL: Clear isProgrammaticAudioPause immediately. Seeking handler set it
-        // with a 500ms timeout; fast seeks complete before that fires, permanently
-        // blocking audio. Clear now; finalizeSeekSync handles restart.
         state.isProgrammaticAudioPause = false;
         state.audioPausedSince = 0;
         state.audioPauseUntil = 0;
@@ -6677,14 +6684,23 @@ try {
         state.videoStallAudioPaused = false;
         state.stallAudioPausedSince = 0;
         state.stallAudioResumeHoldUntil = 0;
+        // Get the definitive seek target — video.currentTime() is reliable after seeked
         const newTime = Number(video.currentTime());
         state.lastKnownGoodVT = newTime;
         state.lastKnownGoodVTts = now();
-        if (coupledMode && audio) {
-          squelchAudioEvents(150);
-          try {
-            if (isFinite(newTime) && newTime >= 0) audio.currentTime = newTime;
-          } catch {}
+        state.pendingSeekTarget = newTime;
+        if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
+          // Force audio to the exact video position — this is the ONLY place audio gets seeked
+          try { audio.currentTime = newTime; } catch {}
+          // Retry: browsers can silently fail the first set
+          const _seekedId = state.seekId;
+          setTimeout(() => {
+            if (state.seekId !== _seekedId) return;
+            try {
+              const drift = Math.abs((audio.currentTime || 0) - newTime);
+              if (drift > 0.15) audio.currentTime = newTime;
+            } catch {}
+          }, 80);
         }
         state.driftStableFrames = 0;
         state.lastDrift = 0;
