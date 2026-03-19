@@ -1172,7 +1172,7 @@ _allowAudioTimeWrite: false
           vn.play().catch(() => {});
           _preemptiveFired = true;
         }
-        if (coupledMode && audio) {
+        if (coupledMode && audio && !state.tabReturnAudioMuted) {
           try {
             const vt = Number(video.currentTime()) || 0;
             if (isFinite(vt) && Math.abs((audio.currentTime || 0) - vt) > 0.15) {
@@ -1180,13 +1180,10 @@ _allowAudioTimeWrite: false
               _audioPreAligned = true;
             }
           } catch {}
-          // Keep audio at volume 0 during tab-return — settle handler will fade in
-          try { if (state.tabReturnAudioMuted) audio.volume = 0; } catch {}
           if (audio.paused) {
             cancelActiveFade();
             audio.play().catch(() => {});
           }
-          try { if (state.tabReturnAudioMuted) audio.volume = 0; } catch {}
         }
       } catch {}
     }
@@ -2408,45 +2405,39 @@ _allowAudioTimeWrite: false
   function now() { return performance.now(); }
   function isTabReturnImmune() { return state.tabReturnImmuneUntil > now(); }
 
-  // ── TAB-RETURN AUDIO MUTE ────────────────────────────────────────────
-  // Mutes audio for a short window so all retry shots are inaudible,
-  // then does ONE fade-in. No gen tracking, no polling — just a hard timer.
+  // ── TAB-RETURN AUDIO FREEZE ──────────────────────────────────────────
+  // On tab return: DON'T mute. Instead, freeze audio so retry shots can't
+  // re-seek it (which causes echo). Audio keeps playing at current volume.
+  // After 400ms, do ONE position sync if needed.
   function beginTabReturnAudioMute() {
     if (!coupledMode || !audio) return;
     if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
-    state.tabReturnAudioMuted = true;
-    try { cancelActiveFade(); } catch {}
-    try { audio.volume = 0; } catch {}
-    // After 600ms, unconditionally unmute with a fade-in.
-    // 600ms is enough for all retry shots to finish their play() calls.
-    // No gen checks — if user alt-tabs away before 600ms, blur handler cancels.
+    state.tabReturnAudioMuted = true; // repurposed: now means "frozen, don't touch"
+    // DON'T set audio.volume = 0. Leave it as-is.
+    // After 400ms, unfreeze and do one clean sync
     state.tabReturnSettleTimer = setTimeout(() => {
       state.tabReturnSettleTimer = null;
       state.tabReturnAudioMuted = false;
-      if (!coupledMode || !audio) return;
-      if (!state.intendedPlaying) return;
-      // Sync audio position to video one final time
+      if (!coupledMode || !audio || !state.intendedPlaying) return;
+      // One position sync
       try {
         const vt = Number(video.currentTime()) || 0;
         const at = Number(audio.currentTime) || 0;
-        if (isFinite(vt) && Math.abs(at - vt) > 0.15) audio.currentTime = vt;
+        if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
       } catch {}
       if (audio.paused) { try { audio.play().catch(() => {}); } catch {} }
-      // ONE smooth fade-in
-      try { audio.volume = 0; } catch {}
-      softUnmuteAudio(80).catch(() => {});
-    }, 150);
+      // Ensure volume is correct (no fade needed — it was never zeroed)
+      try {
+        const tv = targetVolFromVideo();
+        if (Math.abs(audio.volume - tv) > 0.02) audio.volume = tv;
+      } catch {}
+    }, 400);
   }
 
   function cancelTabReturnAudioMute() {
     if (state.tabReturnSettleTimer) {
       clearTimeout(state.tabReturnSettleTimer);
       state.tabReturnSettleTimer = null;
-    }
-    // If we were muted, restore volume immediately
-    if (state.tabReturnAudioMuted && coupledMode && audio) {
-      state.tabReturnAudioMuted = false;
-      try { audio.volume = targetVolFromVideo(); } catch {}
     }
     state.tabReturnAudioMuted = false;
   }
@@ -2833,7 +2824,6 @@ _allowAudioTimeWrite: false
 
   async function doVolumeFade(targetVol, ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
-    if (state.tabReturnAudioMuted && targetVol > 0) return; // block unmute during tab-return settle
     cancelActiveFade();
     const from = clamp01(audio.volume);
     const target = clamp01(targetVol);
@@ -2872,8 +2862,6 @@ _allowAudioTimeWrite: false
 
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
-    // During tab-return audio mute, block all unmute attempts — finalizeTabReturnAudio owns this
-    if (state.tabReturnAudioMuted) return;
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -2900,7 +2888,6 @@ _allowAudioTimeWrite: false
 
   function updateAudioGainImmediate() {
     if (!audio) return;
-    if (state.tabReturnAudioMuted) return;
     if (state.audioFading) return;
     try {
       const target = clamp01(targetVolFromVideo());
@@ -6914,16 +6901,14 @@ try {
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      if (coupledMode && audio) {
+      // Don't touch audio during freeze — settle handler owns it
+      if (coupledMode && audio && !state.tabReturnAudioMuted) {
         const vtNow = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
-          audio.volume = 0;
           audio.play().catch(() => {});
         }
-        // Enforce mute — settle handler will fade in cleanly
-        if (state.tabReturnAudioMuted) audio.volume = 0;
       }
     });
 
@@ -6933,14 +6918,11 @@ try {
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
-        // Only touch audio if it's actually paused — never interrupt playing audio
-        if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+        if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused && !state.isProgrammaticAudioPause) {
           const vtEarly = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
           safeSetAudioTime(vtEarly);
-          audio.volume = 0;
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
-        if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
         return;
       }
       VisibilityGuard.onPlayCalled();
@@ -6954,23 +6936,19 @@ try {
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
-        if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause) {
+        if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused && !state.isProgrammaticAudioPause) {
           const vtMid = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
           safeSetAudioTime(vtMid);
-          audio.volume = 0;
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
-        if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
         return;
       }
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      if (coupledMode && audio && audio.paused) {
-        audio.volume = 0;
+      if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused) {
         audio.play().catch(() => {});
       }
-      if (coupledMode && audio && state.tabReturnAudioMuted) audio.volume = 0;
     }, 200);
 
     // ── Shot 2: 700ms fallback ──────────────────────────────────────────
@@ -6982,18 +6960,16 @@ try {
       if (!vPaused) {
         BringBackToTabManager.onVideoConfirmedPlaying();
         try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
-        if (coupledMode && audio) {
+        if (coupledMode && audio && !state.tabReturnAudioMuted) {
           const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
           const at = Number(audio.currentTime) || 0;
           if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
             try { audio.currentTime = vt; } catch {}
           }
           if (audio.paused && !state.isProgrammaticAudioPause) {
-            audio.volume = 0;
             execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
           }
-          if (state.tabReturnAudioMuted) { audio.volume = 0; }
-          else { softUnmuteAudio(200).catch(() => {}); }
+          softUnmuteAudio(200).catch(() => {});
         }
         setFastSync(800);
         scheduleSync(0);
@@ -7064,14 +7040,12 @@ try {
           if (state.tabReturnGen !== myGen) return;
           if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (!getVideoPaused()) {
-            if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause &&
+            if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused && !state.isProgrammaticAudioPause &&
               !shouldBlockNewAudioStart()) {
               const vtRetry = Number(video.currentTime()) || 0;
             safeSetAudioTime(vtRetry);
-            audio.volume = 0;
             execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
-            if (state.tabReturnAudioMuted) audio.volume = 0;
-            else softUnmuteAudio(200).catch(() => {});
+            softUnmuteAudio(200).catch(() => {});
               }
               return;
           }
