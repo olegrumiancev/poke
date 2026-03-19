@@ -230,19 +230,19 @@ document.addEventListener("DOMContentLoaded", () => {
     // Ensure it can never accidentally play
     try { if (!audio.paused) audio.pause(); } catch {}
   }
-  // Check if loop attribute was set in HTML before we override anything
-  try { if (videoEl.loop || videoEl.hasAttribute("loop")) _userExplicitLoop = true; } catch {}
-  try { if (audio && (audio.loop || audio.hasAttribute("loop"))) _userExplicitLoop = true; } catch {}
-  if (!isLoopDesired()) {
-    try { videoEl.loop = false; videoEl.removeAttribute?.("loop"); } catch {}
-    try { if (audio) { audio.loop = false; audio.removeAttribute?.("loop"); } } catch {}
-  }
   let _userExplicitLoop = false;
   function isLoopDesired() {
     return _userExplicitLoop ||
     qs.get("loop") === "1" ||
     qs.get("loop") === "true" ||
     window.forceLoop === true;
+  }
+  // Check if loop attribute was set in HTML before we override anything
+  try { if (videoEl.loop || videoEl.hasAttribute("loop")) _userExplicitLoop = true; } catch {}
+  try { if (audio && (audio.loop || audio.hasAttribute("loop"))) _userExplicitLoop = true; } catch {}
+  if (!isLoopDesired()) {
+    try { videoEl.loop = false; videoEl.removeAttribute?.("loop"); } catch {}
+    try { if (audio) { audio.loop = false; audio.removeAttribute?.("loop"); } } catch {}
   }
 
   // ── NUCLEAR LOOP PREVENTION ─────────────────────────────────────────────────
