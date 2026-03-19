@@ -2412,25 +2412,19 @@ _allowAudioTimeWrite: false
   function beginTabReturnAudioMute() {
     if (!coupledMode || !audio) return;
     if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
-    state.tabReturnAudioMuted = true; // repurposed: now means "frozen, don't touch"
-    // DON'T set audio.volume = 0. Leave it as-is.
-    // After 150ms, unfreeze and do one clean sync
-    state.tabReturnSettleTimer = setTimeout(() => {
-      state.tabReturnSettleTimer = null;
-      state.tabReturnAudioMuted = false;
-      if (!coupledMode || !audio || !state.intendedPlaying) return;
-      // One position sync
-      try {
-        const vt = Number(video.currentTime()) || 0;
-        const at = Number(audio.currentTime) || 0;
-        if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
-      } catch {}
-      if (audio.paused) { try { audio.play().catch(() => {}); } catch {} }
-      try {
-        const tv = targetVolFromVideo();
-        if (Math.abs(audio.volume - tv) > 0.02) audio.volume = tv;
-      } catch {}
-    }, 150);
+    // Don't freeze audio at all — just sync position immediately and let it keep playing.
+    // Freezing causes a noticeable silence gap on every tab return.
+    state.tabReturnAudioMuted = false;
+    try {
+      const vt = Number(video.currentTime()) || 0;
+      const at = Number(audio.currentTime) || 0;
+      if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
+    } catch {}
+    if (audio.paused && state.intendedPlaying) { try { audio.play().catch(() => {}); } catch {} }
+    try {
+      const tv = targetVolFromVideo();
+      if (Math.abs(audio.volume - tv) > 0.02) audio.volume = tv;
+    } catch {}
   }
 
   function cancelTabReturnAudioMute() {
