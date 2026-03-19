@@ -6208,25 +6208,21 @@ try {
       // Defer audio pause by 150ms — micro-stalls (<150ms) won't kill audio.
       // Never kill audio during tab-return immunity — browser stalls are expected.
       if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(state.tabReturnImmuneUntil > now())) {
-        if (!state._stallAudioPauseTimer) {
-          state._stallAudioPauseTimer = setTimeout(() => {
-            state._stallAudioPauseTimer = null;
-            if (!state.videoWaiting || !state.intendedPlaying || state.seeking || state.seekResumeInFlight) return;
-            if (audio.paused) return;
-            state.videoStallAudioPaused = true;
-            state.stallAudioPausedSince = now();
-            state.audioPausedSince = 0;
-            state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
-            state.bufferHoldIntendedPlaying = true;
-            cancelActiveFade();
-            state.isProgrammaticAudioPause = true;
-            state.audioPlayGeneration++;
-            squelchAudioEvents(600);
-            state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 600);
-            try { audio.volume = 0; audio.pause(); } catch {}
-            setTimeout(() => { state.isProgrammaticAudioPause = false; }, 300);
-          }, 150);
-        }
+        // Pause audio immediately — no delay. Hearing audio without video is worse
+        // than a brief audio cut on micro-stalls.
+        if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
+        state.videoStallAudioPaused = true;
+        state.stallAudioPausedSince = now();
+        state.audioPausedSince = 0;
+        state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
+        state.bufferHoldIntendedPlaying = true;
+        cancelActiveFade();
+        state.isProgrammaticAudioPause = true;
+        state.audioPlayGeneration++;
+        squelchAudioEvents(600);
+        state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 600);
+        try { audio.volume = 0; audio.pause(); } catch {}
+        setTimeout(() => { state.isProgrammaticAudioPause = false; }, 300);
       }
 
       if (platform.useBgControllerRetry) {
