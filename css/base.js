@@ -315,17 +315,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (vjsInner && vjsInner !== videoEl) enforceNoLoop(vjsInner);
     } catch {}
 
-  // Gate audio.play() — block during seeking/seekBuffering so nothing can restart audio mid-seek
-  if (audio && typeof audio.play === "function") {
-    const _origAudioPlay = audio.play.bind(audio);
-    audio.play = function() {
-      if (state.seeking || state.seekBuffering) {
-        return Promise.resolve();
-      }
-      return _origAudioPlay();
-    };
-  }
-
     const metaTitle = document.querySelector('meta[name="title"]')?.content || "";
     const metaDesc = document.querySelector('meta[name="twitter:description"]')?.content || "";
     let stats = "";
@@ -562,9 +551,36 @@ userPauseIntentPresetAt: 0,
 userPlayIntentPresetAt: 0,
 _stallAudioPauseTimer: null,
 seekBuffering: false,
-seekBufferResumeTimer: null
+seekBufferResumeTimer: null,
+_allowAudioTimeWrite: false
   };
 
+  // Gate audio.play() — block during seeking/seekBuffering so nothing can restart audio mid-seek.
+  if (audio && typeof audio.play === "function") {
+    const _origAudioPlay = audio.play.bind(audio);
+    audio.play = function() {
+      if (state.seeking || state.seekBuffering) return Promise.resolve();
+      return _origAudioPlay();
+    };
+  }
+  // Gate audio.currentTime — during seeking, only allow writes from the seeking/seeked handlers
+  // (they set _allowAudioTimeWrite=true). All other writes are blocked to prevent desync.
+  if (audio) {
+    state._allowAudioTimeWrite = false;
+    const _audioCtDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+    if (_audioCtDesc && _audioCtDesc.set) {
+      const _origSet = _audioCtDesc.set;
+      const _origGet = _audioCtDesc.get;
+      Object.defineProperty(audio, "currentTime", {
+        get() { return _origGet.call(this); },
+        set(v) {
+          if ((state.seeking || state.seekBuffering) && !state._allowAudioTimeWrite) return;
+          _origSet.call(this, v);
+        },
+        configurable: true
+      });
+    }
+  }
 
   const BackgroundPlaybackManager = (() => {
     const PHASE = { STABLE_FG: 0, GOING_BG: 1, STABLE_BG: 2, RETURNING: 3 };
@@ -4262,6 +4278,11 @@ try {
       state.strictBufferHoldFrames = 0;
       state.strictBufferHoldConfirmed = false;
       if (!state.intendedPlaying || state.restarting) return;
+      // Final audio sync before resume
+      if (coupledMode && audio) {
+        const _vt = Number(video.currentTime()) || 0;
+        if (isFinite(_vt)) { try { audio.currentTime = _vt; } catch {} }
+      }
       if (forCoupled) {
         state.seekResumeInFlight = true;
         state.videoWaiting = false;
@@ -4355,11 +4376,13 @@ try {
     const v = getVideoNode();
     const vtAtFinalize = Number(video.currentTime());
 
-    // Sync audio to exact video position — direct set, no guards
+    // Sync audio to exact video position — bypass gate
     if (isFinite(vtAtFinalize) && coupledMode && audio) {
       const atCurrent = Number(audio.currentTime);
       if (Math.abs(atCurrent - vtAtFinalize) > 0.05) {
+        state._allowAudioTimeWrite = true;
         try { audio.currentTime = vtAtFinalize; } catch {}
+        state._allowAudioTimeWrite = false;
       }
     }
 
@@ -4427,12 +4450,14 @@ try {
     state.strictBufferHoldFrames = 0;
     state.strictBufferHoldConfirmed = false;
 
-    // Final position sync before resuming — direct set, no guards
+    // Final position sync before resuming — direct set, bypass gate
     const vt2 = Number(video.currentTime());
     if (isFinite(vt2) && coupledMode && audio) {
       const at2 = Number(audio.currentTime);
       if (Math.abs(at2 - vt2) > 0.05) {
+        state._allowAudioTimeWrite = true;
         try { audio.currentTime = vt2; } catch {}
+        state._allowAudioTimeWrite = false;
       }
     }
 
@@ -4494,7 +4519,9 @@ try {
           state.videoStallAudioPaused = false;
           state.stallAudioResumeHoldUntil = 0;
           const vt = Number(video.currentTime()) || 0;
+          state._allowAudioTimeWrite = true;
           try { if (isFinite(vt)) audio.currentTime = vt; } catch {}
+          state._allowAudioTimeWrite = false;
           execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 })
           .then(ok => { if (ok) softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {}); })
           .catch(() => {});
@@ -6704,17 +6731,20 @@ try {
         state.lastKnownGoodVTts = now();
         state.pendingSeekTarget = newTime;
         if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
-          // Force audio to the exact video position — this is the ONLY place audio gets seeked
+          // Allow our writes through the currentTime gate
+          state._allowAudioTimeWrite = true;
           try { audio.currentTime = newTime; } catch {}
-          // Retry: browsers can silently fail the first set
           const _seekedId = state.seekId;
           setTimeout(() => {
             if (state.seekId !== _seekedId) return;
+            state._allowAudioTimeWrite = true;
             try {
               const drift = Math.abs((audio.currentTime || 0) - newTime);
               if (drift > 0.15) audio.currentTime = newTime;
             } catch {}
+            state._allowAudioTimeWrite = false;
           }, 80);
+          state._allowAudioTimeWrite = false;
         }
         state.driftStableFrames = 0;
         state.lastDrift = 0;
