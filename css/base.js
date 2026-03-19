@@ -514,6 +514,7 @@ loopPreventionCooldownUntil: 0,
 seekCooldownUntil: 0,
 volumeSaveScheduled: false,
 lastBgReturnAt: 0,
+tabReturnGen: 0,
 bgSuppressionSessionCount: 0,
 // NEW: Heartbeat & stall recovery
 heartbeatTimer: null,
@@ -1167,7 +1168,6 @@ _allowAudioTimeWrite: false
           _preemptiveFired = true;
         }
         if (coupledMode && audio) {
-          // Sync audio time to video BEFORE playing — eliminates desync gap
           try {
             const vt = Number(video.currentTime()) || 0;
             if (isFinite(vt) && Math.abs((audio.currentTime || 0) - vt) > 0.15) {
@@ -1177,7 +1177,8 @@ _allowAudioTimeWrite: false
           } catch {}
           if (audio.paused) {
             cancelActiveFade();
-            audio.volume = state.savedAudioVolume || 1;
+            // Start at volume 0 to prevent pop — fade in after stable
+            audio.volume = 0;
             audio.play().catch(() => {});
           }
         }
@@ -2846,8 +2847,14 @@ _allowAudioTimeWrite: false
     if (!audio) return;
     if (state.audioFading) return;
     try {
+      const target = clamp01(targetVolFromVideo());
+      // During tab-return, don't jump volume — fade to prevent pop
+      if (inBgReturnGrace() && audio.volume < target - 0.05) {
+        softUnmuteAudio(120).catch(() => {});
+        return;
+      }
       cancelActiveFade();
-      audio.volume = clamp01(targetVolFromVideo());
+      audio.volume = target;
     } catch {}
   }
 
@@ -6811,25 +6818,25 @@ try {
     if (state.bbtabAudioSyncTimer){ clearTimeout(state.bbtabAudioSyncTimer);     state.bbtabAudioSyncTimer = null; }
 
     if (!state.intendedPlaying) return;
+    const bbtGen = state.tabReturnGen;
 
-    // Arm BBTM so the pause handler's BBTM lock check also fires as a fast-path gate.
     BringBackToTabManager.onTabReturn();
 
     // ── Shot 1: immediate rAF ─────────────────────────────────────────────────
     state.bbtabRetryRafId = requestAnimationFrame(() => {
       state.bbtabRetryRafId = null;
+      if (state.tabReturnGen !== bbtGen) return;
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
 
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
       if (coupledMode && audio) {
-        // Immediately sync audio position and start playing — no delay
         const vtNow = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
-          audio.volume = state.savedAudioVolume || 1;
+          audio.volume = 0;
           audio.play().catch(() => {});
         }
       }
@@ -6837,6 +6844,7 @@ try {
 
     // ── Shot 1.25: 80ms quick-check ──────────────────────────────────────
     setTimeout(() => {
+      if (state.tabReturnGen !== bbtGen) return;
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6847,7 +6855,6 @@ try {
         }
         return;
       }
-      // Quick retry
       VisibilityGuard.onPlayCalled();
       const vnE = getVideoNode();
       if (vnE && typeof vnE.play === 'function') vnE.play().catch(() => {});
@@ -6855,6 +6862,7 @@ try {
 
     // ── Shot 1.5: 200ms intermediate ──────────────────────────────────────
     setTimeout(() => {
+      if (state.tabReturnGen !== bbtGen) return;
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6868,12 +6876,13 @@ try {
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+      if (coupledMode && audio && audio.paused) { audio.volume = 0; audio.play().catch(() => {}); }
     }, 200);
 
-    // ── Shot 2: 700ms fallback (reduced from 1000ms) ──────────────────────
+    // ── Shot 2: 700ms fallback ──────────────────────────────────────────
     state.bbtabRetryTimer = setTimeout(() => {
       state.bbtabRetryTimer = null;
+      if (state.tabReturnGen !== bbtGen) return;
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       const vPaused = getVideoPaused();
       if (!vPaused) {
@@ -6909,20 +6918,16 @@ try {
 
   function executeSeamlessWakeup() {
     if (!state.intendedPlaying) return;
-    // If a wakeup timer is already counting down, don't reset it — that would
-    // push the wakeup further into the future and extend the stutter window.
-    // Only reset if the previous timer has already fired (wakeupTimer === null).
     if (state.wakeupTimer) return;
     clearTimeout(state.wakeupTimer);
     state.wakeupTimer = null;
 
-    // FIX: Reduced delay - BBTM loop handles initial play() calls
-    const wakeDelay = platform.chromiumOnlyBrowser
-    ? 50     // Chromium: just enough for first rAF
-    : 30;    // Other: minimal
+    const wakeDelay = platform.chromiumOnlyBrowser ? 50 : 30;
+    const myGen = state.tabReturnGen;
 
     state.wakeupTimer = setTimeout(() => {
       state.wakeupTimer = null;
+      if (state.tabReturnGen !== myGen) return; // stale — user alt-tabbed again
       if (!state.intendedPlaying) return;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
 
@@ -6956,9 +6961,9 @@ try {
           }
       }
 
-      // FIX: Enhanced retry guard with cooldown clearing + audio sync
       [300, 600, 1200, 2000].forEach(retryDelay => {
         setTimeout(() => {
+          if (state.tabReturnGen !== myGen) return;
           if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (!getVideoPaused()) {
             if (coupledMode && audio && audio.paused && !state.isProgrammaticAudioPause &&
@@ -7037,12 +7042,10 @@ try {
       state.visibilityStableUntil = now() + VISIBILITY_TRANSITION_MS;
       state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
       if (newState === "visible") {
-        // ── QUANTUM FIRST-ACTION: fire play() BEFORE any state mutations ─────
-        try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
+        // Bump generation — invalidate stale timers from any previous cycle
+        state.tabReturnGen++;
 
-        // ── VisibilityGuard: open the show-grace window immediately ──────────
-        // This MUST happen before any other state mutations so that pause events
-        // fired during this handler (or in the next few ms) are suppressed.
+        try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
         VisibilityGuard.onTabShow();
 
         state.lastBgReturnAt = now();
@@ -7130,6 +7133,15 @@ try {
               .catch(() => {});
             }, 350);
           }
+
+          // Smooth fade-in: audio started at vol 0 to prevent pop — fade to target
+          if (coupledMode && audio) {
+            setTimeout(() => {
+              if (!state.intendedPlaying) return;
+              if (audio.paused) return;
+              softUnmuteAudio(120).catch(() => {});
+            }, 80);
+          }
         }
         // Startup retry on tab-return: kick the startup kick regardless.
         if (wantsStartupAutoplay() && pageLoadedForAutoplay()) {
@@ -7142,8 +7154,14 @@ try {
         }
         setTimeout(() => { state.visibilityTransitionActive = false; }, VISIBILITY_TRANSITION_MS);
       } else {
+        // Invalidate all pending tab-return resume timers
+        state.tabReturnGen++;
+        if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
+        if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
+        if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
+        if (state.wakeupTimer) { clearTimeout(state.wakeupTimer); state.wakeupTimer = null; }
         updateLastKnownGoodVT();
-        VisibilityGuard.onTabHide(); // VG: suppress pauses during browser's hide sequence
+        VisibilityGuard.onTabHide();
         // QRO: snapshot position/audio before going to background.
         // On return, preemptivePlay() uses this to pre-align audio instantly.
         try { QuantumReturnOrchestrator.snapshotState(); } catch {}
@@ -7171,9 +7189,16 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
-      // QRO: snapshot on blur too (alt-tab before visibilitychange fires)
+      // Invalidate all pending tab-return resume timers from previous focus
+      state.tabReturnGen++;
+      // Cancel any in-flight bring-back timers so they don't fire after re-focus
+      if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
+      if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
+      if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
+      if (state.wakeupTimer) { clearTimeout(state.wakeupTimer); state.wakeupTimer = null; }
+
       try { QuantumReturnOrchestrator.snapshotState(); } catch {}
-      VisibilityGuard.onTabHide(); // VG: alt-tab counts as hide
+      VisibilityGuard.onTabHide();
       BackgroundPlaybackManager.onBecomeBackground();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
@@ -7199,9 +7224,8 @@ try {
       BackgroundPlaybackManager.onBecomeForeground();
       BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation state
 
-      // ── UNIVERSAL treatment (all browsers) ───────────────────────────────────
-      // These are not Chromium-specific: Firefox and Safari also fire spurious
-      // pause events after focus, and they also need BBTM lock + grace window.
+      // Bump generation so any stale timers from previous blur→focus self-cancel
+      state.tabReturnGen++;
       state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
       state.focusStableUntil = now() + 300;
       state.pauseEventCount = 0;
