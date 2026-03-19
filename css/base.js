@@ -515,6 +515,7 @@ seekCooldownUntil: 0,
 volumeSaveScheduled: false,
 lastBgReturnAt: 0,
 tabReturnGen: 0,
+tabReturnImmuneUntil: 0,
 bgSuppressionSessionCount: 0,
 // NEW: Heartbeat & stall recovery
 heartbeatTimer: null,
@@ -2435,9 +2436,10 @@ _allowAudioTimeWrite: false
   function mediaSessionForcedPauseActive() { return now() < state.mediaForcedPauseUntil; }
 
   function markUserPauseIntent(ms = 1800) {
-    VisibilityGuard.onUserPause(); // VG: clear suppression — user is in control
-    state.userPauseIntentPresetAt = now(); // reinforce preset
-    state.userPlayIntentPresetAt = 0;      // clear opposite
+    VisibilityGuard.onUserPause();
+    state.tabReturnImmuneUntil = 0; // user pause overrides immunity
+    state.userPauseIntentPresetAt = now();
+    state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
     state.firstPlayCommitted = true;
     state.startupKickDone = true;
@@ -4631,6 +4633,7 @@ try {
         state.strictBufferReason = "";
         state.strictBufferHoldFrames = 0;
         state.strictBufferHoldConfirmed = false;
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 2000);
         updateMediaSessionPlaybackState();
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
@@ -5912,9 +5915,15 @@ try {
     });
 
     video.on("pause", () => {
-      // During seeking or seek-buffering, ignore pause events entirely —
-      // finalizeSeekSync / startSeekBufferWait owns the resume/pause decision
       if (state.seeking || state.seekBuffering) return;
+      // HARD IMMUNITY: after tab return, reject ALL pause events for 1.5s.
+      // Only a real user click (userPauseIntentPresetAt) can override this.
+      if (state.tabReturnImmuneUntil > now() &&
+          !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
+        const _vn = getVideoNode();
+        if (_vn && typeof _vn.play === 'function') _vn.play().catch(() => {});
+        return;
+      }
 
       if (!coupledMode) {
         if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
@@ -7044,6 +7053,8 @@ try {
       if (newState === "visible") {
         // Bump generation — invalidate stale timers from any previous cycle
         state.tabReturnGen++;
+        // Hard pause immunity — reject ALL non-user pauses for 1.5s after tab return
+        if (state.intendedPlaying) state.tabReturnImmuneUntil = now() + 1500;
 
         try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
         VisibilityGuard.onTabShow();
@@ -7189,9 +7200,8 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
-      // Invalidate all pending tab-return resume timers from previous focus
       state.tabReturnGen++;
-      // Cancel any in-flight bring-back timers so they don't fire after re-focus
+      state.tabReturnImmuneUntil = 0; // clear immunity on blur
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
       if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
@@ -7218,9 +7228,11 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
-      // ── FOCUS = ALT-TAB RETURN ────────────────────────────────────────────────
+      // Hard pause immunity for tab return
+      if (state.intendedPlaying) state.tabReturnImmuneUntil = now() + 1500;
+
       try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
-      VisibilityGuard.onTabShow(); // VG: opens 8s grace window for all browsers
+      VisibilityGuard.onTabShow();
       BackgroundPlaybackManager.onBecomeForeground();
       BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation state
 
