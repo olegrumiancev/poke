@@ -1600,6 +1600,7 @@ _allowAudioTimeWrite: false
 
       function _triggerVideoRecovery(reason) {
         if (_recoveryAttempts >= MAX_ATTEMPTS) return;
+        if (!state.intendedPlaying) return;
         _inRecovery = true;
         _recoveryAttempts++;
         _lastRecoveryAt = _now();
@@ -2434,6 +2435,58 @@ _allowAudioTimeWrite: false
     }
     state.tabReturnAudioMuted = false;
   }
+
+  // ── PAUSE INTERCEPT ───────────────────────────────────────────────────
+  // During tab-return immunity, replace videoElement.pause() with a no-op
+  // so the browser can't visibly pause the video. This eliminates the
+  // play→pause→play flicker entirely — no pause event fires, no frame drop.
+  let _pauseInterceptActive = false;
+  let _origVideoPause = null;
+  let _origAudioPause = null;
+  let _pauseInterceptTimer = null;
+
+  function engagePauseIntercept() {
+    if (_pauseInterceptActive) return;
+    _pauseInterceptActive = true;
+    const vn = getVideoNode();
+    if (vn) {
+      _origVideoPause = vn.pause.bind(vn);
+      vn.pause = function() {
+        // Allow if user explicitly clicked pause
+        if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+          return _origVideoPause();
+        }
+        // Swallow — don't pause during immunity
+      };
+    }
+    if (coupledMode && audio) {
+      _origAudioPause = audio.pause.bind(audio);
+      audio.pause = function() {
+        if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+          return _origAudioPause();
+        }
+      };
+    }
+    // Auto-disengage after immunity expires
+    if (_pauseInterceptTimer) clearTimeout(_pauseInterceptTimer);
+    _pauseInterceptTimer = setTimeout(disengagePauseIntercept, 3200);
+  }
+
+  function disengagePauseIntercept() {
+    if (!_pauseInterceptActive) return;
+    _pauseInterceptActive = false;
+    if (_pauseInterceptTimer) { clearTimeout(_pauseInterceptTimer); _pauseInterceptTimer = null; }
+    const vn = getVideoNode();
+    if (vn && _origVideoPause) {
+      try { vn.pause = HTMLMediaElement.prototype.pause; } catch {}
+    }
+    if (audio && _origAudioPause) {
+      try { audio.pause = HTMLMediaElement.prototype.pause; } catch {}
+    }
+    _origVideoPause = null;
+    _origAudioPause = null;
+  }
+
   function markMediaAction(type) {
     state.lastMediaAction = type;
     state.lastMediaActionTs = now();
@@ -2471,6 +2524,7 @@ _allowAudioTimeWrite: false
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
     state.tabReturnImmuneUntil = 0;
+    disengagePauseIntercept();
     cancelTabReturnAudioMute(); // user pause clears tab-return mute
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
@@ -3884,6 +3938,7 @@ try {
 
   function pauseHard() {
     state.userPauseIntentPresetAt = 0;
+    disengagePauseIntercept();
     clearSeekBuffering();
     clearHiddenMediaSessionPlay();
     clearBgResumeRetryTimer();
@@ -3949,6 +4004,7 @@ try {
     state.resumeOnVisible = false;
     state.bgHiddenWasPlaying = false;
     state.tabReturnImmuneUntil = 0;
+    disengagePauseIntercept();
     state.strictBufferHold = false; state.bufferHoldSince = 0;
     state.strictBufferReason = "";
     state.strictBufferHoldFrames = 0;
@@ -3991,7 +4047,7 @@ try {
     }
 
     if (!coupledMode) {
-      // FIX: If user explicitly paused, playTogether must NOT restart video
+      if (!state.intendedPlaying && state.firstPlayCommitted) return;
       if (MediumQualityManager.intentPaused && state.firstPlayCommitted) {
         if (!getVideoPaused()) execProgrammaticVideoPause();
         state.intendedPlaying = false;
@@ -4136,7 +4192,7 @@ try {
       }
 
       if (!videoOk && !audioOk) {
-        if (isHiddenBackground()) {
+        if (isHiddenBackground() && state.intendedPlaying) {
           state.resumeOnVisible = true;
         } else if (!state.firstPlayCommitted || (state.startupPhase && !state.audioEverStarted)) {
           // ── Fix 7: Startup guard for dual-fail ────────────────────────────────
@@ -4175,10 +4231,10 @@ try {
           if (state.startupPhase && !state.firstPlayCommitted) {
             forceZeroBeforeFirstPlay();
           }
-          state.resumeOnVisible = true;
+          if (state.intendedPlaying) state.resumeOnVisible = true;
         }
       } else if (videoOk && !audioOk) {
-        if (coupledMode && isHiddenBackground()) {
+        if (coupledMode && isHiddenBackground() && state.intendedPlaying) {
           state.resumeOnVisible = true;
         }
       }
@@ -6238,7 +6294,7 @@ try {
         setTimeout(() => { state.isProgrammaticAudioPause = false; }, 300);
       }
 
-      if (platform.useBgControllerRetry) {
+      if (platform.useBgControllerRetry && state.intendedPlaying) {
         state.resumeOnVisible = true;
       }
       scheduleSync(0);
@@ -6689,13 +6745,20 @@ try {
       try {
         const dur = Number(video.duration()) || 0;
         const ct = Number(audio.currentTime) || 0;
-        // Reject if nowhere near the end (spurious ended event)
         if (dur > 1 && ct < dur - 2) return;
-        // Reject if currentTime is near 0 — browser reset, not real end
         if (dur > 5 && ct < 1) return;
       } catch {}
-      if (isLoopDesired()) restartLoop().catch(() => {});
-      else pauseTogether();
+      if (isLoopDesired()) { restartLoop().catch(() => {}); return; }
+      // Hard stop — bypass pauseTogether's startupSettle guard
+      state.intendedPlaying = false;
+      state.bufferHoldIntendedPlaying = false;
+      state.resumeOnVisible = false;
+      state.bgHiddenWasPlaying = false;
+      state.tabReturnImmuneUntil = 0;
+      disengagePauseIntercept();
+      state.playSessionId++;
+      updateMediaSessionPlaybackState();
+      pauseHard();
     }, { passive: true });
       audio.addEventListener("canplay", onReadyish, { passive: true });
       audio.addEventListener("canplaythrough", onReadyish, { passive: true });
@@ -6853,8 +6916,17 @@ try {
           if (dur > 1 && ct < dur - 2) return;
           if (dur > 5 && ct < 1) return;
         } catch {}
-        if (isLoopDesired()) restartLoop().catch(() => {});
-        else pauseTogether();
+        if (isLoopDesired()) { restartLoop().catch(() => {}); return; }
+        // Hard stop — bypass pauseTogether's startupSettle guard
+        state.intendedPlaying = false;
+        state.bufferHoldIntendedPlaying = false;
+        state.resumeOnVisible = false;
+        state.bgHiddenWasPlaying = false;
+        state.tabReturnImmuneUntil = 0;
+        disengagePauseIntercept();
+        state.playSessionId++;
+        updateMediaSessionPlaybackState();
+        pauseHard();
       });
   }
 
@@ -7046,12 +7118,10 @@ try {
         // One or both paused — perform full catch-up
         seamlessBgCatchUp().catch(() => {});
       } else {
-        // Non-coupled: ensure video is playing. During immunity, clear MQM block.
-        if (state.tabReturnImmuneUntil > now()) MediumQualityManager.markUserPlayed();
-        if (getVideoPaused() && !userPauseLockActive() &&
+        // Non-coupled: only resume if we were playing or in startup
+        if (state.tabReturnImmuneUntil > now() && !state.firstPlayCommitted) MediumQualityManager.markUserPlayed();
+        if (getVideoPaused() && state.intendedPlaying && !userPauseLockActive() &&
           !MediumQualityManager.intentPaused) {
-          state.intendedPlaying = true;
-          state.bufferHoldIntendedPlaying = true;
           playTogether().catch(() => {});
           } else {
             scheduleSync(0);
@@ -7143,6 +7213,7 @@ try {
         state.tabReturnGen++;
         if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) {
           state.tabReturnImmuneUntil = now() + 3000;
+          engagePauseIntercept();
           beginTabReturnAudioMute();
         }
 
@@ -7299,6 +7370,7 @@ try {
     window.addEventListener("blur", () => {
       state.tabReturnGen++;
       state.tabReturnImmuneUntil = 0;
+      disengagePauseIntercept();
       cancelTabReturnAudioMute();
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
@@ -7328,6 +7400,7 @@ try {
     window.addEventListener("focus", () => {
       if (state.intendedPlaying || state.resumeOnVisible || state.bgHiddenWasPlaying || !state.firstPlayCommitted) {
         state.tabReturnImmuneUntil = now() + 3000;
+        engagePauseIntercept();
         beginTabReturnAudioMute();
       }
 
@@ -7371,7 +7444,7 @@ try {
         } else {
           // Tab still hidden (focus fired before visibilitychange) — defer until visible.
           // The visibilitychange→visible handler will call startBringBackRetry().
-          state.resumeOnVisible = true;
+          if (state.intendedPlaying) state.resumeOnVisible = true;
         }
       }
     }, { passive: true, capture: true });
