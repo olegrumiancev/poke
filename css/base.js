@@ -4212,7 +4212,7 @@ try {
     try {
       const buf = vNode.buffered;
       for (let i = 0; i < buf.length; i++) {
-        if (buf.start(i) <= seekPos + 0.1 && buf.end(i) >= seekPos + 0.3) {
+        if (buf.start(i) <= seekPos + 0.2 && buf.end(i) > seekPos) {
           hasBufferAtPos = true;
           break;
         }
@@ -4298,24 +4298,13 @@ try {
   async function finalizeSeekSync(currentSeekId) {
     if (!coupledMode) {
       if (state.seekId !== currentSeekId) return;
+      const wantedPlaying = state.seekWantedPlaying && state.intendedPlaying;
 
-      // If user was playing and buffer isn't ready, transition seeking→seekBuffering with no gap
-      if (state.seekWantedPlaying && state.intendedPlaying) {
-        const vNode = getVideoNode();
-        const vRS = Number(vNode?.readyState || 0);
-        const seekPos = Number(video.currentTime()) || 0;
-        let hasBuffer = false;
-        try {
-          const buf = vNode.buffered;
-          for (let i = 0; i < buf.length; i++) {
-            if (buf.start(i) <= seekPos + 0.1 && buf.end(i) >= seekPos + 0.3) { hasBuffer = true; break; }
-          }
-        } catch {}
-        if (vRS < HAVE_FUTURE_DATA && !hasBuffer) {
-          state.seekBuffering = true;
-          state.strictBufferHold = true;
-          state.bufferHoldIntendedPlaying = true;
-        }
+      // Bridge seeking→seekBuffering with zero gap so no events leak through
+      if (wantedPlaying) {
+        state.seekBuffering = true;
+        state.strictBufferHold = true;
+        state.bufferHoldIntendedPlaying = true;
       }
 
       state.seeking = false;
@@ -4325,15 +4314,24 @@ try {
       state.seekCooldownUntil = now() + 600;
       setFastSync(2200);
 
-      if (state.seekWantedPlaying && state.intendedPlaying) {
+      if (wantedPlaying) {
         if (startSeekBufferWait(false)) return;
-        // Buffer already sufficient — just resume
-        if (getVideoPaused()) {
-          state.isProgrammaticVideoPlay = true;
-          try { video.play(); } catch {}
-          try { videoEl.play(); } catch {}
-          setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
-        }
+        // startSeekBufferWait returned false = buffer already ready. Clear seekBuffering.
+        state.seekBuffering = false;
+        state.strictBufferHold = false;
+        state.bufferHoldSince = 0;
+        state.strictBufferReason = "";
+        state.strictBufferHoldFrames = 0;
+        state.strictBufferHoldConfirmed = false;
+        // Always issue play() — video may be paused OR stalled after seek
+        state.isProgrammaticVideoPlay = true;
+        try { video.play(); } catch {}
+        try { videoEl.play(); } catch {}
+        try {
+          const inner = video?.el?.()?.querySelector?.("video");
+          if (inner && inner !== videoEl) inner.play().catch(() => {});
+        } catch {}
+        setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
       }
       scheduleSync(0);
       return;
