@@ -249,8 +249,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.forceLoop === true;
   }
 
-  // ── NUCLEAR LOOP PREVENTION ─────────────────────────────────────────────────
-  function enforceNoLoop(el) {
+   function enforceNoLoop(el) {
     if (!el) return;
     try { el.loop = false; el.removeAttribute("loop"); } catch {}
     // Override the .loop property setter so nothing can set it to true
@@ -413,9 +412,9 @@ document.addEventListener("DOMContentLoaded", () => {
     videoRepairCooldownUntil: 0,
     hardPauseVerifySerial: 0,
     startupPrimeStartedAt: performance.now(),
-                          lastKnownGoodVT: 0,
+lastKnownGoodVT: 0,
                           lastKnownGoodVTts: 0,
-                          startupAutoplayRetryTimer: null,
+startupAutoplayRetryTimer: null,
                           startupAutoplayRetryCount: 0,
                           driftStableFrames: 0,
                           lastDrift: 0,
@@ -510,7 +509,6 @@ seekCooldownUntil: 0,
 volumeSaveScheduled: false,
 lastBgReturnAt: 0,
 bgSuppressionSessionCount: 0,
-// NEW: Heartbeat & stall recovery
 heartbeatTimer: null,
 lastHeartbeatAt: 0,
 videoStallSince: 0,
@@ -2867,6 +2865,11 @@ seekBufferResumeTimer: null
     if (!audio) return;
     try {
       if (isFinite(t) && t >= 0) {
+        // Never seek audio to 0 after first play unless explicitly restarting/looping
+        if (t < 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired()) {
+          const currentAt = Number(audio.currentTime) || 0;
+          if (currentAt > 2) return; // audio is well into playback, don't reset to 0
+        }
         const timeDiff = Math.abs((audio.currentTime || 0) - t);
         if (timeDiff > 0.05) {
           audio.currentTime = t;
@@ -2973,9 +2976,14 @@ seekBufferResumeTimer: null
   // Silently update video.currentTime to match audio position when in the backgro
   function bgSilentSyncVideoTime(t) {
     if (!isFinite(t) || t < 0) return;
+    // Never silently sync video to 0 after first play (unless looping)
+    if (t < 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired()) {
+      const vt = Number(videoEl.currentTime) || 0;
+      if (vt > 2) return;
+    }
     try {
       const vt = Number(videoEl.currentTime) || 0;
-      if (Math.abs(vt - t) < 0.12) return; // already close enough
+      if (Math.abs(vt - t) < 0.12) return;
       // Cancel any pending clear so we don't accidentally clear while a new sync is pending
       if (state.bgSilentTimeSyncTimer) {
         clearTimeout(state.bgSilentTimeSyncTimer);
@@ -3207,13 +3215,12 @@ try {
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // HARD INVARIANT: never start audio while video is paused in foreground, regardless of force.
+    // never start audio while video is paused in foreground, regardless of force.
     // This is belt-and-suspenders with shouldBlockNewAudioStart() — it catches async races where
     // force=true bypasses other guards but video has since paused between the call and execution.
     if (getVideoPaused() && !isHiddenBackground()) return false;
 
-    // CRITICAL FIX: Cancel any active volume fade before attempting to play.
-    if (force) {
+     if (force) {
       cancelActiveFade();
       state.isProgrammaticAudioPause = false;
     }
@@ -4205,7 +4212,9 @@ try {
       }
     } catch {}
 
-    if (vRS >= HAVE_FUTURE_DATA && hasBufferAtPos) return false; // already buffered
+    // If buffer covers the seek position, don't wait — readyState may briefly drop after seek
+    if (hasBufferAtPos) return false;
+    if (vRS >= HAVE_FUTURE_DATA) return false;
 
     // Enter seek-buffering state
     state.seekBuffering = true;
@@ -4295,7 +4304,7 @@ try {
             if (buf.start(i) <= seekPos + 0.1 && buf.end(i) >= seekPos + 0.3) { hasBuffer = true; break; }
           }
         } catch {}
-        if (vRS < HAVE_FUTURE_DATA || !hasBuffer) {
+        if (vRS < HAVE_FUTURE_DATA && !hasBuffer) {
           state.seekBuffering = true;
           state.strictBufferHold = true;
           state.bufferHoldIntendedPlaying = true;
@@ -4375,7 +4384,9 @@ try {
 
     if (!(vReady && aReady)) {
       const vtCheck = Number(video.currentTime());
-      const alreadyReady = isFinite(vtCheck) && bothPlayableAt(vtCheck);
+      // Check buffer ranges directly — readyState can briefly drop after seek even when buffered
+      const alreadyReady = isFinite(vtCheck) && (bothPlayableAt(vtCheck) ||
+        (timeInBuffered(getVideoNode(), vtCheck) && (!audio || timeInBuffered(audio, vtCheck))));
       if (!alreadyReady) {
         // Set seekBuffering BEFORE clearing seeking — no gap for events to sneak through
         state.seekBuffering = true;
@@ -6172,8 +6183,7 @@ try {
       }
 
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive()) {
-        // ── CRITICAL FIX: never let autoplay override an explicit user pause ────────
-        const userExplicitlyPaused =
+         const userExplicitlyPaused =
         userPauseLockActive() ||        // userPauseLockUntil fence still active
         userPauseIntentActive() ||      // userPauseUntil fence still active
         state.userPauseIntentPresetAt > 0 ||  // preset set on pointerdown
@@ -6529,12 +6539,15 @@ try {
     }, { passive: true });
     audio.addEventListener("ended", () => {
       if (state.restarting) return;
+      if (state.seeking || state.seekBuffering) return;
       if (now() < state.suppressEndedUntil) return;
-      // FIX: Guard against spurious ended events
       try {
         const dur = Number(video.duration()) || 0;
         const ct = Number(audio.currentTime) || 0;
+        // Reject if nowhere near the end (spurious ended event)
         if (dur > 1 && ct < dur - 2) return;
+        // Reject if currentTime is near 0 — browser reset, not real end
+        if (dur > 5 && ct < 1) return;
       } catch {}
       try { videoEl.loop = false; videoEl.removeAttribute("loop"); } catch {}
       try { audio.loop = false; audio.removeAttribute("loop"); } catch {}
@@ -6674,12 +6687,13 @@ try {
       });
       video.on("ended", () => {
         if (state.restarting) return;
+        if (state.seeking || state.seekBuffering) return;
         if (now() < state.suppressEndedUntil) return;
-        // FIX: Guard against spurious ended events
         try {
           const dur = Number(video.duration()) || 0;
           const ct = Number(video.currentTime()) || 0;
           if (dur > 1 && ct < dur - 2) return;
+          if (dur > 5 && ct < 1) return;
         } catch {}
         try { videoEl.loop = false; videoEl.removeAttribute("loop"); } catch {}
         try { if (audio) { audio.loop = false; audio.removeAttribute("loop"); } } catch {}
@@ -6991,10 +7005,13 @@ try {
         // Also reset focusStableUntil — on tab return, focus is immediately stable.
         state.focusStableUntil = 0;
 
-        // Always reset startup retry count on tab return — if the user switched
-        // tabs during startup, we want fresh timing for the resumed attempts.
         state.startupAutoplayRetryCount = 0;
         state.bgAudioStartQueued = false;
+
+        // Force position to 0 on tab return if startup hasn't committed yet
+        if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
+          forceZeroBeforeFirstPlay();
+        }
 
         if (state.intendedPlaying) {
           if (platform.useBgControllerRetry) {
@@ -7351,8 +7368,7 @@ try {
       scheduleSync(0);
     };
 
-    // Audio error → immediate switch
-    const onAudioError = () => {
+     const onAudioError = () => {
       if (audioAlive) return; // had data before error, don't switch
       switchToNonCoupled("audio-error");
     };
