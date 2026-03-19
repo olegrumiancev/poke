@@ -3960,8 +3960,9 @@ try {
   // The browser can pre-buffer a background tab's video at a non-zero position;
   // the old "give up if vt > 0.5" logic caused autoplay to start mid-video.
   function forceZeroBeforeFirstPlay() {
-    if (state.firstPlayCommitted) return;
-    // Always force both tracks to 0 — never skip based on current position.
+    // Only run ONCE, and never after play has started
+    if (state.startupZeroed || state.firstPlayCommitted) return;
+    state.startupZeroed = true;
     try { video.currentTime(0); } catch {}
     try {
       safeSetCT(videoEl, 0);
@@ -3971,7 +3972,6 @@ try {
     if (coupledMode && audio) {
       try { audio.currentTime = 0; } catch {}
     }
-    state.startupZeroed = true;
     state.lastKnownGoodVT = 0;
     state.lastKnownGoodVTts = now();
   }
@@ -6903,13 +6903,18 @@ try {
     state.bbtabRetryRafId = requestAnimationFrame(() => {
       state.bbtabRetryRafId = null;
       if (state.tabReturnGen !== bbtGen) return;
-      if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+      if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+      // During startup, intendedPlaying may be false — force it if autoplay wanted
+      if (!state.intendedPlaying && wantsStartupAutoplay()) {
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+      }
+      if (!state.intendedPlaying) return;
 
       VisibilityGuard.onPlayCalled();
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
-      // Don't touch audio during freeze — settle handler owns it
-      if (coupledMode && audio && !state.tabReturnAudioMuted) {
+      if (coupledMode && audio) {
         const vtNow = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
@@ -6922,6 +6927,7 @@ try {
     // ── Shot 1.25: 80ms quick-check ──────────────────────────────────────
     setTimeout(() => {
       if (state.tabReturnGen !== bbtGen) return;
+      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6940,6 +6946,7 @@ try {
     // ── Shot 1.5: 200ms intermediate ──────────────────────────────────────
     setTimeout(() => {
       if (state.tabReturnGen !== bbtGen) return;
+      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
@@ -6962,6 +6969,7 @@ try {
     state.bbtabRetryTimer = setTimeout(() => {
       state.bbtabRetryTimer = null;
       if (state.tabReturnGen !== bbtGen) return;
+      if (!state.intendedPlaying && wantsStartupAutoplay()) { state.intendedPlaying = true; state.bufferHoldIntendedPlaying = true; }
       if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       const vPaused = getVideoPaused();
       if (!vPaused) {
