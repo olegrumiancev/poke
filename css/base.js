@@ -2446,10 +2446,8 @@ _seekPostTimers: []
       const at = Number(audio.currentTime) || 0;
       if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
     } catch {}
-    // Start audio playing (at volume 0 — the rAF play-lock handles fade-in
-    // once playback is confirmed stable, so the pause→play pop is inaudible)
+    // Resume audio immediately — no volume manipulation to avoid audible gaps
     if (audio.paused && state.intendedPlaying) { try { audio.play().catch(() => {}); } catch {} }
-    // Don't touch audio.volume here — _startPlayLock manages volume restoration
   }
 
   function cancelTabReturnAudioMute() {
@@ -2503,37 +2501,21 @@ _seekPostTimers: []
 
   // rAF play-lock: keep calling play() every frame for ~800ms so even if the
   // browser pauses internally between frames, the gap is at most one frame (~16ms).
-  // Also handles audio volume restoration: audio starts at vol 0 (to mask the
-  // pause→play pop) and ramps back to target over ~60ms once both tracks are playing.
-  let _playLockTargetVol = 1;
-  let _playLockVolRestoreStart = 0;
+  // Does NOT touch audio volume — volume manipulation causes audible silence gaps
+  // that are far more noticeable than the browser's native resume.
   let _playLockIntervalId = null;
-  const PLAY_LOCK_VOL_RESTORE_MS = 50; // fast fade-in, barely perceptible
 
   function _startPlayLock() {
     _stopPlayLock();
     const startTime = now();
     const lockDuration = 800;
 
-    // Capture target volume and mute audio immediately to mask pause→play pop
-    if (coupledMode && audio) {
-      _playLockTargetVol = targetVolFromVideo();
-      if (_playLockTargetVol < 0.01) _playLockTargetVol = 1;
-      try { cancelActiveFade(); audio.volume = 0; } catch {}
-      _playLockVolRestoreStart = 0; // not started yet
-    }
-
     const tick = () => {
       if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
-        if (coupledMode && audio) try { audio.volume = _playLockTargetVol; } catch {}
         _stopPlayLock();
         return;
       }
       if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) {
-        // Exiting — make sure audio volume is restored
-        if (coupledMode && audio && !audio.paused) {
-          try { audio.volume = _playLockTargetVol; } catch {}
-        }
         _stopPlayLock();
         return;
       }
@@ -2544,21 +2526,6 @@ _seekPostTimers: []
           if (videoEl && videoEl !== vn && videoEl.paused) videoEl.play().catch(() => {});
           if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
         } catch {}
-
-        // Volume restoration: once audio is playing, fast-ramp volume back
-        if (coupledMode && audio && !audio.paused) {
-          if (!_playLockVolRestoreStart) {
-            _playLockVolRestoreStart = now();
-          }
-          const elapsed = now() - _playLockVolRestoreStart;
-          if (elapsed >= PLAY_LOCK_VOL_RESTORE_MS) {
-            try { audio.volume = _playLockTargetVol; } catch {}
-          } else {
-            // Smooth ease-in curve (quadratic) for natural sound
-            const t = elapsed / PLAY_LOCK_VOL_RESTORE_MS;
-            try { audio.volume = _playLockTargetVol * (t * t); } catch {}
-          }
-        }
       }
     };
 
@@ -2577,7 +2544,6 @@ _seekPostTimers: []
     const _intervalMs = platform.mobile ? 8 : 4;
     _playLockIntervalId = setInterval(() => {
       if ((now() - startTime) > 300) {
-        // After 300ms, rAF alone is enough — stop the interval
         clearInterval(_playLockIntervalId);
         _playLockIntervalId = null;
         return;
@@ -2590,11 +2556,6 @@ _seekPostTimers: []
     if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
     if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
     if (_playLockIntervalId) { clearInterval(_playLockIntervalId); _playLockIntervalId = null; }
-    // Restore audio volume when play-lock ends — it may have been at 0 or mid-fade
-    if (coupledMode && audio && _playLockTargetVol > 0 && !audio.paused) {
-      try { audio.volume = _playLockTargetVol; } catch {}
-    }
-    _playLockVolRestoreStart = 0;
   }
 
   function engagePauseIntercept() {
@@ -3232,9 +3193,6 @@ _seekPostTimers: []
 
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
-    // Don't touch volume while the play-lock is managing the fade-in —
-    // competing volume writes cause the pause→play pop we're trying to hide.
-    if (_playLockRafId && _playLockVolRestoreStart === 0) return;
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -3262,8 +3220,6 @@ _seekPostTimers: []
   function updateAudioGainImmediate() {
     if (!audio) return;
     if (state.audioFading) return;
-    // Don't touch volume while play-lock is active
-    if (_playLockRafId && _playLockVolRestoreStart === 0) return;
     try {
       const target = clamp01(targetVolFromVideo());
       // During tab-return, don't jump volume — fade to prevent pop
