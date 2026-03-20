@@ -2739,7 +2739,7 @@ _seekPostTimers: []
     // Deduplicates: if called twice within 100ms (focus + visibilitychange),
     // the second call only refreshes immunity without re-firing retries.
     onTabReturn() {
-      const isDuplicate = (now() - this._lastReturnAt) < 100;
+      const isDuplicate = (now() - this._lastReturnAt) < 500;
       this._lastReturnAt = now();
       state.tabReturnGen++;
 
@@ -2757,11 +2757,6 @@ _seekPostTimers: []
       }
 
       if (this.shouldResume()) {
-        // Set immunity — the video and audio pause handlers will counter-play
-        // any browser-fired pause events during this window. No need for the
-        // heavy pause intercept (method overrides, event suppressors, play-lock)
-        // or multiple competing retry systems — those cause audio glitches by
-        // racing with seeks, volume changes, and multiple play() calls.
         state.tabReturnImmuneUntil = now() + 3000;
       }
 
@@ -2777,11 +2772,10 @@ _seekPostTimers: []
       state.altTabTransitionActive = false;
       state.altTabTransitionUntil = 0;
 
-      // Single clean resume — play video and audio once. No seeking, no
-      // volume manipulation, no retry machinery. The pause handlers'
-      // immunity counter-play handles any subsequent browser pauses.
-      // Position sync is handled by the regular sync loop after settle.
-      if (this.shouldResume()) {
+      // Single clean resume — play video and audio ONCE. Duplicate calls
+      // (visibilitychange + focus fire within ms of each other) skip
+      // instantPlay to avoid double decode-buffer flush / double play().
+      if (this.shouldResume() && !isDuplicate) {
         this.instantPlay();
       }
     },
