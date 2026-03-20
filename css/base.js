@@ -796,15 +796,16 @@ _seekPostTimers: []
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
     if (state.restarting || state.seeking) return;
-    // Keep media alive in background OR during immunity (tab transition).
-    // No BPMM gate — the oscillation circuit-breaker must never block the
-    // keepalive, otherwise audio cuts out for extended periods in background.
-    if (document.visibilityState !== "hidden" && !isTabReturnImmune()) return;
-    // When visible (immunity active), only fire once per 500ms to avoid
-    // competing with the capture guard and instantPlay(). In background,
-    // fire every tick (200ms) for reliability.
+    // Keep media alive when: hidden, immune (tab transition), or blurred
+    // (alt-tab without full tab switch — window loses focus but stays "visible").
+    // No BPMM gate — oscillation circuit-breaker must never block keepalive.
+    const isVisible = document.visibilityState !== "hidden";
+    const isFocused = isWindowFocused();
+    if (isVisible && isFocused && !isTabReturnImmune()) return;
+    // When visible, throttle to once per 500ms to avoid competing with
+    // capture guard and instantPlay(). In background, fire every tick (200ms).
     const t = now();
-    if (document.visibilityState !== "hidden" && t - _lastKeepalivePlayAt < 500) return;
+    if (isVisible && t - _lastKeepalivePlayAt < 500) return;
     _lastKeepalivePlayAt = t;
     if (coupledMode && audio && audio.paused) {
       try { audio.play().catch(() => {}); } catch {}
@@ -877,6 +878,81 @@ _seekPostTimers: []
       if (coupledMode && audio) audio.addEventListener("pause", _immunityPauseGuard, { capture: true });
     } catch {}
   }
+
+  // --- DONTMAKEITDOUBLEPLAY
+  // Patches audio.play() and video element .play() with deduplication.
+  // Multiple systems (capture guard, Video.js pause handler, keepalive,
+  // instantPlay, onAudioPause backup) all call play() during tab return.
+  // Without dedup, the same element gets 2-4 play() calls within <50ms,
+  // causing the audible "double play" stutter.
+  //
+  // How it works:
+  // - Wraps .play() on audio and video elements at setup time
+  // - If .play() was called on the same element within 300ms, returns
+  //   the previous promise (no-op)
+  // - If the element isn't paused, returns resolved (no-op)
+  // - Otherwise calls the real .play() and caches the promise
+  // - Zero CPU cost: one timestamp check per play() call
+  const DONTMAKEITDOUBLEPLAY = (() => {
+    const _lastPlayAt = new WeakMap();
+    const _playPromises = new WeakMap();
+    const _origPlay = new WeakMap();
+    const DEDUP_MS = 300;
+
+    function _makeWrapper(el) {
+      const origPlay = el.play.bind(el);
+      _origPlay.set(el, origPlay);
+      el.play = function () {
+        // Already playing — no-op
+        if (!el.paused) return Promise.resolve();
+        const t = performance.now();
+        const last = _lastPlayAt.get(el) || 0;
+        if (t - last < DEDUP_MS) {
+          // Deduplicated — return the cached promise
+          return _playPromises.get(el) || Promise.resolve();
+        }
+        _lastPlayAt.set(el, t);
+        try {
+          const p = origPlay();
+          const safe = p ? p.catch(() => {}) : Promise.resolve();
+          _playPromises.set(el, safe);
+          return safe;
+        } catch {
+          return Promise.resolve();
+        }
+      };
+    }
+
+    function install() {
+      // Patch audio element
+      if (audio && typeof audio.play === 'function' && !_origPlay.has(audio)) {
+        _makeWrapper(audio);
+      }
+      // Patch all video elements (Video.js may use inner <video>)
+      try {
+        const vn = getVideoNode();
+        if (vn && typeof vn.play === 'function' && !_origPlay.has(vn)) {
+          _makeWrapper(vn);
+        }
+        if (videoEl && videoEl !== vn && typeof videoEl.play === 'function' && !_origPlay.has(videoEl)) {
+          _makeWrapper(videoEl);
+        }
+      } catch {}
+    }
+
+    // Force-reset the dedup timer for an element (e.g., after user click)
+    function reset(el) {
+      if (el) _lastPlayAt.set(el, 0);
+    }
+
+    function resetAll() {
+      if (audio) _lastPlayAt.set(audio, 0);
+      try { const vn = getVideoNode(); if (vn) _lastPlayAt.set(vn, 0); } catch {}
+      if (videoEl) _lastPlayAt.set(videoEl, 0);
+    }
+
+    return { install, reset, resetAll };
+  })();
 
   // --- VisibilityGuard (VG)
   const VisibilityGuard = (() => {
@@ -3063,7 +3139,10 @@ _seekPostTimers: []
   function incrementRapidPlayPause() {
     if (state.seeking || state.seekBuffering) return;
     if (state.tabReturnImmuneUntil > now()) return;
-    if (inBgReturnGrace() || document.visibilityState === "hidden") return;
+    // Don't count play/pause events when unfocused (alt-tab) or hidden —
+    // these are browser-driven, not user-driven, and shouldn't trigger
+    // loop detection.
+    if (inBgReturnGrace() || document.visibilityState === "hidden" || !isWindowFocused()) return;
     if (!state.firstPlayCommitted) return;
     const nowTs = now();
     if ((nowTs - state.rapidPlayPauseResetAt) > RAPID_PLAY_PAUSE_WINDOW_MS) {
@@ -3078,7 +3157,7 @@ _seekPostTimers: []
     if (state.seeking || state.syncing || state.restarting || state.seekBuffering) return false;
     if (!state.firstPlayCommitted) return false;
     if (inBgReturnGrace()) return false;
-    if (document.visibilityState === "hidden") return false;
+    if (document.visibilityState === "hidden" || !isWindowFocused()) return false;
     // Never fire during tab-return or startup immunity
     if (state.tabReturnImmuneUntil > now()) return false;
     if (now() < state.loopPreventionCooldownUntil) return true;
@@ -6190,6 +6269,8 @@ _seekPostTimers: []
         state.userPauseIntentPresetAt = now();
       } else {
         state.userPlayIntentPresetAt = now();
+        // Reset play dedup so user's play() goes through immediately
+        DONTMAKEITDOUBLEPLAY.resetAll();
       }
 
       // Spam debounce: if user is clicking too fast, debounce the toggle.
@@ -7356,6 +7437,7 @@ _seekPostTimers: []
     // Install capture-phase pause guards on both video and audio.
     // Must be called AFTER listeners are registered so guards fire FIRST (capture phase).
     installImmunityPauseGuards();
+    DONTMAKEITDOUBLEPLAY.install();
     audio.addEventListener("seeking", () => {
       // Only react if this is a user-initiated audio seek, not our programmatic sync
       if (state.restarting || !state.seeking) return;
