@@ -797,21 +797,12 @@ _seekPostTimers: []
     if (state.restarting || state.seeking) return;
     if (document.visibilityState !== "hidden") return;
     if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
-    // Flush decode buffer (zero-delta seek) before play to prevent stale replay
     if (coupledMode && audio && audio.paused) {
-      try {
-        const t = audio.currentTime;
-        if (isFinite(t)) audio.currentTime = t;
-        audio.play().catch(() => {});
-      } catch {}
+      try { audio.play().catch(() => {}); } catch {}
     }
     try {
       const vn = getVideoNode();
-      if (vn && vn.paused) {
-        const t = vn.currentTime;
-        if (isFinite(t)) vn.currentTime = t;
-        vn.play().catch(() => {});
-      }
+      if (vn && vn.paused) vn.play().catch(() => {});
     } catch {}
   }
   function startBgAudioKeepalive() {
@@ -854,17 +845,10 @@ _seekPostTimers: []
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    try {
-      const el = e.target;
-      // Flush the decode buffer with a zero-delta seek before play().
-      // Without this, the browser replays stale audio from its internal
-      // decode buffer, causing a brief repeat ("hel-hello" artifact).
-      // Setting currentTime = currentTime invalidates the buffer without
-      // changing position — synchronous, zero latency.
-      const t = el.currentTime;
-      if (isFinite(t)) el.currentTime = t;
-      el.play().catch(() => {});
-    } catch {}
+    // Just play() — no seeking, no currentTime writes. Any seek (even
+    // zero-delta) fires seeking/seeked handlers that cascade into audio
+    // position correction, causing audible backward seeks + replays.
+    try { e.target.play().catch(() => {}); } catch {}
   }
   let _immunityGuardsInstalled = false;
   function installImmunityPauseGuards() {
@@ -2836,23 +2820,15 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately with a decode buffer
-    // flush. The zero-delta seek (currentTime = currentTime) invalidates the
-    // browser's internal decode buffer so it doesn't replay stale audio.
-    // Synchronous, no delays, no volume changes.
+    // Fires play() on both video and audio immediately. No seeking — any
+    // currentTime write fires the video seeked handler which syncs audio
+    // backward, causing audible replays. Just play() and let the regular
+    // sync loop handle position correction after the grace window.
     instantPlay() {
       try {
         const _vn = getVideoNode();
-        if (_vn && _vn.paused) {
-          const t = _vn.currentTime;
-          if (isFinite(t)) _vn.currentTime = t;
-          _vn.play().catch(() => {});
-        }
-        if (coupledMode && audio && audio.paused) {
-          const t = audio.currentTime;
-          if (isFinite(t)) audio.currentTime = t;
-          audio.play().catch(() => {});
-        }
+        if (_vn && _vn.paused) _vn.play().catch(() => {});
+        if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
       } catch {}
     },
 
@@ -4624,10 +4600,18 @@ _seekPostTimers: []
 
       const inBgDrift = document.visibilityState === "hidden" || !isWindowFocused() || inBgReturnGrace();
       // inBgReturnGrace: don't seek audio during the tab-return grace window.
-      // seamlessBgCatchUp (fired by executeSeamlessWakeup) handles drift correction
-      // after the spurious-pause burst has subsided (950ms on Chromium, 300ms others).
       if (!inBgDrift && isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.25) {
-        await quietSeekAudio(vt);
+        if (at > vt + 0.3) {
+          // Audio is ahead of video — it kept playing in the background while
+          // video was paused. Seek VIDEO forward to audio's position instead
+          // of seeking audio backward (which would cause an audible replay).
+          try {
+            const _vn = getVideoNode();
+            if (_vn) _vn.currentTime = at;
+          } catch {}
+        } else {
+          await quietSeekAudio(vt);
+        }
       }
 
       // Re-check after await
@@ -6539,7 +6523,14 @@ _seekPostTimers: []
                 if (!audio.paused && state.audioEverStarted) {
                   const vt = Number(video.currentTime());
                   const at = Number(audio.currentTime);
-                  if (Math.abs(vt - at) > 0.25) quietSeekAudio(vt).catch(() => {});
+                  if (isFinite(vt) && isFinite(at) && Math.abs(vt - at) > 0.25) {
+                    if (at > vt + 0.3) {
+                      // Audio ahead — seek video forward, don't replay audio
+                      try { const _vn = getVideoNode(); if (_vn) _vn.currentTime = at; } catch {}
+                    } else {
+                      quietSeekAudio(vt).catch(() => {});
+                    }
+                  }
                   scheduleSync(0);
                   return;
                 }
@@ -6575,11 +6566,7 @@ _seekPostTimers: []
           (state.intendedPlaying || !state.firstPlayCommitted) &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
         const _vn = getVideoNode();
-        if (_vn && typeof _vn.play === 'function') {
-          const t = _vn.currentTime;
-          if (isFinite(t)) _vn.currentTime = t;
-          _vn.play().catch(() => {});
-        }
+        if (_vn && typeof _vn.play === 'function') _vn.play().catch(() => {});
         return;
       }
 
@@ -7143,17 +7130,11 @@ _seekPostTimers: []
       }
     };
     const onAudioPause = () => {
-      // During tab-return immunity, flush decode buffer + counter-play.
+      // During tab-return immunity, counter-play immediately.
       // (Backup path — capture-phase guard normally handles this first.)
       if (isTabReturnImmune() && state.intendedPlaying &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
-        try {
-          if (audio && audio.paused) {
-            const t = audio.currentTime;
-            if (isFinite(t)) audio.currentTime = t;
-            audio.play().catch(() => {});
-          }
-        } catch {}
+        try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
         return;
       }
       if (!state.isProgrammaticAudioPause && !state.isProgrammaticVideoPause) incrementRapidPlayPause();
@@ -7384,6 +7365,12 @@ _seekPostTimers: []
         try { UltraStabilizer.onSeekStart(); } catch {}
         if (state.restarting) return;
         if (state.bgSilentTimeSyncing) return;
+        // During tab-return immunity, ignore spurious browser-fired seeks.
+        // These cascade into audio position correction (seeked handler syncs
+        // audio to video), causing audible backward seeks + replays.
+        // Only allow seeks from explicit user actions during immunity.
+        if (isTabReturnImmune() && !state.seeking &&
+            (now() - state.lastUserActionTime) > 2000) return;
 
         // Android Chromium random seek protection:
         // Android Chrome fires spurious seeking events (buffer adjustments, tiny position
@@ -7492,6 +7479,10 @@ _seekPostTimers: []
       });
       video.on("seeked", () => {
         if (state.restarting) return;
+        // During immunity, if this seeked event is from a spurious browser seek
+        // (not from our programmatic seek machinery), skip the audio sync.
+        // The seeking handler already bailed out, so state.seeking is false.
+        if (isTabReturnImmune() && !state.seeking) return;
         clearSeekWatchdog();
         state.isProgrammaticAudioPause = false;
         state.audioPausedSince = 0;
