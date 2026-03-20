@@ -783,32 +783,82 @@ _seekPostTimers: []
     };
   })();
 
-  // --- Background Media Keepalive
-  // When the tab is hidden, the browser may pause media for power savings.
-  // This interval restarts it. Just checks .paused and calls .play() — no
-  // volume manipulation, no seeking, no heavy logic. ~0 CPU when media is
-  // already playing (early returns on every tick).
-  let _bgAudioKeepaliveId = null;
+  // --- Background Media Keepalive (Web Worker)
+  // Web Workers are NOT throttled in background tabs (unlike setTimeout/setInterval).
+  // This gives us reliable 200ms ticks to keep media alive even when Chromium
+  // aggressively throttles the main thread. The worker is tiny — just a timer.
+  // CPU cost is effectively zero: each tick is a single .paused check + early return.
+  let _bgWorker = null;
+  let _bgWorkerUrl = null;
+  let _bgFallbackId = null; // setInterval fallback if Worker creation fails
+  function _bgKeepaliveTick() {
+    if (!state.intendedPlaying) return;
+    if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+    if (state.restarting || state.seeking) return;
+    if (document.visibilityState !== "hidden") return;
+    if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
+    if (coupledMode && audio && audio.paused) {
+      try { audio.play().catch(() => {}); } catch {}
+    }
+    try {
+      const vn = getVideoNode();
+      if (vn && vn.paused) vn.play().catch(() => {});
+    } catch {}
+  }
   function startBgAudioKeepalive() {
-    if (_bgAudioKeepaliveId) return;
-    _bgAudioKeepaliveId = setInterval(() => {
-      if (!state.intendedPlaying) return;
-      if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-      if (state.restarting || state.seeking) return;
-      if (document.visibilityState !== "hidden") return;
-      if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
-      // Restart paused media
-      if (coupledMode && audio && audio.paused) {
-        try { audio.play().catch(() => {}); } catch {}
-      }
-      try {
-        const vn = getVideoNode();
-        if (vn && vn.paused) vn.play().catch(() => {});
-      } catch {}
-    }, 500);
+    if (_bgWorker || _bgFallbackId) return;
+    try {
+      const blob = new Blob(["setInterval(()=>postMessage(0),200)"], { type: "application/javascript" });
+      _bgWorkerUrl = URL.createObjectURL(blob);
+      _bgWorker = new Worker(_bgWorkerUrl);
+      _bgWorker.onmessage = _bgKeepaliveTick;
+    } catch {
+      // Worker creation failed (CSP, old browser) — fall back to setInterval
+      _bgFallbackId = setInterval(_bgKeepaliveTick, 500);
+    }
   }
   function stopBgAudioKeepalive() {
-    if (_bgAudioKeepaliveId) { clearInterval(_bgAudioKeepaliveId); _bgAudioKeepaliveId = null; }
+    if (_bgWorker) {
+      _bgWorker.terminate();
+      _bgWorker = null;
+    }
+    if (_bgWorkerUrl) {
+      try { URL.revokeObjectURL(_bgWorkerUrl); } catch {}
+      _bgWorkerUrl = null;
+    }
+    if (_bgFallbackId) {
+      clearInterval(_bgFallbackId);
+      _bgFallbackId = null;
+    }
+  }
+
+  // --- Capture-Phase Pause Guard
+  // Registered ONCE on both video and audio elements. Fires BEFORE any other
+  // pause listener (capture phase). During immunity (tab return / startup kick):
+  //   1. Swallows the pause event completely (stopImmediatePropagation)
+  //   2. Immediately calls play() on the element
+  // This means NO other code sees the pause — no UI flicker, no state changes,
+  // no competing resume logic. The pause never happened as far as the app knows.
+  // Cost: one boolean check per pause event (~0 CPU).
+  function _immunityPauseGuard(e) {
+    if (!(state.tabReturnImmuneUntil > now())) return; // not immune — let normal handlers run
+    if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
+    if (!state.intendedPlaying) return;
+    e.stopImmediatePropagation();
+    try { e.target.play().catch(() => {}); } catch {}
+  }
+  let _immunityGuardsInstalled = false;
+  function installImmunityPauseGuards() {
+    if (_immunityGuardsInstalled) return;
+    _immunityGuardsInstalled = true;
+    try {
+      const vn = getVideoNode();
+      if (vn) vn.addEventListener("pause", _immunityPauseGuard, { capture: true });
+      if (videoEl && videoEl !== vn) videoEl.addEventListener("pause", _immunityPauseGuard, { capture: true });
+    } catch {}
+    try {
+      if (coupledMode && audio) audio.addEventListener("pause", _immunityPauseGuard, { capture: true });
+    } catch {}
   }
 
   // --- VisibilityGuard (VG)
@@ -3256,11 +3306,7 @@ _seekPostTimers: []
 
   function forceUnmuteForPlaybackIfAllowed() {
     if (!state.intendedPlaying) return;
-    // In coupled mode, keep video muted — audio comes from the separate element.
-    // Unmuting video would cause double audio output.
-    if (!coupledMode) {
-      try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
-    }
+    try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
     try { if (audio && !state.userMutedAudio && audio.muted) audio.muted = false; } catch {}
   }
 
@@ -5184,11 +5230,6 @@ _seekPostTimers: []
         setMediaPlayTxn(2200);
         setFastSync(2600);
 
-        // In coupled mode, mute video — audio comes from separate element
-        if (coupledMode) {
-          try { setVideoMutedState(true); } catch {}
-        }
-
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
 
@@ -5272,11 +5313,6 @@ _seekPostTimers: []
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
         setFastSync(2600);
-
-        // In coupled mode, mute video — audio comes from separate element
-        if (coupledMode) {
-          try { setVideoMutedState(true); } catch {}
-        }
 
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
@@ -7248,6 +7284,9 @@ _seekPostTimers: []
     audio.addEventListener("play", onAudioPlay, { passive: true });
     audio.addEventListener("playing", () => { try { UltraStabilizer.onAudioPlaying(); } catch {} }, { passive: true });
     audio.addEventListener("pause", onAudioPause, { passive: true });
+    // Install capture-phase pause guards on both video and audio.
+    // Must be called AFTER listeners are registered so guards fire FIRST (capture phase).
+    installImmunityPauseGuards();
     audio.addEventListener("seeking", () => {
       // Only react if this is a user-initiated audio seek, not our programmatic sync
       if (state.restarting || !state.seeking) return;
