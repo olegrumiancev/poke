@@ -2643,7 +2643,7 @@ document.addEventListener('DOMContentLoaded', checkTheaterMode);
                <% if(!IsOldWindows) { %>
 
 <script>
- const AMvideo = document.getElementById("video");
+const AMvideo = document.getElementById("video");
 const canvas1 = document.getElementById("ambient-canvas-1");
 const canvas2 = document.getElementById("ambient-canvas-2");
 
@@ -2668,60 +2668,87 @@ Object.assign(canvas1.style, {
   pointerEvents: "none",
   transform: "translateZ(0)",
   backfaceVisibility: "hidden",
-  contain: "strict"
+  contain: "strict",
 });
 
-const ctx = canvas1.getContext("2d", { alpha: false, desynchronized: true, willReadFrequently: false });
-ctx.globalAlpha = 0.4; 
+const ctx = canvas1.getContext("2d", {
+  alpha: false,
+  desynchronized: true,
+  willReadFrequently: false,
+});
+ctx.globalAlpha = 0.4;
 
-let renderTimer = null;
+// Detect once instead of per-frame property lookup
+const hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+
 let ambientEnabled = localStorage.getItem("ambientState") !== "false";
 let isVisible = true;
+let running = false;
+let rafId = 0;
+let lastDrawTime = 0;
 
-const observer = new IntersectionObserver((entries) => {
-  isVisible = entries[0].isIntersecting;
-  if (isVisible && ambientEnabled && !AMvideo.paused) {
-    drawStart();
-  } else {
-    drawPause();
-  }
-}, { threshold: 0 });
+const observer = new IntersectionObserver(
+  (entries) => {
+    isVisible = entries[0].isIntersecting;
+    isVisible && ambientEnabled && !AMvideo.paused ? drawStart() : drawPause();
+  },
+  { threshold: 0 }
+);
 observer.observe(AMvideo);
 
-const drawFrame = () => {
-  if (AMvideo.paused || AMvideo.ended || !ambientEnabled || document.hidden || !isVisible) return;
+// Single consolidated check — JIT-inlineable
+const canRun = () =>
+  ambientEnabled && isVisible && !document.hidden && !AMvideo.paused && !AMvideo.ended;
 
-  try {
-    ctx.drawImage(AMvideo, 0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
-  } catch (e) {}
+// Unified render loop: one callback chain with timestamp throttle
+// instead of the old setTimeout → rVFC/rAF double-hop
+const loop = (now) => {
+  if (!running || !canRun()) {
+    running = false;
+    return;
+  }
 
-  renderTimer = setTimeout(scheduleNextFrame, CONFIG.interval);
-};
+  if (now - lastDrawTime >= CONFIG.interval) {
+    lastDrawTime = now;
+    try {
+      ctx.drawImage(AMvideo, 0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
+    } catch (e) {}
+  }
 
-const scheduleNextFrame = () => {
-  if (!ambientEnabled || AMvideo.paused || AMvideo.ended || document.hidden || !isVisible) return;
-  
-  if ('requestVideoFrameCallback' in AMvideo) {
-    AMvideo.requestVideoFrameCallback(drawFrame);
+  if (hasRVFC) {
+    AMvideo.requestVideoFrameCallback(loop);
   } else {
-    requestAnimationFrame(drawFrame);
+    rafId = requestAnimationFrame(loop);
   }
 };
 
 const drawStart = () => {
-  if (!ambientEnabled || document.hidden || !isVisible) return;
-  clearTimeout(renderTimer);
-  scheduleNextFrame();
+  if (running || !canRun()) return;
+  running = true;
+  lastDrawTime = 0; // draw immediately on first frame
+  if (hasRVFC) {
+    AMvideo.requestVideoFrameCallback(loop);
+  } else {
+    rafId = requestAnimationFrame(loop);
+  }
 };
 
 const drawPause = () => {
-  clearTimeout(renderTimer);
+  running = false;
+  // Only need to cancel rAF; rVFC exits via the running flag
+  if (!hasRVFC && rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
 };
 
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) drawPause();
-  else drawStart();
-}, { passive: true });
+document.addEventListener(
+  "visibilitychange",
+  () => {
+    document.hidden ? drawPause() : drawStart();
+  },
+  { passive: true }
+);
 
 const AMaudio = document.getElementById("aud");
 let isPlayPending = false;
@@ -2739,20 +2766,20 @@ const pauseHandler = (el) => {
   } catch {}
 };
 
-  const hasSD360 = !!AMvideo.querySelector('source[label="sd360"]');
+const hasSD360 = !!AMvideo.querySelector('source[label="sd360"]');
 
- if (!hasSD360) {
+if (!hasSD360) {
   pauseHandler(AMvideo);
   if (AMaudio) pauseHandler(AMaudio);
 }
- 
+
 const forcePlay = async () => {
   if (!pageFullyLoaded || isPlayPending) return;
   isPlayPending = true;
-  
+
   if (AMvideo.currentTime < 0.5) {
-      AMvideo.currentTime = 0;
-      if (AMaudio) AMaudio.currentTime = 0;
+    AMvideo.currentTime = 0;
+    if (AMaudio) AMaudio.currentTime = 0;
   }
 
   try {
@@ -2766,11 +2793,14 @@ const forcePlay = async () => {
 };
 
 const handleFullscreen = () => {
-  canvas1.style.display = (document.fullscreenElement || !ambientEnabled) ? "none" : "block";
+  canvas1.style.display =
+    document.fullscreenElement || !ambientEnabled ? "none" : "block";
 };
 
 const setupAmbientToggle = () => {
-  const toggleBtn = document.querySelector('a[title*="Ambient light mode uses a very cool ahh effect"]');
+  const toggleBtn = document.querySelector(
+    'a[title*="Ambient light mode uses a very cool ahh effect"]'
+  );
   if (!toggleBtn) return;
 
   const syncUI = () => {
@@ -2781,7 +2811,7 @@ const setupAmbientToggle = () => {
     } else {
       toggleBtn.innerHTML = `<i class="fa-light fa-lightbulb" style="width: 1em;margin-left: 4px;"></i> Ambient Mode • off`;
       canvas1.style.display = "none";
-      ctx.fillRect(0, 0, CONFIG.internalWidth, CONFIG.internalHeight); 
+      ctx.fillRect(0, 0, CONFIG.internalWidth, CONFIG.internalHeight);
       drawPause();
     }
   };
@@ -2803,12 +2833,16 @@ const init = () => {
   AMvideo.addEventListener("pause", drawPause, { passive: true });
   AMvideo.addEventListener("ended", drawPause, { passive: true });
 
-  AMvideo.addEventListener("loadedmetadata", () => {
-    const ratio = AMvideo.videoWidth / AMvideo.videoHeight;
-    CONFIG.internalHeight = Math.round(CONFIG.internalWidth / ratio);
-    canvas1.height = CONFIG.internalHeight;
-    ctx.globalAlpha = 0.15; 
-  }, { once: true });
+  AMvideo.addEventListener(
+    "loadedmetadata",
+    () => {
+      const ratio = AMvideo.videoWidth / AMvideo.videoHeight;
+      CONFIG.internalHeight = Math.round(CONFIG.internalWidth / ratio);
+      canvas1.height = CONFIG.internalHeight;
+      ctx.globalAlpha = 0.15;
+    },
+    { once: true }
+  );
 
   setupAmbientToggle();
   forcePlay();
@@ -2825,7 +2859,7 @@ const cleanup = () => {
 
 window.addEventListener("load", init);
 window.addEventListener("unload", cleanup);
-document.addEventListener("fullscreenchange", handleFullscreen);
+document.addEventListener("fullscreenchange", handleFullscreen); 
 </script>
 <style>
 .video-player-container, #video {
