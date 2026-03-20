@@ -1968,17 +1968,27 @@ _allowAudioTimeWrite: false
         const offlineDuration = _offlineSince > 0 ? (_now() - _offlineSince) : 0;
         _offlineSince = 0;
 
+        // Network-caused stalls aren't the browser's fault — reset oscillation
+        // locks so background resume attempts aren't blocked.
+        try { BackgroundPlaybackManagerManager.onForegroundReturn(); } catch {}
+
         // Don't immediately retry — give network 500ms to stabilize
         const retryDelay = offlineDuration > 5000 ? 1200 : 500;
         if (_recoveryTimer) clearTimeout(_recoveryTimer);
         _recoveryTimer = setTimeout(() => {
           _recoveryTimer = null;
           if (!state.intendedPlaying) return;
+          state.networkRecoverUntil = _now() + 8000;
           // Trigger a full sync after network recovery
           try { scheduleSync(0); } catch {}
           // If video is stalled, arm buffer recovery
           if (getVideoPaused() && !state.strictBufferHold) {
             try { armResumeAfterBuffer(10000); } catch {}
+          }
+          // If we're in the background with intendedPlaying, try to resume
+          if (document.visibilityState === "hidden" && state.intendedPlaying) {
+            state.bgCatchUpCooldownUntil = 0;
+            try { seamlessBgCatchUp().catch(() => {}); } catch {}
           }
         }, retryDelay);
       }
@@ -2413,19 +2423,17 @@ _allowAudioTimeWrite: false
   function beginTabReturnAudioMute() {
     if (!coupledMode || !audio) return;
     if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
-    // Don't freeze audio at all — just sync position immediately and let it keep playing.
-    // Freezing causes a noticeable silence gap on every tab return.
     state.tabReturnAudioMuted = false;
+    // Sync audio position to video immediately
     try {
       const vt = Number(video.currentTime()) || 0;
       const at = Number(audio.currentTime) || 0;
       if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
     } catch {}
+    // Start audio playing (at volume 0 — the rAF play-lock handles fade-in
+    // once playback is confirmed stable, so the pause→play pop is inaudible)
     if (audio.paused && state.intendedPlaying) { try { audio.play().catch(() => {}); } catch {} }
-    try {
-      const tv = targetVolFromVideo();
-      if (Math.abs(audio.volume - tv) > 0.02) audio.volume = tv;
-    } catch {}
+    // Don't touch audio.volume here — _startPlayLock manages volume restoration
   }
 
   function cancelTabReturnAudioMute() {
@@ -2475,18 +2483,38 @@ _allowAudioTimeWrite: false
     try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
   }
 
-  // rAF play-lock: keep calling play() every frame for ~600ms so even if the
-  // browser pauses internally between frames, the gap is at most one frame (~16ms)
+  // rAF play-lock: keep calling play() every frame for ~800ms so even if the
+  // browser pauses internally between frames, the gap is at most one frame (~16ms).
+  // Also handles audio volume restoration: audio starts at vol 0 (to mask the
+  // pause→play pop) and ramps back to target over ~60ms once both tracks are playing.
+  let _playLockTargetVol = 1;
+  let _playLockVolRestoreStart = 0;
+  const PLAY_LOCK_VOL_RESTORE_MS = 60; // fast fade-in, barely perceptible
+
   function _startPlayLock() {
     _stopPlayLock();
     const startTime = now();
-    const lockDuration = 600;
+    const lockDuration = 800;
+
+    // Capture target volume and mute audio immediately to mask pause→play pop
+    if (coupledMode && audio) {
+      _playLockTargetVol = targetVolFromVideo();
+      if (_playLockTargetVol < 0.01) _playLockTargetVol = 1;
+      try { cancelActiveFade(); audio.volume = 0; } catch {}
+      _playLockVolRestoreStart = 0; // not started yet
+    }
+
     const pump = () => {
       if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) {
+        // Exiting — make sure audio volume is restored
+        if (coupledMode && audio && !audio.paused) {
+          try { audio.volume = _playLockTargetVol; } catch {}
+        }
         _playLockRafId = null;
         return;
       }
       if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+        if (coupledMode && audio) try { audio.volume = _playLockTargetVol; } catch {}
         _playLockRafId = null;
         return;
       }
@@ -2496,6 +2524,21 @@ _allowAudioTimeWrite: false
           if (vn && vn.paused) vn.play().catch(() => {});
           if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
         } catch {}
+
+        // Volume restoration: once both tracks are playing, fast-ramp volume back
+        if (coupledMode && audio && !audio.paused) {
+          if (!_playLockVolRestoreStart) {
+            // Both playing — start the fade-in clock
+            _playLockVolRestoreStart = now();
+          }
+          const elapsed = now() - _playLockVolRestoreStart;
+          if (elapsed >= PLAY_LOCK_VOL_RESTORE_MS) {
+            try { audio.volume = _playLockTargetVol; } catch {}
+          } else {
+            const t = elapsed / PLAY_LOCK_VOL_RESTORE_MS;
+            try { audio.volume = _playLockTargetVol * t; } catch {}
+          }
+        }
       }
       _playLockRafId = requestAnimationFrame(pump);
     };
@@ -2671,11 +2714,16 @@ _allowAudioTimeWrite: false
     },
 
     // Fires play() on both video and audio immediately, no timers or rAF.
+    // Audio is kept muted here — the rAF play-lock handles volume restoration
+    // once playback is confirmed stable, so the pause→play transition is silent.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
-        if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+        if (coupledMode && audio) {
+          // Don't set volume here — _startPlayLock already muted it
+          if (audio.paused) audio.play().catch(() => {});
+        }
       } catch {}
     },
 
@@ -3116,6 +3164,9 @@ _allowAudioTimeWrite: false
 
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
+    // Don't touch volume while the play-lock is managing the fade-in —
+    // competing volume writes cause the pause→play pop we're trying to hide.
+    if (_playLockRafId && _playLockVolRestoreStart === 0) return;
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -3143,6 +3194,8 @@ _allowAudioTimeWrite: false
   function updateAudioGainImmediate() {
     if (!audio) return;
     if (state.audioFading) return;
+    // Don't touch volume while play-lock is managing the fade-in
+    if (_playLockRafId && _playLockVolRestoreStart === 0) return;
     try {
       const target = clamp01(targetVolFromVideo());
       // During tab-return, don't jump volume — fade to prevent pop
@@ -3958,6 +4011,11 @@ try {
       }
       BackgroundPlaybackManager.trackBgResumeAttempt();
       await playTogether().catch(() => {});
+
+      // Brief settle — let the browser's play promise resolve
+      await new Promise(r => setTimeout(r, 80));
+      if (mySession !== state.playSessionId || !state.intendedPlaying) return;
+
       // Track success: if both tracks are now playing, reset backoff
       if (coupledMode) {
         if (state.intendedPlaying && !getVideoPaused() && audio && !audio.paused) {
@@ -3965,11 +4023,18 @@ try {
         } else if (!getVideoPaused() || (audio && !audio.paused)) {
           // Partial success — at least one track playing, don't backoff hard
         } else {
-          // Complete failure — BPMM already tracked the attempt
+          // Complete failure — maybe buffer is empty (network changed).
+          // Arm buffer recovery so playback resumes once data arrives.
           BackgroundPlaybackManagerManager.onBrowserForcedPause();
+          if (!state.strictBufferHold && state.intendedPlaying) {
+            armResumeAfterBuffer(15000);
+          }
         }
       } else if (!getVideoPaused() && state.intendedPlaying) {
         BackgroundPlaybackManagerManager.onBgPlaySuccess();
+      } else if (state.intendedPlaying && !state.strictBufferHold) {
+        // Non-coupled complete failure — arm buffer recovery
+        armResumeAfterBuffer(15000);
       }
     } finally {
       state.bgResumeInFlight = false;
@@ -7307,6 +7372,14 @@ try {
       }
       setFastSync(1200);
       scheduleSync(0);
+      // If video is still paused after 400ms (buffer empty), arm buffer recovery
+      setTimeout(() => {
+        if (state.tabReturnGen !== bbtGen) return;
+        if (!state.intendedPlaying) return;
+        if (getVideoPaused() && !state.strictBufferHold && !state.bgResumeInFlight) {
+          armResumeAfterBuffer(12000);
+        }
+      }, 400);
     }, 700);
   }
 
@@ -7383,6 +7456,15 @@ try {
             setFastSync(1000);
             scheduleSync(0);
           }
+          // If video is still paused after trying to play (buffer empty from
+          // network change), arm buffer recovery so it auto-plays once data arrives
+          setTimeout(() => {
+            if (state.tabReturnGen !== myGen) return;
+            if (!state.intendedPlaying) return;
+            if (getVideoPaused() && !state.strictBufferHold && !state.bgResumeInFlight) {
+              armResumeAfterBuffer(12000);
+            }
+          }, 250);
         }, retryDelay);
       });
     }, wakeDelay);
