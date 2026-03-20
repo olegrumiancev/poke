@@ -2702,6 +2702,254 @@ _seekPostTimers: []
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // FREEZE-FRAME OVERLAY  (three-layer tab-transition visual shield)
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // WHY the old counter-play approach fails:
+  //   The browser pauses the <video> internally during visibility changes.
+  //   No JS can run between the browser's pause and the first rendered
+  //   paused frame.  Even a synchronous play() in a capture-phase "pause"
+  //   listener only takes effect on the NEXT frame, so the user always
+  //   sees at least one paused frame.  Additionally, Video.js reacts to
+  //   the pause event and shows its big-play-button / loading-spinner /
+  //   changes control-bar icons — all highly visible.
+  //
+  // THREE-LAYER SOLUTION:
+  //
+  //   Layer 1 — CSS injection  (instant, no JS timing dependency)
+  //     A <style> tag with rules keyed to a class on the Video.js
+  //     container.  When the class is present, all Video.js overlays
+  //     that betray "paused" state are hidden:  big-play-button,
+  //     loading-spinner, poster image.  This is instant because
+  //     CSS applies on the next composite — no JS round-trip needed.
+  //
+  //   Layer 2 — Canvas freeze-frame  (covers the actual <video> element)
+  //     drawImage() captures the last decoded video frame onto a <canvas>
+  //     with matching object-fit, positioned over the <video>.  Even if
+  //     the browser shows a paused/buffering frame underneath, the canvas
+  //     shows the frozen last-good frame on top.  If drawImage fails
+  //     (e.g. CORS), the browser's own last-frame display is still
+  //     visible because we never hide the <video> itself.
+  //
+  //   Layer 3 — Stable-playback gate
+  //     Nothing is revealed until the video is *confirmed* playing with
+  //     currentTime advancing for ≥3 consecutive rAF ticks.  Only then
+  //     does the canvas dissolve (fast opacity transition) and the CSS
+  //     freeze class get removed.
+  //
+  // ═══════════════════════════════════════════════════════════════════════
+  const FreezeFrameOverlay = (() => {
+    let _canvas = null;
+    let _ctx = null;
+    let _active = false;
+    let _gen = 0;
+    let _stabilityRafId = null;
+    let _dissolveTimer = null;
+    let _styleEl = null;
+
+    // ── helpers ──────────────────────────────────────────────────────────
+    function _vel() {
+      // Always returns the actual <video> DOM node
+      try {
+        const vn = getVideoNode();
+        if (vn?.tagName === "VIDEO") return vn;
+      } catch {}
+      try { return video?.el?.()?.querySelector?.("video") || videoEl; }
+      catch { return videoEl; }
+    }
+
+    function _container() {
+      try { return video?.el?.() || _vel()?.parentElement || null; }
+      catch { return null; }
+    }
+
+    // ── Layer 1: CSS injection ──────────────────────────────────────────
+    function _injectStyles() {
+      if (_styleEl) return;
+      try {
+        _styleEl = document.createElement("style");
+        _styleEl.id = "ff-freeze-styles";
+        _styleEl.textContent = [
+          // Hide Video.js pause/loading indicators while frozen
+          ".ff-freeze .vjs-loading-spinner,",
+          ".ff-freeze .vjs-big-play-button,",
+          ".ff-freeze .vjs-poster",
+          "{display:none!important;visibility:hidden!important}",
+
+          // Freeze-frame canvas — lives inside the Video.js container,
+          // above the <video> and above all VJS overlays.
+          ".ff-freeze-cvs{",
+            "position:absolute!important;",
+            "top:0!important;left:0!important;",
+            "width:100%!important;height:100%!important;",
+            "pointer-events:none!important;",
+            "z-index:2147483647!important;",   // max 32-bit int
+            "transition:opacity 60ms ease-out;",
+          "}",
+        ].join("");
+        (document.head || document.documentElement).appendChild(_styleEl);
+      } catch {}
+    }
+
+    // ── Layer 2: Canvas freeze-frame ────────────────────────────────────
+    function _ensureCanvas() {
+      if (_canvas) return _canvas;
+      _injectStyles();
+      const ctr = _container();
+      if (!ctr) return null;
+
+      _canvas = document.createElement("canvas");
+      _canvas.className = "ff-freeze-cvs";
+      _canvas.style.display = "none";
+      _canvas.style.opacity = "0";
+
+      // Match the <video>'s object-fit so the canvas frame aligns exactly
+      const vel = _vel();
+      if (vel) {
+        try {
+          const cs = getComputedStyle(vel);
+          _canvas.style.objectFit = cs.objectFit || "contain";
+          _canvas.style.objectPosition = cs.objectPosition || "center";
+        } catch { _canvas.style.objectFit = "contain"; }
+      } else {
+        _canvas.style.objectFit = "contain";
+      }
+
+      // Ensure the container can be an offset-parent for the canvas
+      try {
+        const pos = getComputedStyle(ctr).position;
+        if (!pos || pos === "static") ctr.style.position = "relative";
+      } catch {}
+
+      ctr.appendChild(_canvas);
+      _ctx = _canvas.getContext("2d", { alpha: false });
+      return _canvas;
+    }
+
+    function _capture() {
+      const vel = _vel();
+      if (!vel?.videoWidth || !vel?.videoHeight || vel.readyState < 2) return false;
+      const c = _ensureCanvas();
+      if (!c || !_ctx) return false;
+      try {
+        c.width  = vel.videoWidth;
+        c.height = vel.videoHeight;
+        _ctx.drawImage(vel, 0, 0);
+        return true;
+      } catch {
+        // CORS or SecurityError — canvas capture fails, but Layer 1
+        // (CSS) still suppresses Video.js UI.  The browser keeps
+        // displaying the last decoded frame in the <video> element,
+        // so visual continuity is still mostly preserved.
+        return false;
+      }
+    }
+
+    // ── orchestration ───────────────────────────────────────────────────
+    function _cancelPending() {
+      if (_stabilityRafId)  { cancelAnimationFrame(_stabilityRafId); _stabilityRafId = null; }
+      if (_dissolveTimer)   { clearTimeout(_dissolveTimer); _dissolveTimer = null; }
+    }
+
+    function _engage() {
+      _gen++;
+      _cancelPending();
+
+      // Layer 1: CSS class on container → hides VJS overlays instantly
+      const ctr = _container();
+      if (ctr) ctr.classList.add("ff-freeze");
+
+      // Layer 2: Capture frame & show canvas
+      const captured = _capture();
+      if (captured && _canvas) {
+        _canvas.style.display = "block";
+        _canvas.style.opacity = "1";
+      }
+      _active = true;
+    }
+
+    function _disengage() {
+      // Dissolve canvas with opacity transition, then clean up
+      const myGen = _gen;
+      if (_canvas) _canvas.style.opacity = "0";
+      _dissolveTimer = setTimeout(() => {
+        if (_gen !== myGen) return;
+        if (_canvas) _canvas.style.display = "none";
+        // Remove CSS freeze class → Video.js overlays return to normal
+        const ctr = _container();
+        if (ctr) ctr.classList.remove("ff-freeze");
+        _dissolveTimer = null;
+      }, 100);
+      _active = false;
+    }
+
+    function _hardHide() {
+      _cancelPending();
+      _active = false;
+      if (_canvas) { _canvas.style.opacity = "0"; _canvas.style.display = "none"; }
+      const ctr = _container();
+      if (ctr) ctr.classList.remove("ff-freeze");
+    }
+
+    // ── Layer 3: Stable-playback gate ───────────────────────────────────
+    function _waitThenDissolve() {
+      _cancelPending();
+      const myGen = ++_gen;
+      let stableFrames = 0;
+      let lastTime = -1;
+      const NEEDED = 3;          // 3 advancing rAF ticks ≈ 50 ms
+      const MAX_WAIT = 2500;     // don't hold overlay forever
+      const t0 = performance.now();
+
+      function tick() {
+        if (myGen !== _gen || !_active) return;
+        if (performance.now() - t0 > MAX_WAIT) { _disengage(); return; }
+        try {
+          const vel = _vel();
+          if (!vel || vel.paused || vel.seeking) {
+            stableFrames = 0;
+            _stabilityRafId = requestAnimationFrame(tick);
+            return;
+          }
+          const ct = vel.currentTime;
+          if (lastTime >= 0 && ct !== lastTime) stableFrames++;
+          else if (lastTime >= 0)                stableFrames = 0;
+          lastTime = ct;
+          if (stableFrames >= NEEDED) { _disengage(); return; }
+        } catch {}
+        _stabilityRafId = requestAnimationFrame(tick);
+      }
+      _stabilityRafId = requestAnimationFrame(tick);
+    }
+
+    // ── public API ──────────────────────────────────────────────────────
+    return {
+      get active() { return _active; },
+
+      onTabLeave() {
+        // Only engage if playback was active (user-paused → no overlay)
+        if (!state.intendedPlaying && state.firstPlayCommitted) return;
+        _engage();
+      },
+
+      onTabReturn() {
+        // If overlay wasn't shown on leave (e.g. engage failed), try now
+        if (!_active && state.intendedPlaying) _engage();
+        if (_active) _waitThenDissolve();
+      },
+
+      onUserPause() { _hardHide(); },
+
+      cleanup() {
+        _hardHide();
+        try { if (_canvas?.parentElement) _canvas.parentElement.removeChild(_canvas); } catch {}
+        _canvas = null;
+        _ctx = null;
+      }
+    };
+  })();
+
   // --- smooth tab welcome-back management
   // Consolidates the tab-return smoothness logic that was previously spread
   // across the visibilitychange, focus, and blur handlers. Each handler still
@@ -2719,6 +2967,10 @@ _seekPostTimers: []
       const isDuplicate = (now() - this._lastReturnAt) < 100;
       this._lastReturnAt = now();
       state.tabReturnGen++;
+
+      // Freeze-frame overlay: keep it showing while we restart playback.
+      // It will dissolve once video is confirmed playing and advancing.
+      FreezeFrameOverlay.onTabReturn();
 
       if (this.shouldResume()) {
         state.tabReturnImmuneUntil = now() + 3000;
@@ -2753,6 +3005,10 @@ _seekPostTimers: []
     // Called when the tab goes away (from blur or visibilitychange→hidden).
     // Cancels in-flight tab-return work and snapshots state for QRO.
     onTabLeave() {
+      // Freeze-frame: capture the current video frame BEFORE the browser
+      // pauses the video, so we have a pristine last-frame to show.
+      FreezeFrameOverlay.onTabLeave();
+
       state.tabReturnGen++;
       state.tabReturnImmuneUntil = 0;
       disengagePauseIntercept();
@@ -2852,6 +3108,7 @@ _seekPostTimers: []
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
     SmoothTabWelcomeBackManagement.onUserPause(); // drop tab-return smoothness on explicit pause
+    FreezeFrameOverlay.onUserPause(); // remove freeze overlay on explicit pause
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
@@ -7442,6 +7699,7 @@ try {
         state.bgHiddenWasPlaying = false;
         state.tabReturnImmuneUntil = 0;
         disengagePauseIntercept();
+        FreezeFrameOverlay.onUserPause(); // remove overlay on video end
         state.playSessionId++;
         updateMediaSessionPlaybackState();
         pauseHard();
@@ -7957,6 +8215,7 @@ try {
       if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
       if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
       if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
+      try { FreezeFrameOverlay.cleanup(); } catch {}
       if (state._seekPostTimers.length) { state._seekPostTimers.forEach(t => clearTimeout(t)); state._seekPostTimers = []; }
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
