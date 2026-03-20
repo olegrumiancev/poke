@@ -3280,8 +3280,8 @@ _allowAudioTimeWrite: false
   let _toggleDebounceTimer = null;
   let _toggleDebounceCount = 0;
   let _toggleDebounceWindowStart = 0;
-  const TOGGLE_DEBOUNCE_WINDOW_MS = 300;  // rapid clicks within 300ms = spam
-  const TOGGLE_DEBOUNCE_THRESHOLD = 6;    // 6+ clicks in window triggers debounce
+  const TOGGLE_DEBOUNCE_WINDOW_MS = 1000; // 1-second window
+  const TOGGLE_DEBOUNCE_THRESHOLD = 30;   // 30+ clicks in 1s = extreme spam only
   const TOGGLE_DEBOUNCE_DELAY_MS = 200;   // wait 200ms for spam to settle
 
   function isToggleSpamming() {
@@ -3597,9 +3597,12 @@ _allowAudioTimeWrite: false
     // During tab-return grace, don't block audio even if video is momentarily paused
     if (inBgReturnGrace() || BringBackToTabManager.isLocked()) return false;
 
-    if (getVideoPaused() && !isHiddenBackground()) return true;
-
+    // During startup, don't block audio just because video is paused —
+    // both are being kicked together and video may be a frame behind.
     if (state.startupPhase && !state.firstPlayCommitted) return false;
+    if (state.startupKickInFlight) return false;
+
+    if (getVideoPaused() && !isHiddenBackground()) return true;
 
     // These checks must run BEFORE the bgPlaybackAllowed early-return (bgPlaybackAllowed is always true).
     // Block audio when video is actively buffering/stalled.
@@ -6940,7 +6943,9 @@ try {
 
       if (audioEventsSquelched() || state.restarting || state.isProgrammaticAudioPlay || state.isProgrammaticVideoPlay) return;
       if (now() < state.audioPlayUntil || now() < state.audioPauseUntil) return;
-      if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive() || shouldBlockNewAudioStart()) && !userPlayIntentActive()) {
+      // During startup kick, let audio play — the kick is orchestrating both tracks
+      const _inStartupKick = state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted);
+      if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive() || shouldBlockNewAudioStart()) && !userPlayIntentActive() && !_inStartupKick) {
         try { squelchAudioEvents(400); } catch {}
         try { audio.pause(); } catch {}
         return;
@@ -8094,7 +8099,7 @@ try {
 });
 
 
- (function () {
+(function () {
   'use strict';
 
    const SEEK_STEP     = 10;   // seconds for j/l/arrow keys
@@ -8119,10 +8124,25 @@ try {
     '[role="spinbutton"]',
   ].join(',');
 
-  function isEditable(el) {
+  function isEditableEl(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    // Direct match OR any ancestor matches (covers shadow-dom-free cases)
+    if (el.isContentEditable) return true;
     return el.matches(EDITABLE_SELECTOR) || !!el.closest(EDITABLE_SELECTOR);
+  }
+
+  // every possible way an element could be focused.
+  // Capture-phase keydown can fire before activeElement updates, so we cast
+  // a wide net: event target, activeElement, AND querySelector(:focus).
+  function isUserTyping(e) {
+    if (isEditableEl(e.target)) return true;
+    if (isEditableEl(document.activeElement)) return true;
+
+     const focused = document.querySelector(':focus');
+    if (focused && isEditableEl(focused)) return true;
+
+     if (e.target && e.target.closest && e.target.closest('form')) return true;
+
+    return false;
   }
 
    function getPlayer() {
@@ -8175,8 +8195,7 @@ try {
     player.muted(!player.muted());
   }
 
-   // Each handler receives (player, event).
-  // Shift variants use uppercase key names.
+   // Shift variants use uppercase key names.
   const KEY_MAP = {
     // Play / pause
     'k':          (p) => { togglePlay(p); return true; },
@@ -8204,7 +8223,7 @@ try {
     '>':           (p) => { adjustSpeed(p,  SPEED_STEP); return true; },
     '<':           (p) => { adjustSpeed(p, -SPEED_STEP); return true; },
 
-    // Number keys, seek to 0%–90%
+    // Number keys → seek to 0%–90%
     '0': (p) => { seekToPercent(p,  0); return true; },
     '1': (p) => { seekToPercent(p, 10); return true; },
     '2': (p) => { seekToPercent(p, 20); return true; },
@@ -8221,14 +8240,14 @@ try {
     'end':  (p) => { seekToPercent(p, 100); return true; },
   };
 
+  // ── Main listener ───────────────────────────────────────────────────────
   document.addEventListener('keydown', function (e) {
     // Bail on modifier combos, IME composition, or already-handled events
     if (e.defaultPrevented) return;
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.isComposing || e.keyCode === 229) return;
 
-    // if ANYTHING in the focus chain is editable, bail out.
-    if (isEditable(e.target) || isEditable(document.activeElement)) return;
+     if (isUserTyping(e)) return;
 
     const player = getPlayer();
     if (!player) return;
@@ -8244,7 +8263,7 @@ try {
       e.preventDefault();
       e.stopPropagation();
     }
-  }, true);  // capture phase so we beat other listeners
+  }, false); 
 })();
 
 // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
