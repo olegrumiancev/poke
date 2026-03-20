@@ -795,8 +795,10 @@ _seekPostTimers: []
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
     if (state.restarting || state.seeking) return;
-    if (document.visibilityState !== "hidden") return;
-    if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
+    // Keep media alive in background OR during immunity (tab transition).
+    // No BPMM gate — the oscillation circuit-breaker must never block the
+    // keepalive, otherwise audio cuts out for extended periods in background.
+    if (document.visibilityState !== "hidden" && !isTabReturnImmune()) return;
     if (coupledMode && audio && audio.paused) {
       try { audio.play().catch(() => {}); } catch {}
     }
@@ -840,15 +842,20 @@ _seekPostTimers: []
   // This means NO other code sees the pause — no UI flicker, no state changes,
   // no competing resume logic. The pause never happened as far as the app knows.
   // Cost: one boolean check per pause event (~0 CPU).
+  const _guardPlayTimes = new WeakMap();
   function _immunityPauseGuard(e) {
     if (!(state.tabReturnImmuneUntil > now())) return; // not immune — let normal handlers run
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    // Just play() — no seeking, no currentTime writes. Any seek (even
-    // zero-delta) fires seeking/seeked handlers that cascade into audio
-    // position correction, causing audible backward seeks + replays.
-    try { e.target.play().catch(() => {}); } catch {}
+    // Deduplicate per-element: if we already called play() on THIS element
+    // within 150ms, skip — multiple rapid play() calls create audible stutter.
+    const el = e.target;
+    const t = now();
+    const lastPlay = _guardPlayTimes.get(el) || 0;
+    if (t - lastPlay < 150) return;
+    _guardPlayTimes.set(el, t);
+    try { el.play().catch(() => {}); } catch {}
   }
   let _immunityGuardsInstalled = false;
   function installImmunityPauseGuards() {
@@ -2784,7 +2791,9 @@ _seekPostTimers: []
     // Cancels in-flight tab-return work and snapshots state for QRO.
     onTabLeave() {
       state.tabReturnGen++;
-      state.tabReturnImmuneUntil = 0;
+      // Don't clear immunity here — the hidden handler sets it right after
+      // this call to protect against browser auto-pause. Clearing it first
+      // creates a race where pause events slip through unguarded.
       disengagePauseIntercept();
       cancelTabReturnAudioMute();
       this.clearTimers();
@@ -2815,34 +2824,15 @@ _seekPostTimers: []
     },
 
     // Fires play() on both video and audio immediately.
-    // Flushes audio decode buffer with a zero-delta seek to prevent stale
-    // samples from replaying ("says the same thing twice"). The seeking/seeked
-    // handlers are gated by immunity so no cascade occurs.
+    // Pure play — no seeking, no currentTime writes, no volume changes.
+    // Any seek (even zero-delta buffer flush) creates a tiny silence gap
+    // that sounds like "play pause play". Just resume from wherever the
+    // decoder left off. The sync loop handles drift after immunity expires.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
-        if (coupledMode && audio) {
-          // Flush stale decode buffer: writing currentTime (even same value)
-          // forces the decoder to re-fill from the current position.
-          // Forward-only: if audio drifted ahead in background, sync video
-          // to audio instead of seeking audio backward.
-          const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
-          const at = Number(audio.currentTime) || 0;
-          if (isFinite(vt) && isFinite(at)) {
-            if (at > vt + 0.3) {
-              // Audio ahead — move video forward instead
-              try { if (_vn) _vn.currentTime = at; } catch {}
-            } else if (Math.abs(at - vt) > 0.15) {
-              // Audio behind or close — sync audio to video
-              try { audio.currentTime = vt; } catch {}
-            } else {
-              // Close enough — just flush buffer at current position
-              try { audio.currentTime = at; } catch {}
-            }
-          }
-          if (audio.paused) audio.play().catch(() => {});
-        }
+        if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
       } catch {}
     },
 
@@ -3686,8 +3676,8 @@ _seekPostTimers: []
     if (!coupledMode) return false;
     if (state.seeking || state.seekBuffering) return true;
     if (!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) return true;
-    // During tab-return grace, don't block audio even if video is momentarily paused
-    if (inBgReturnGrace() || BringBackToTabManager.isLocked()) return false;
+    // During tab-return grace/immunity, don't block audio even if video is momentarily paused
+    if (inBgReturnGrace() || BringBackToTabManager.isLocked() || isTabReturnImmune()) return false;
 
     // During startup, don't block audio just because video is paused —
     // both are being kicked together and video may be a frame behind.
@@ -7893,7 +7883,11 @@ _seekPostTimers: []
       state.visibilityStableUntil = now() + VISIBILITY_TRANSITION_MS;
       state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
       if (newState === "visible") {
-        stopBgAudioKeepalive();
+        // Don't stop keepalive immediately — keep it running during immunity
+        // so it catches any late browser pauses. Stop after immunity expires.
+        setTimeout(() => {
+          if (!isTabReturnImmune()) stopBgAudioKeepalive();
+        }, 3500);
         // Let the tab-return manager handle immunity, intercept, rapid counter
         // resets, alt-tab flag clearing, instant play, and bbtab/wakeup retry.
         SmoothTabWelcomeBackManagement.onTabReturn();
