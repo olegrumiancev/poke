@@ -797,12 +797,21 @@ _seekPostTimers: []
     if (state.restarting || state.seeking) return;
     if (document.visibilityState !== "hidden") return;
     if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
+    // Flush decode buffer (zero-delta seek) before play to prevent stale replay
     if (coupledMode && audio && audio.paused) {
-      try { audio.play().catch(() => {}); } catch {}
+      try {
+        const t = audio.currentTime;
+        if (isFinite(t)) audio.currentTime = t;
+        audio.play().catch(() => {});
+      } catch {}
     }
     try {
       const vn = getVideoNode();
-      if (vn && vn.paused) vn.play().catch(() => {});
+      if (vn && vn.paused) {
+        const t = vn.currentTime;
+        if (isFinite(t)) vn.currentTime = t;
+        vn.play().catch(() => {});
+      }
     } catch {}
   }
   function startBgAudioKeepalive() {
@@ -845,7 +854,17 @@ _seekPostTimers: []
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    try { e.target.play().catch(() => {}); } catch {}
+    try {
+      const el = e.target;
+      // Flush the decode buffer with a zero-delta seek before play().
+      // Without this, the browser replays stale audio from its internal
+      // decode buffer, causing a brief repeat ("hel-hello" artifact).
+      // Setting currentTime = currentTime invalidates the buffer without
+      // changing position — synchronous, zero latency.
+      const t = el.currentTime;
+      if (isFinite(t)) el.currentTime = t;
+      el.play().catch(() => {});
+    } catch {}
   }
   let _immunityGuardsInstalled = false;
   function installImmunityPauseGuards() {
@@ -2817,14 +2836,23 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately. No muting, no
-    // seeking, no volume manipulation — just play(). The browser resumes
-    // from wherever it left off with zero added latency.
+    // Fires play() on both video and audio immediately with a decode buffer
+    // flush. The zero-delta seek (currentTime = currentTime) invalidates the
+    // browser's internal decode buffer so it doesn't replay stale audio.
+    // Synchronous, no delays, no volume changes.
     instantPlay() {
       try {
         const _vn = getVideoNode();
-        if (_vn && _vn.paused) _vn.play().catch(() => {});
-        if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+        if (_vn && _vn.paused) {
+          const t = _vn.currentTime;
+          if (isFinite(t)) _vn.currentTime = t;
+          _vn.play().catch(() => {});
+        }
+        if (coupledMode && audio && audio.paused) {
+          const t = audio.currentTime;
+          if (isFinite(t)) audio.currentTime = t;
+          audio.play().catch(() => {});
+        }
       } catch {}
     },
 
@@ -6547,7 +6575,11 @@ _seekPostTimers: []
           (state.intendedPlaying || !state.firstPlayCommitted) &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
         const _vn = getVideoNode();
-        if (_vn && typeof _vn.play === 'function') _vn.play().catch(() => {});
+        if (_vn && typeof _vn.play === 'function') {
+          const t = _vn.currentTime;
+          if (isFinite(t)) _vn.currentTime = t;
+          _vn.play().catch(() => {});
+        }
         return;
       }
 
@@ -7111,11 +7143,17 @@ _seekPostTimers: []
       }
     };
     const onAudioPause = () => {
-      // During tab-return immunity, counter-play immediately. No muting,
-      // no delays — just play(). The browser resumes instantly.
+      // During tab-return immunity, flush decode buffer + counter-play.
+      // (Backup path — capture-phase guard normally handles this first.)
       if (isTabReturnImmune() && state.intendedPlaying &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
-        try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
+        try {
+          if (audio && audio.paused) {
+            const t = audio.currentTime;
+            if (isFinite(t)) audio.currentTime = t;
+            audio.play().catch(() => {});
+          }
+        } catch {}
         return;
       }
       if (!state.isProgrammaticAudioPause && !state.isProgrammaticVideoPause) incrementRapidPlayPause();
