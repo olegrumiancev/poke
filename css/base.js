@@ -791,6 +791,7 @@ _seekPostTimers: []
   let _bgWorker = null;
   let _bgWorkerUrl = null;
   let _bgFallbackId = null; // setInterval fallback if Worker creation fails
+  let _lastKeepalivePlayAt = 0;
   function _bgKeepaliveTick() {
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
@@ -799,6 +800,12 @@ _seekPostTimers: []
     // No BPMM gate — the oscillation circuit-breaker must never block the
     // keepalive, otherwise audio cuts out for extended periods in background.
     if (document.visibilityState !== "hidden" && !isTabReturnImmune()) return;
+    // When visible (immunity active), only fire once per 500ms to avoid
+    // competing with the capture guard and instantPlay(). In background,
+    // fire every tick (200ms) for reliability.
+    const t = now();
+    if (document.visibilityState !== "hidden" && t - _lastKeepalivePlayAt < 500) return;
+    _lastKeepalivePlayAt = t;
     if (coupledMode && audio && audio.paused) {
       try { audio.play().catch(() => {}); } catch {}
     }
@@ -3867,13 +3874,14 @@ _seekPostTimers: []
     }
     if (now() < state.stateChangeCooldownUntil && !force) return !audio.paused;
     if (now() < state.audioFadeCompleteUntil && !force) return !audio.paused;
-    if (shouldBlockNewAudioStart()) return false;
+    if (!force && shouldBlockNewAudioStart()) return false;
     const t = now();
     if (!force && t < state.audioPauseUntil) return !audio.paused;
     if (!force && t < state.audioPlayUntil) return !audio.paused;
     if (state.audioPlayInFlight) {
-      try { await state.audioPlayInFlight; } catch {}
-      return !audio.paused;
+      if (!force) { try { await state.audioPlayInFlight; } catch {} return !audio.paused; }
+      // force: don't wait for previous play — just cancel and proceed
+      state.audioPlayInFlight = null;
     }
     state.audioPlayUntil = t + Math.max(0, Number(minGapMs) || 0);
     state.audioPauseUntil = 0;
@@ -3922,7 +3930,7 @@ _seekPostTimers: []
         return false;
       }
 
-      if (shouldBlockNewAudioStart() || userPauseLockActive()) {
+      if ((!force && shouldBlockNewAudioStart()) || userPauseLockActive()) {
         try { squelchAudioEvents(350); } catch {}
         try { audio.pause(); } catch {}
         return false;
@@ -4659,19 +4667,20 @@ _seekPostTimers: []
       if (coupledMode && audio && audio.paused) {
         const vNow = Number(video.currentTime()) || 0;
         const canKickFirstAudio = !state.audioEverStarted && canStartAudioAt(vNow);
-        // During startup kick (startupKickInFlight), skip the UltraStabilizer
-        // gate — the kick is explicitly coordinating both tracks. Blocking audio
-        // here creates a visible play-pause where video starts but audio joins late.
         const inStartupKickFlow = state.startupKickInFlight || isTabReturnImmune();
-        const shouldHoldAudio =
+        const isRecentUserAction = (now() - state.lastUserActionTime) < 2000;
+        // Skip all audio hold gates for user-initiated plays — audio must
+        // start immediately when the user clicks play. The browser can
+        // handle any buffering naturally.
+        const shouldHoldAudio = !isRecentUserAction && (
         state.strictBufferHold ||
         shouldBlockNewAudioStart() ||
         (!inStartupKickFlow && UltraStabilizer.shouldBlockAudioAtStartup()) ||
-        (!inStartupKickFlow && document.visibilityState === "visible" && state.videoWaiting && state.startupPhase && !state.audioEverStarted);
+        (!inStartupKickFlow && document.visibilityState === "visible" && state.videoWaiting && state.startupPhase && !state.audioEverStarted));
 
         if (shouldHoldAudio) {
           if (state.videoWaiting) armResumeAfterBuffer(10000);
-        } else if (!canKickFirstAudio && startupAudioHoldActive()) {
+        } else if (!isRecentUserAction && !canKickFirstAudio && startupAudioHoldActive()) {
           // hold
         } else {
           safeSetAudioTime(vNow);
@@ -6454,7 +6463,7 @@ _seekPostTimers: []
           state.startupKickDone = true;
           state.startupPhase = false;
           // Immunity protects against browser re-pausing right after autoplay
-          state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 2000);
+          state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 3000);
           markMediaAction("play");
           forceUnmuteForPlaybackIfAllowed();
           updateMediaSessionPlaybackState();
@@ -6542,6 +6551,8 @@ _seekPostTimers: []
                 clearStartupAutoplayRetryTimer();
                 setTimeout(() => { state.startupPhase = false; }, 1200);
               }
+              // Immunity protects against Chromium's post-autoplay pause burst
+              state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 3000);
 
               markMediaAction("play");
               setFastSync(2200);
