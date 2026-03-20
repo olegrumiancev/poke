@@ -783,6 +783,32 @@ _seekPostTimers: []
     };
   })();
 
+  // --- Background Audio Keepalive
+  // Chromium throttles background tabs heavily (setTimeout min 1000ms, rAF disabled).
+  // But audio CAN still play in background. When the browser pauses audio for power
+  // savings, we restart it with a setInterval that fires reliably even in background.
+  // This is completely silent — no volume manipulation, just play() if paused.
+  let _bgAudioKeepaliveId = null;
+  function startBgAudioKeepalive() {
+    if (_bgAudioKeepaliveId) return;
+    _bgAudioKeepaliveId = setInterval(() => {
+      if (!state.intendedPlaying || !coupledMode || !audio) return;
+      if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+      if (state.restarting || state.seeking) return;
+      // Only act when tab is actually hidden
+      if (document.visibilityState !== "hidden") return;
+      // Don't fight BPMM oscillation lock
+      if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
+      // If audio is paused, silently restart it
+      if (audio.paused) {
+        try { audio.play().catch(() => {}); } catch {}
+      }
+    }, 2000); // 2s interval — reliable even in throttled background tabs
+  }
+  function stopBgAudioKeepalive() {
+    if (_bgAudioKeepaliveId) { clearInterval(_bgAudioKeepaliveId); _bgAudioKeepaliveId = null; }
+  }
+
   // --- VisibilityGuard (VG)
   const VisibilityGuard = (() => {
     let _suppressUntil   = 0;
@@ -2411,6 +2437,15 @@ _seekPostTimers: []
       state.pageFullyLoaded = true;
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
         maybePrimeStartup();
+        if (state.startupPrimed) {
+          scheduleStartupAutoplayKick();
+        } else {
+          // Buffer not ready yet — schedule retry so autoplay isn't lost
+          scheduleStartupAutoplayRetry();
+        }
+        forceAudioStartupPlay();
+      } else if (coupledMode && state.startupPhase && state.startupPrimed && !state.startupKickDone && !state.firstPlayCommitted) {
+        // Already primed but kick hasn't fired yet — kick now
         scheduleStartupAutoplayKick();
         forceAudioStartupPlay();
       } else if (!coupledMode && wantsStartupAutoplay()) {
@@ -2440,11 +2475,21 @@ _seekPostTimers: []
     if (!coupledMode || !audio) return;
     if (state.tabReturnSettleTimer) clearTimeout(state.tabReturnSettleTimer);
     state.tabReturnAudioMuted = false;
-    // Sync audio position to video immediately
+    // Sync positions: if audio played ahead in background, move VIDEO forward
+    // to match audio (audio is at the "correct" position — it was playing
+    // continuously). Never seek audio backward — that causes an audible skip.
     try {
       const vt = Number(video.currentTime()) || 0;
       const at = Number(audio.currentTime) || 0;
-      if (isFinite(vt) && Math.abs(at - vt) > 0.3) audio.currentTime = vt;
+      if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.3) {
+        if (at > vt) {
+          // Audio is ahead (played in background while video was paused) — sync video forward
+          bgSilentSyncVideoTime(at);
+        } else {
+          // Audio is behind video (rare) — sync audio forward (not backward)
+          safeSetAudioTime(vt);
+        }
+      }
     } catch {}
     // Resume audio immediately — no volume manipulation to avoid audible gaps
     if (audio.paused && state.intendedPlaying) { try { audio.play().catch(() => {}); } catch {} }
@@ -2750,7 +2795,6 @@ _seekPostTimers: []
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
         if (coupledMode && audio) {
-          // Don't set volume here — _startPlayLock already muted it
           if (audio.paused) audio.play().catch(() => {});
         }
       } catch {}
@@ -3684,25 +3728,40 @@ _seekPostTimers: []
 
   function execProgrammaticVideoPlay() {
     VisibilityGuard.onPlayCalled(); // VG: suppress spurious pause after our play()
-state.isProgrammaticVideoPlay = true;
-try {
-  let p = null;
-  try { p = video.play(); } catch {}
-  if (!p) {
+    state.isProgrammaticVideoPlay = true;
     try {
-      const v = getVideoNode();
-      if (v) p = v.play();
-    } catch {}
-  }
-  if (p && p.catch) p.catch(() => {});
-  Promise.resolve(p).finally(() => {
-    setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
-  });
-  return p;
-} catch (e) {
-  state.isProgrammaticVideoPlay = false;
-  throw e;
-}
+      let p = null;
+      try { p = video.play(); } catch {}
+      if (!p) {
+        try {
+          const v = getVideoNode();
+          if (v) p = v.play();
+        } catch {}
+      }
+      if (p && p.then) {
+        p.then(() => {
+          setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
+        }).catch((err) => {
+          // Chromium autoplay policy: if play() fails because video is unmuted,
+          // mute it and retry (in coupled mode, audio comes from separate element)
+          if (coupledMode && err && err.name === "NotAllowedError") {
+            try { setVideoMutedState(true); } catch {}
+            try {
+              const vn = getVideoNode();
+              const p2 = vn ? vn.play() : video.play();
+              if (p2 && p2.catch) p2.catch(() => {});
+            } catch {}
+          }
+          setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
+        });
+      } else {
+        setTimeout(() => { state.isProgrammaticVideoPlay = false; }, 500);
+      }
+      return p;
+    } catch (e) {
+      state.isProgrammaticVideoPlay = false;
+      throw e;
+    }
   }
 
   async function execProgrammaticAudioPause(ms = 500) {
@@ -3773,7 +3832,12 @@ try {
       const audioActuallyPaused = audio.paused;
       if (audioActuallyPaused) {
         cancelActiveFade();
-        audio.volume = 0;
+        // Only mute before play if audio has played before (has decode buffer).
+        // On first-ever play there's no buffer to "pop", so muting just creates
+        // an audible 0→target volume jump (especially noticeable on Firefox).
+        if (state.audioEverStarted) {
+          audio.volume = 0;
+        }
       }
 
       const p = audio.play();
@@ -5168,9 +5232,9 @@ try {
 
     clearStartupAutoplayRetryTimer();
     const count = state.startupAutoplayRetryCount;
-    if (count >= 20) return;
+    if (count >= 40) return;
     // Cap index at array length to avoid undefined delay falling through to || 5000 wrong index
-    const delays = [150, 300, 500, 900, 1500, 2000, 2500, 3000, 4000, 5000];
+    const delays = [150, 300, 500, 900, 1500, 2000, 2500, 3000, 4000, 5000, 5000, 5000, 5000, 5000];
     const delay = delays[Math.min(count, delays.length - 1)];
     state.startupAutoplayRetryCount++;
     state.startupAutoplayRetryTimer = setTimeout(async () => {
@@ -6596,9 +6660,16 @@ try {
         }
 
         // --- actually hidden
-        // Page is not visible at all. Don't fight the browser — flag for resume.
+        // Page is not visible at all. Video can't render in background, but keep
+        // audio alive so there's no gap. Flag video for resume on return.
         if (document.visibilityState === "hidden") {
-          if (state.intendedPlaying && platform.useBgControllerRetry) state.resumeOnVisible = true;
+          if (state.intendedPlaying && platform.useBgControllerRetry) {
+            state.resumeOnVisible = true;
+            // Keep audio playing in background even though video can't render
+            if (coupledMode && audio && audio.paused && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
+              try { audio.play().catch(() => {}); } catch {}
+            }
+          }
           return;
         }
 
@@ -7138,6 +7209,11 @@ try {
           }
           noteBackgroundEntry();
           state.resumeOnVisible = true;
+          // In background, try to restart audio directly — audio can play in background tabs.
+          // The keepalive interval also handles this, but an immediate restart is faster.
+          if (document.visibilityState === "hidden" && _audioShouldRestart()) {
+            try { audio.play().catch(() => {}); } catch {}
+          }
           return;
         }
         pauseTogether();
@@ -7678,6 +7754,7 @@ try {
       state.visibilityStableUntil = now() + VISIBILITY_TRANSITION_MS;
       state.tabVisibilityChangeUntil = now() + TAB_VISIBILITY_STABLE_MS;
       if (newState === "visible") {
+        stopBgAudioKeepalive();
         // Let the tab-return manager handle immunity, intercept, rapid counter
         // resets, alt-tab flag clearing, instant play, and bbtab/wakeup retry.
         SmoothTabWelcomeBackManagement.onTabReturn();
@@ -7783,6 +7860,7 @@ try {
         updateLastKnownGoodVT();
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
+        if (state.intendedPlaying && coupledMode) startBgAudioKeepalive();
 
         // Tab-switch protection: visibilitychange→hidden fires WITHOUT a preceding
         // blur event on tab switches (unlike alt-tab). Set the same transition
@@ -7882,6 +7960,7 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("beforeunload", () => {
+      stopBgAudioKeepalive();
       clearBgResumeRetryTimer();
       clearResumeAfterBufferTimer();
       clearSeekSyncFinalizeTimer();
@@ -7941,7 +8020,8 @@ try {
         return;
       }
       try {
-        audio.volume = 0;
+        // Don't set volume=0 on first play — no decode buffer means no pop,
+        // and the volume jump from 0→target is audible on Firefox.
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
         squelchAudioEvents(800);
@@ -7950,7 +8030,8 @@ try {
           p.then(() => {
             state.audioEverStarted = true;
             state.audioStartupPlayRetries = 0;
-            fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
+            // Ensure volume is at target (may already be correct)
+            updateAudioGainImmediate();
           }).catch(() => {
             state.audioStartupPlayRetries++;
             state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
