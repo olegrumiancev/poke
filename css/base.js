@@ -783,30 +783,59 @@ _seekPostTimers: []
     };
   })();
 
-  // --- Background Audio Keepalive
+  // --- Background Media Keepalive
   // Chromium throttles background tabs heavily (setTimeout min 1000ms, rAF disabled).
-  // But audio CAN still play in background. When the browser pauses audio for power
-  // savings, we restart it with a setInterval that fires reliably even in background.
+  // But media CAN still play in background. When the browser pauses audio/video for
+  // power savings, we restart it with a setInterval that fires reliably even in bg.
   // This is completely silent — no volume manipulation, just play() if paused.
+  // 500ms interval: fast enough to catch browser pauses before the user notices,
+  // but not so fast it burns CPU. setInterval is NOT throttled in background tabs
+  // (only setTimeout is throttled to 1000ms min).
   let _bgAudioKeepaliveId = null;
+  let _bgKeepaliveFailCount = 0;
   function startBgAudioKeepalive() {
     if (_bgAudioKeepaliveId) return;
+    _bgKeepaliveFailCount = 0;
     _bgAudioKeepaliveId = setInterval(() => {
-      if (!state.intendedPlaying || !coupledMode || !audio) return;
+      if (!state.intendedPlaying) return;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
       if (state.restarting || state.seeking) return;
       // Only act when tab is actually hidden
       if (document.visibilityState !== "hidden") return;
       // Don't fight BPMM oscillation lock
       if (!BackgroundPlaybackManagerManager.shouldAttemptBgResume()) return;
-      // If audio is paused, silently restart it
-      if (audio.paused) {
-        try { audio.play().catch(() => {}); } catch {}
+
+      let didResume = false;
+
+      // Keep audio playing (coupled mode)
+      if (coupledMode && audio && audio.paused) {
+        try { audio.play().catch(() => {}); didResume = true; } catch {}
       }
-    }, 2000); // 2s interval — reliable even in throttled background tabs
+
+      // Keep video playing too — browser may pause video independently
+      try {
+        const vn = getVideoNode();
+        if (vn && vn.paused) {
+          vn.play().catch(() => {});
+          didResume = true;
+        }
+      } catch {}
+
+      if (didResume) {
+        _bgKeepaliveFailCount++;
+        // If we've had to restart many times, the browser is fighting us.
+        // Back off slightly to avoid burning battery.
+        if (_bgKeepaliveFailCount > 20) {
+          _bgKeepaliveFailCount = 0;
+        }
+      } else {
+        _bgKeepaliveFailCount = 0;
+      }
+    }, 500);
   }
   function stopBgAudioKeepalive() {
     if (_bgAudioKeepaliveId) { clearInterval(_bgAudioKeepaliveId); _bgAudioKeepaliveId = null; }
+    _bgKeepaliveFailCount = 0;
   }
 
   // --- VisibilityGuard (VG)
@@ -2546,7 +2575,8 @@ _seekPostTimers: []
     // Swallow the event so no other listener sees it.
     // Do NOT call audio.play() here — the play-lock handles resume.
     // Calling play() from the pause suppressor causes decode buffer replay
-     e.stopImmediatePropagation();
+    // (the "hel-hello" artifact) because the browser resumes from stale buffer.
+    e.stopImmediatePropagation();
   }
 
   // rAF play-lock: if the browser pauses video/audio during tab return,
@@ -2701,9 +2731,12 @@ _seekPostTimers: []
       }
 
       if (this.shouldResume()) {
+        // Set immunity — the video and audio pause handlers will counter-play
+        // any browser-fired pause events during this window. No need for the
+        // heavy pause intercept (method overrides, event suppressors, play-lock)
+        // or multiple competing retry systems — those cause audio glitches by
+        // racing with seeks, volume changes, and multiple play() calls.
         state.tabReturnImmuneUntil = now() + 3000;
-        engagePauseIntercept();
-        beginTabReturnAudioMute();
       }
 
       // Reset rapid play/pause counters so spurious tab-switch events
@@ -2718,14 +2751,28 @@ _seekPostTimers: []
       state.altTabTransitionActive = false;
       state.altTabTransitionUntil = 0;
 
-      // If we should be playing, do it right away.
-      // On duplicate calls (focus + visibilitychange within 100ms), only
-      // do the instant play — don't re-fire the full retry/wakeup machinery.
-      if (state.intendedPlaying) {
+      // Single clean resume — play video and audio once. No seeking, no
+      // volume manipulation, no retry machinery. The pause handlers'
+      // immunity counter-play handles any subsequent browser pauses.
+      // Position sync is handled by the regular sync loop after settle.
+      if (this.shouldResume()) {
         this.instantPlay();
+        // Safety nets: if still paused after delay, try again. Two passes
+        // to catch both fast browser pauses and slow deferred pauses.
         if (!isDuplicate) {
-          startBringBackRetry();
-          executeSeamlessWakeup();
+          const _retGen = state.tabReturnGen;
+          const _safetyResume = () => {
+            if (state.tabReturnGen !== _retGen || !state.intendedPlaying) return;
+            if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+            const vn = getVideoNode();
+            if (vn && vn.paused) vn.play().catch(() => {});
+            if (coupledMode && audio && audio.paused) {
+              // No mute trick on safety net — buffer is flushed by now
+              audio.play().catch(() => {});
+            }
+          };
+          setTimeout(_safetyResume, 300);
+          setTimeout(_safetyResume, 1200);
         }
       }
     },
@@ -2764,14 +2811,22 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately. No seeking or
-    // buffer manipulation — let the browser resume naturally.
+    // Fires play() on both video and audio immediately. Uses the mute trick
+    // on audio to hide decode buffer replay artifact: mute → play → unmute
+    // after 80ms so the stale decode buffer plays silently.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
         if (coupledMode && audio && audio.paused) {
+          const wasMuted = audio.muted;
+          if (!wasMuted && state.audioEverStarted) audio.muted = true;
           audio.play().catch(() => {});
+          if (!wasMuted && state.audioEverStarted) {
+            setTimeout(() => {
+              try { if (audio && !state.userMutedAudio) audio.muted = false; } catch {}
+            }, 80);
+          }
         }
       } catch {}
     },
@@ -3254,8 +3309,19 @@ _seekPostTimers: []
 
   function forceUnmuteForPlaybackIfAllowed() {
     if (!state.intendedPlaying) return;
-    try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
-    try { if (audio && !state.userMutedAudio && audio.muted) audio.muted = false; } catch {}
+    // In coupled mode, keep video muted — audio comes from the separate element.
+    // Unmuting video in coupled mode breaks Chromium autoplay policy (unmuted
+    // video can't autoplay without user gesture) and wastes bandwidth decoding
+    // the video's audio track.
+    if (!coupledMode) {
+      try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
+    }
+    // During tab-return immunity, don't unmute audio — the mute trick
+    // (instantPlay/onAudioPause) uses temporary audio.muted=true to hide
+    // decode buffer replay. The 80ms timeout will unmute it.
+    if (!isTabReturnImmune()) {
+      try { if (audio && !state.userMutedAudio && audio.muted) audio.muted = false; } catch {}
+    }
   }
 
   function checkRapidPlayPause() {
@@ -3808,10 +3874,10 @@ _seekPostTimers: []
       const audioActuallyPaused = audio.paused;
       if (audioActuallyPaused) {
         cancelActiveFade();
-        // Only mute before play if audio has played before (has decode buffer).
-        // On first-ever play there's no buffer to "pop", so muting just creates
-        // an audible 0→target volume jump (especially noticeable on Firefox).
-        if (state.audioEverStarted) {
+        // Only mute before play if audio has played before AND we're not in
+        // tab-return immunity. During tab return, volume=0 causes an audible
+        // dip as multiple systems race to restart audio.
+        if (state.audioEverStarted && !isTabReturnImmune()) {
           audio.volume = 0;
         }
       }
@@ -5171,6 +5237,13 @@ _seekPostTimers: []
         setMediaPlayTxn(2200);
         setFastSync(2600);
 
+        // Chromium autoplay: ensure video is muted before first play in coupled
+        // mode. Audio comes from the separate element, so video mute is invisible
+        // to the user but satisfies the autoplay policy (muted videos can autoplay).
+        if (coupledMode && !state.userMutedVideo) {
+          try { setVideoMutedState(true); } catch {}
+        }
+
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
 
@@ -5254,6 +5327,11 @@ _seekPostTimers: []
         setPauseEventGuard(1800);
         setMediaPlayTxn(2200);
         setFastSync(2600);
+
+        // Chromium autoplay: mute video before play in coupled mode
+        if (coupledMode && !state.userMutedVideo) {
+          try { setVideoMutedState(true); } catch {}
+        }
 
         state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
         state.startupPlaySettled = false;
@@ -7052,7 +7130,28 @@ _seekPostTimers: []
       }
     };
     const onAudioPause = () => {
-      if (isTabReturnImmune()) return; // never fight audio during tab return
+      // During tab-return immunity, counter-play immediately instead of ignoring.
+      // This is the ONLY audio resume mechanism needed — no play-lock, no retry.
+      // CRITICAL: mute audio briefly before play() to hide decode buffer replay
+      // artifact ("hel-hello"). The browser's decode buffer retains stale audio
+      // from before the pause — playing from it causes a brief repeat. Muting
+      // for 80ms lets the buffer advance past stale data silently.
+      if (isTabReturnImmune() && state.intendedPlaying &&
+          !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
+        try {
+          if (audio && audio.paused) {
+            const wasMuted = audio.muted;
+            if (!wasMuted) audio.muted = true;
+            audio.play().catch(() => {});
+            if (!wasMuted) {
+              setTimeout(() => {
+                try { if (audio && !state.userMutedAudio) audio.muted = false; } catch {}
+              }, 80);
+            }
+          }
+        } catch {}
+        return;
+      }
       if (!state.isProgrammaticAudioPause && !state.isProgrammaticVideoPause) incrementRapidPlayPause();
       if (detectLoop()) {
         state.intendedPlaying = false;
@@ -7743,14 +7842,14 @@ _seekPostTimers: []
         // resets, alt-tab flag clearing, instant play, and bbtab/wakeup retry.
         SmoothTabWelcomeBackManagement.onTabReturn();
 
-        try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
+        // Don't call QuantumReturnOrchestrator.preemptivePlay() here —
+        // it seeks audio and calls play(), competing with onTabReturn's
+        // instantPlay(). Multiple seeks cause audio glitches.
         VisibilityGuard.onTabShow();
 
         state.lastBgReturnAt = now();
         BackgroundPlaybackManager.onBecomeForeground();
         BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation counters
-        // Arm the BringBackToTab lock before any pause events fire
-        if (state.intendedPlaying) BringBackToTabManager.onTabReturn();
         try { UltraStabilizer.onVisibilityChange(true); } catch {}
 
         clearHiddenMediaSessionPlay();
@@ -7784,48 +7883,23 @@ _seekPostTimers: []
         }
 
         if (state.intendedPlaying) {
-          // instantPlay + startBringBackRetry + executeSeamlessWakeup already
-          // called by SmoothTabWelcomeBackManagement.onTabReturn() above.
+          // onTabReturn() already called instantPlay() with a single play()
+          // on both video and audio. Don't add more competing resume logic —
+          // multiple play()/seek/volume calls racing cause audio glitches.
+          state.resumeOnVisible = false;
+          state.bgHiddenWasPlaying = false;
 
-          if (platform.useBgControllerRetry) {
-            state.resumeOnVisible = false;
-            state.bgHiddenWasPlaying = false;
-
-            // If startup hasn't committed yet, also wake the startup machinery so it
-            // can run its sequencing (AVLG check, audio startup, etc.) alongside the
-            // direct play() above. One will succeed first; the other is a no-op.
-            if (!state.firstPlayCommitted && wantsStartupAutoplay() && !state.startupKickInFlight) {
-              if (!state.startupAutoplayRetryTimer) {
-                scheduleStartupAutoplayRetry();
-              }
+          // If startup hasn't committed, wake the startup machinery
+          if (!state.firstPlayCommitted && wantsStartupAutoplay() && !state.startupKickInFlight) {
+            if (!state.startupAutoplayRetryTimer) {
+              scheduleStartupAutoplayRetry();
             }
-          } else {
-            state.resumeOnVisible = false;
-            state.bgHiddenWasPlaying = false;
-            setFastSync(800);
-            scheduleSync(0);
           }
 
-          if (coupledMode && !state.audioEverStarted && !getVideoPaused()) {
-            setTimeout(() => {
-              if (!state.intendedPlaying || state.audioEverStarted) return;
-              if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-              const vt = Number(video.currentTime()) || 0;
-              quietSeekAudio(vt).catch(() => {});
-              execProgrammaticAudioPlay({ squelchMs: 600, force: true, minGapMs: 0 })
-              .then(ok => { if (ok) state.audioEverStarted = true; })
-              .catch(() => {});
-            }, 350);
-          }
-
-          // Smooth fade-in: audio started at vol 0 to prevent pop — fade to target
-          if (coupledMode && audio) {
-            setTimeout(() => {
-              if (!state.intendedPlaying) return;
-              if (audio.paused) return;
-              softUnmuteAudio(120).catch(() => {});
-            }, 80);
-          }
+          // Schedule a sync after things settle — this handles position correction
+          // without the aggressive seeking that causes glitches
+          setFastSync(800);
+          scheduleSync(300);
         }
         // Startup retry on tab-return: kick the startup kick regardless.
         if (wantsStartupAutoplay() && pageLoadedForAutoplay()) {
@@ -7844,7 +7918,7 @@ _seekPostTimers: []
         updateLastKnownGoodVT();
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
-        if (state.intendedPlaying && coupledMode) startBgAudioKeepalive();
+        if (state.intendedPlaying) startBgAudioKeepalive();
 
         // Tab-switch protection: visibilitychange→hidden fires WITHOUT a preceding
         // blur event on tab switches (unlike alt-tab). Set the same transition
@@ -7897,6 +7971,9 @@ _seekPostTimers: []
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
       }
+      // Start keepalive on blur too — alt-tab fires blur without always
+      // changing visibilityState to "hidden" (e.g., overlay windows).
+      if (state.intendedPlaying) startBgAudioKeepalive();
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
       state.focusLossCount++;
@@ -7919,10 +7996,9 @@ _seekPostTimers: []
       // alt-tab flag clearing, instant play, and bbtab/wakeup retry.
       SmoothTabWelcomeBackManagement.onTabReturn();
 
-      try { QuantumReturnOrchestrator.preemptivePlay(); } catch {}
       VisibilityGuard.onTabShow();
       BackgroundPlaybackManager.onBecomeForeground();
-      BackgroundPlaybackManagerManager.onForegroundReturn(); // reset oscillation state
+      BackgroundPlaybackManagerManager.onForegroundReturn();
 
       state.lastBgReturnAt = Math.max(state.lastBgReturnAt, now());
       state.focusStableUntil = now() + 300;
@@ -7935,15 +8011,8 @@ _seekPostTimers: []
         setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
       }
 
-      if (state.intendedPlaying) {
-        // instantPlay + startBringBackRetry + executeSeamlessWakeup already
-        // called by SmoothTabWelcomeBackManagement.onTabReturn() above.
-        BringBackToTabManager.onTabReturn();
-        if (document.visibilityState !== "visible") {
-          // Tab still hidden (focus fired before visibilitychange) — defer.
-          // The visibilitychange→visible handler will handle the rest.
-          state.resumeOnVisible = true;
-        }
+      if (state.intendedPlaying && document.visibilityState !== "visible") {
+        state.resumeOnVisible = true;
       }
     }, { passive: true, capture: true });
     window.addEventListener("beforeunload", () => {
