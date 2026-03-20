@@ -2464,15 +2464,17 @@ _allowAudioTimeWrite: false
   function _videoPauseEventSuppressor(e) {
     if (!(state.tabReturnImmuneUntil > now())) return; // not immune, let it through
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
-    // Swallow the event entirely
+    // Swallow the event — no other listener sees it (including video.js)
     e.stopImmediatePropagation();
-    // Immediately counter-play so there's zero visible freeze
+    e.stopPropagation();
+    // Synchronous counter-play to minimize visible freeze to zero frames.
+    // Because this runs in the capture phase, play() fires before the browser
+    // has a chance to render a paused frame.
     try {
       const vn = getVideoNode();
-      if (vn && vn.paused && _origVideoPause) {
-        // Use the original play, not the element's current one
-        vn.play().catch(() => {});
-      }
+      if (vn && vn.paused) vn.play().catch(() => {});
+      // Also hit the other element if they differ
+      if (videoEl && videoEl !== vn && videoEl.paused) videoEl.play().catch(() => {});
     } catch {}
   }
 
@@ -2489,7 +2491,8 @@ _allowAudioTimeWrite: false
   // pause→play pop) and ramps back to target over ~60ms once both tracks are playing.
   let _playLockTargetVol = 1;
   let _playLockVolRestoreStart = 0;
-  const PLAY_LOCK_VOL_RESTORE_MS = 60; // fast fade-in, barely perceptible
+  let _playLockIntervalId = null;
+  const PLAY_LOCK_VOL_RESTORE_MS = 50; // fast fade-in, barely perceptible
 
   function _startPlayLock() {
     _stopPlayLock();
@@ -2504,50 +2507,77 @@ _allowAudioTimeWrite: false
       _playLockVolRestoreStart = 0; // not started yet
     }
 
-    const pump = () => {
+    const tick = () => {
+      if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+        if (coupledMode && audio) try { audio.volume = _playLockTargetVol; } catch {}
+        _stopPlayLock();
+        return;
+      }
       if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) {
         // Exiting — make sure audio volume is restored
         if (coupledMode && audio && !audio.paused) {
           try { audio.volume = _playLockTargetVol; } catch {}
         }
-        _playLockRafId = null;
-        return;
-      }
-      if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
-        if (coupledMode && audio) try { audio.volume = _playLockTargetVol; } catch {}
-        _playLockRafId = null;
+        _stopPlayLock();
         return;
       }
       if (state.intendedPlaying) {
         try {
           const vn = getVideoNode();
           if (vn && vn.paused) vn.play().catch(() => {});
+          if (videoEl && videoEl !== vn && videoEl.paused) videoEl.play().catch(() => {});
           if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
         } catch {}
 
-        // Volume restoration: once both tracks are playing, fast-ramp volume back
+        // Volume restoration: once audio is playing, fast-ramp volume back
         if (coupledMode && audio && !audio.paused) {
           if (!_playLockVolRestoreStart) {
-            // Both playing — start the fade-in clock
             _playLockVolRestoreStart = now();
           }
           const elapsed = now() - _playLockVolRestoreStart;
           if (elapsed >= PLAY_LOCK_VOL_RESTORE_MS) {
             try { audio.volume = _playLockTargetVol; } catch {}
           } else {
+            // Smooth ease-in curve (quadratic) for natural sound
             const t = elapsed / PLAY_LOCK_VOL_RESTORE_MS;
-            try { audio.volume = _playLockTargetVol * t; } catch {}
+            try { audio.volume = _playLockTargetVol * (t * t); } catch {}
           }
         }
       }
-      _playLockRafId = requestAnimationFrame(pump);
     };
-    _playLockRafId = requestAnimationFrame(pump);
+
+    // Two parallel pumps for maximum responsiveness:
+    // 1. rAF — fires once per rendered frame (~16ms), ideal for video
+    // 2. 4ms interval for the first 300ms — catches sub-frame browser pauses
+    //    that rAF alone would miss (rAF is throttled in some browsers)
+    const rafPump = () => {
+      _playLockRafId = null;
+      tick();
+      if (_playLockRafId === null && (now() - startTime) < lockDuration && state.tabReturnImmuneUntil > now()) {
+        _playLockRafId = requestAnimationFrame(rafPump);
+      }
+    };
+    _playLockRafId = requestAnimationFrame(rafPump);
+    _playLockIntervalId = setInterval(() => {
+      if ((now() - startTime) > 300) {
+        // After 300ms, rAF alone is enough — stop the interval
+        clearInterval(_playLockIntervalId);
+        _playLockIntervalId = null;
+        return;
+      }
+      tick();
+    }, 4);
   }
 
   function _stopPlayLock() {
     if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
     if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
+    if (_playLockIntervalId) { clearInterval(_playLockIntervalId); _playLockIntervalId = null; }
+    // Restore audio volume when play-lock ends — it may have been at 0 or mid-fade
+    if (coupledMode && audio && _playLockTargetVol > 0 && !audio.paused) {
+      try { audio.volume = _playLockTargetVol; } catch {}
+    }
+    _playLockVolRestoreStart = 0;
   }
 
   function engagePauseIntercept() {
@@ -3240,6 +3270,70 @@ _allowAudioTimeWrite: false
       return true;
     }
     return false;
+  }
+
+  // --- play/pause toggle debounce (YouTube-style spam protection)
+  // When user spams the play/pause button, we don't immediately execute
+  // every toggle. Instead: each click cancels the pending action and starts
+  // a short timer. Only the LAST click in a rapid burst actually executes.
+  // This prevents state thrashing, audio pops, and glitchy play-pause loops.
+  let _toggleDebounceTimer = null;
+  let _toggleDebounceCount = 0;
+  let _toggleDebounceWindowStart = 0;
+  const TOGGLE_DEBOUNCE_WINDOW_MS = 600;  // rapid clicks within 600ms = spam
+  const TOGGLE_DEBOUNCE_THRESHOLD = 3;    // 3+ clicks in window triggers debounce
+  const TOGGLE_DEBOUNCE_DELAY_MS = 200;   // wait 200ms for spam to settle
+
+  function isToggleSpamming() {
+    const elapsed = now() - _toggleDebounceWindowStart;
+    if (elapsed > TOGGLE_DEBOUNCE_WINDOW_MS) {
+      _toggleDebounceCount = 0;
+      _toggleDebounceWindowStart = now();
+    }
+    return _toggleDebounceCount >= TOGGLE_DEBOUNCE_THRESHOLD;
+  }
+
+  function trackToggleClick() {
+    const elapsed = now() - _toggleDebounceWindowStart;
+    if (elapsed > TOGGLE_DEBOUNCE_WINDOW_MS) {
+      _toggleDebounceCount = 0;
+      _toggleDebounceWindowStart = now();
+    }
+    _toggleDebounceCount++;
+  }
+
+  // Debounced toggle: schedules the actual play or pause to run after a
+  // short delay. If the user clicks again before the delay expires, the
+  // previous pending action is cancelled and replaced with the new one.
+  // wantPlay: true = play, false = pause
+  // immediate: if true, skip debounce (used for first/second click)
+  function debouncedToggle(wantPlay, immediate) {
+    if (_toggleDebounceTimer) {
+      clearTimeout(_toggleDebounceTimer);
+      _toggleDebounceTimer = null;
+    }
+
+    const doAction = () => {
+      _toggleDebounceTimer = null;
+      if (wantPlay) {
+        if (getVideoPaused()) {
+          markUserPlayIntent(1200);
+          playTogether().catch(() => {});
+        }
+      } else {
+        if (!getVideoPaused()) {
+          markUserPauseIntent(1200);
+          clearPendingPlayResumesForPause();
+          pauseTogether();
+        }
+      }
+    };
+
+    if (immediate) {
+      doAction();
+    } else {
+      _toggleDebounceTimer = setTimeout(doAction, TOGGLE_DEBOUNCE_DELAY_MS);
+    }
   }
 
   function checkAudioPlayAttempt() {
@@ -5883,28 +5977,44 @@ try {
     };
     const onPressStart = event => {
       if (!isPrimaryActivation(event)) return;
-      // Unlock AudioContext on first user gesture (critical for iOS)
       tryUnlockAudioContext();
-      // IMMEDIATELY record the action time. This is critical for non-coupled mode (quality=medium):
-      // the media play/pause event fires before the RAF in onClick sets the intent markers,
-      // so the play handler must see a recent lastUserActionTime to allow the event through.
       state.lastUserActionTime = now();
-      // Track user clicks for spam detection (only deliberate pointer events count).
-      // This is the ONLY place we track clicks for audio spam protection.
-      if (isPlayControlTarget(event.target) || isTechSurfaceTarget(event.target)) {
+
+      const isPlayCtrl = isPlayControlTarget(event.target);
+      const isTechSurface = isTechSurfaceTarget(event.target);
+
+      if (isPlayCtrl || isTechSurface) {
         trackUserClickForSpam();
+        trackToggleClick();
       }
-      // Pre-set user intent presets immediately on every pointer event.
-      // These are consumed by video.on('play'/'pause') for bulletproof intent
-      // detection regardless of visibility/transition state (fixes quality=medium).
+
+      // Pre-set user intent immediately on every pointer event
       if (!getVideoPaused()) {
-        // Video currently playing → user probably wants to pause
         state.userPauseIntentPresetAt = now();
       } else {
-        // Video currently paused → user probably wants to play
         state.userPlayIntentPresetAt = now();
       }
-      if (isPlayControlTarget(event.target)) {
+
+      // Spam debounce: if user is clicking too fast, debounce the toggle.
+      // Only the last click in a rapid burst actually executes. This prevents
+      // glitchy play-pause-play loops from button spamming.
+      if (isPlayCtrl || isTechSurface) {
+        if (isToggleSpamming()) {
+          const wantPlay = getVideoPaused();
+          // During spam, prevent video.js from processing the native event
+          // by setting our intent flags so the event handlers accept it quietly
+          if (wantPlay) {
+            state.userPlayIntentPresetAt = now();
+          } else {
+            state.userPauseIntentPresetAt = now();
+          }
+          debouncedToggle(wantPlay, false);
+          pendingTechTogglePausedState = null;
+          return;
+        }
+      }
+
+      if (isPlayCtrl) {
         pendingTechTogglePausedState = null;
         if (getVideoPaused()) markUserPlayIntent();
         else {
@@ -5913,27 +6023,18 @@ try {
         }
         return;
       }
-      if (isTechSurfaceTarget(event.target)) {
+      if (isTechSurface) {
         pendingTechTogglePausedState = getVideoPaused();
         if (!getVideoPaused()) {
-          // User tapped video surface while playing → pause intent.
           state.userPauseUntil = Math.max(state.userPauseUntil, now() + 1200);
         }
-        // Tentative intent for non-coupled mode: since play() fires before the RAF in onClick,
-        // pre-set intendedPlaying so the play handler doesn't reject the event.
         if (!coupledMode) {
           if (getVideoPaused()) {
-            // Video is paused → user wants to play
             state.intendedPlaying = true;
             state.userPlayUntil = now() + 600;
           } else {
-            // Video is playing -> user wants to pause
-            // Set intendedPlaying=false IMMEDIATELY on pointerdown so no async
-            // path can re-enable it before the pause event fires.
             state.intendedPlaying = false;
             state.bufferHoldIntendedPlaying = false;
-            // Also mark MQM immediately so shouldBlockAutoResume()=true
-            // BEFORE any async "play"/"playing" events can check it.
             MediumQualityManager.markUserPaused();
             state.userGesturePauseIntent = true;
             setTimeout(() => { state.userGesturePauseIntent = false; }, 2000);
