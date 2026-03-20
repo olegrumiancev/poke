@@ -2436,27 +2436,98 @@ _allowAudioTimeWrite: false
     state.tabReturnAudioMuted = false;
   }
 
-  // --- pause intercept
-  // During tab-return immunity, replace videoElement.pause() with a no-op
-  // so the browser can't visibly pause the video. This eliminates the
-  // play→pause→play flicker entirely — no pause event fires, no frame drop.
+  // --- pause intercept + event-level suppression
+  // Two layers of protection during tab-return immunity:
+  // 1. Replace .pause() with a no-op so no code can pause the video
+  // 2. Capture "pause" events on the element and swallow them + re-play,
+  //    so browser-internal pauses (not via .pause()) also get caught
   let _pauseInterceptActive = false;
   let _origVideoPause = null;
   let _origAudioPause = null;
+  let _origVjsPause = null;
   let _pauseInterceptTimer = null;
+  let _pauseEventSuppressor = null;
+  let _audioPauseEventSuppressor = null;
+  let _playLockRafId = null;
+  let _playLockTimer = null;
+
+  // Capturing listener on the video element that eats pause events during immunity.
+  // This fires before video.js's own listener, so video.js never sees the pause.
+  function _videoPauseEventSuppressor(e) {
+    if (!(state.tabReturnImmuneUntil > now())) return; // not immune, let it through
+    if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
+    // Swallow the event entirely
+    e.stopImmediatePropagation();
+    // Immediately counter-play so there's zero visible freeze
+    try {
+      const vn = getVideoNode();
+      if (vn && vn.paused && _origVideoPause) {
+        // Use the original play, not the element's current one
+        vn.play().catch(() => {});
+      }
+    } catch {}
+  }
+
+  function _audioEventPauseSuppressor(e) {
+    if (!(state.tabReturnImmuneUntil > now())) return;
+    if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return;
+    e.stopImmediatePropagation();
+    try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
+  }
+
+  // rAF play-lock: keep calling play() every frame for ~600ms so even if the
+  // browser pauses internally between frames, the gap is at most one frame (~16ms)
+  function _startPlayLock() {
+    _stopPlayLock();
+    const startTime = now();
+    const lockDuration = 600;
+    const pump = () => {
+      if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) {
+        _playLockRafId = null;
+        return;
+      }
+      if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+        _playLockRafId = null;
+        return;
+      }
+      if (state.intendedPlaying) {
+        try {
+          const vn = getVideoNode();
+          if (vn && vn.paused) vn.play().catch(() => {});
+          if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+        } catch {}
+      }
+      _playLockRafId = requestAnimationFrame(pump);
+    };
+    _playLockRafId = requestAnimationFrame(pump);
+  }
+
+  function _stopPlayLock() {
+    if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
+    if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
+  }
 
   function engagePauseIntercept() {
     if (_pauseInterceptActive) return;
     _pauseInterceptActive = true;
+
+    // Layer 1: replace .pause() with no-op on native elements
     const vn = getVideoNode();
     if (vn) {
       _origVideoPause = vn.pause.bind(vn);
       vn.pause = function() {
-        // Allow if user explicitly clicked pause
         if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
           return _origVideoPause();
         }
-        // Swallow — don't pause during immunity
+      };
+    }
+    // Also intercept video.js wrapper's pause method
+    if (video && typeof video.pause === 'function' && !_origVjsPause) {
+      _origVjsPause = video.pause.bind(video);
+      video.pause = function() {
+        if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
+          return _origVjsPause();
+        }
       };
     }
     if (coupledMode && audio) {
@@ -2467,6 +2538,24 @@ _allowAudioTimeWrite: false
         }
       };
     }
+
+    // Layer 2: capture pause events on the elements and swallow them
+    if (vn && !_pauseEventSuppressor) {
+      _pauseEventSuppressor = _videoPauseEventSuppressor;
+      vn.addEventListener('pause', _pauseEventSuppressor, { capture: true });
+      // Also attach to videoEl if it's different
+      if (videoEl && videoEl !== vn) {
+        videoEl.addEventListener('pause', _pauseEventSuppressor, { capture: true });
+      }
+    }
+    if (coupledMode && audio && !_audioPauseEventSuppressor) {
+      _audioPauseEventSuppressor = _audioEventPauseSuppressor;
+      audio.addEventListener('pause', _audioPauseEventSuppressor, { capture: true });
+    }
+
+    // Layer 3: rAF play-lock for the first 600ms — keeps play() firing every frame
+    if (state.intendedPlaying) _startPlayLock();
+
     // Auto-disengage after immunity expires
     if (_pauseInterceptTimer) clearTimeout(_pauseInterceptTimer);
     _pauseInterceptTimer = setTimeout(disengagePauseIntercept, 3200);
@@ -2476,6 +2565,9 @@ _allowAudioTimeWrite: false
     if (!_pauseInterceptActive) return;
     _pauseInterceptActive = false;
     if (_pauseInterceptTimer) { clearTimeout(_pauseInterceptTimer); _pauseInterceptTimer = null; }
+    _stopPlayLock();
+
+    // Restore native .pause() methods
     const vn = getVideoNode();
     if (vn && _origVideoPause) {
       try { vn.pause = HTMLMediaElement.prototype.pause; } catch {}
@@ -2483,8 +2575,26 @@ _allowAudioTimeWrite: false
     if (audio && _origAudioPause) {
       try { audio.pause = HTMLMediaElement.prototype.pause; } catch {}
     }
+    // Restore video.js wrapper
+    if (_origVjsPause) {
+      try { video.pause = _origVjsPause; } catch {}
+      _origVjsPause = null;
+    }
     _origVideoPause = null;
     _origAudioPause = null;
+
+    // Remove event-level suppressors
+    if (_pauseEventSuppressor) {
+      try {
+        if (vn) vn.removeEventListener('pause', _pauseEventSuppressor, { capture: true });
+        if (videoEl && videoEl !== vn) videoEl.removeEventListener('pause', _pauseEventSuppressor, { capture: true });
+      } catch {}
+      _pauseEventSuppressor = null;
+    }
+    if (_audioPauseEventSuppressor) {
+      try { if (audio) audio.removeEventListener('pause', _audioPauseEventSuppressor, { capture: true }); } catch {}
+      _audioPauseEventSuppressor = null;
+    }
   }
 
   // --- smooth tab welcome-back management
