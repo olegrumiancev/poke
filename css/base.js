@@ -2388,9 +2388,13 @@ _seekPostTimers: []
   }
   function saveVolume() {
     if (state.volumeSaveScheduled) return;
+    // Don't persist volume while AudioVolumeShield has temporarily muted
+    if (AudioVolumeShield.active) return;
     state.volumeSaveScheduled = true;
     setTimeout(() => {
       try {
+        // Double-check shield isn't active when the delayed save fires
+        if (AudioVolumeShield.active) { state.volumeSaveScheduled = false; return; }
         localStorage.setItem(VOLUME_STORAGE_KEY, String(video.volume()));
         localStorage.setItem(MUTED_STORAGE_KEY, String(video.muted()));
       } catch {}
@@ -2420,7 +2424,10 @@ _seekPostTimers: []
   }
 
   function pageLoadedForAutoplay() {
-    return state.pageFullyLoaded;
+    // Allow autoplay once DOM is interactive (don't wait for window.load
+    // which blocks on images/stylesheets and can delay startup by seconds).
+    // This code runs inside DOMContentLoaded, so DOM is always ready.
+    return state.pageFullyLoaded || document.readyState !== "loading";
   }
   function isWindowFocused() {
     try { return typeof document.hasFocus === "function" ? document.hasFocus() : true; } catch { return true; }
@@ -2515,6 +2522,11 @@ _seekPostTimers: []
     // Capture target volume and mute audio immediately to mask pause→play pop
     if (coupledMode && audio) {
       _playLockTargetVol = targetVolFromVideo();
+      // If AudioVolumeShield muted the video element, targetVolFromVideo()
+      // returns 0.  Use the shield's saved volume instead.
+      if (_playLockTargetVol < 0.01 && AudioVolumeShield._savedVideoVol > 0.01) {
+        _playLockTargetVol = AudioVolumeShield._savedVideoVol;
+      }
       if (_playLockTargetVol < 0.01) _playLockTargetVol = 1;
       try { cancelActiveFade(); audio.volume = 0; } catch {}
       _playLockVolRestoreStart = 0; // not started yet
@@ -2591,12 +2603,23 @@ _seekPostTimers: []
     if (coupledMode && audio && _playLockTargetVol > 0 && !audio.paused) {
       try { audio.volume = _playLockTargetVol; } catch {}
     }
+    // Also ensure video element volume is restored (AudioVolumeShield may
+    // have muted it and fadeIn may not have run yet)
+    if (AudioVolumeShield._savedVideoVol > 0) {
+      try {
+        const vn = getVideoNode();
+        if (vn && vn.volume < 0.01) vn.volume = AudioVolumeShield._savedVideoVol;
+      } catch {}
+    }
     _playLockVolRestoreStart = 0;
   }
 
   function engagePauseIntercept() {
     if (_pauseInterceptActive) return;
     _pauseInterceptActive = true;
+    // Suppress Video.js UI indicators (big play button, spinner) during
+    // the entire tab-return immunity window so the user can't see pause state.
+    VjsUiShield.engage(3500);
 
     // Layer 1: replace .pause() with no-op on native elements
     const vn = getVideoNode();
@@ -2653,6 +2676,7 @@ _seekPostTimers: []
     _pauseInterceptActive = false;
     if (_pauseInterceptTimer) { clearTimeout(_pauseInterceptTimer); _pauseInterceptTimer = null; }
     _stopPlayLock();
+    VjsUiShield.disengage();
 
     // Restore saved .pause() references (not prototype — video.js may have its own override)
     const vn = getVideoNode();
@@ -2703,20 +2727,85 @@ _seekPostTimers: []
   // This is the ONLY approach that works because it acts before the
   // browser's internal pause, not after.
   // ═══════════════════════════════════════════════════════════════════════
+
+  // ── Video.js UI suppression during tab transitions ──────────────────
+  // When the browser fires a pause event during tab switch, Video.js
+  // reacts by showing the big-play-button and loading-spinner. This is
+  // the most visible "tell" that a play-pause happened. We inject a tiny
+  // CSS rule and toggle a class on the Video.js container to hide these
+  // indicators during the tab-return immunity window.
+  const VjsUiShield = (() => {
+    let _styleInjected = false;
+    let _active = false;
+    let _timer = null;
+
+    function _injectStyle() {
+      if (_styleInjected) return;
+      _styleInjected = true;
+      try {
+        const s = document.createElement("style");
+        s.id = "vjs-tab-shield";
+        s.textContent =
+          ".vjs-tab-shield .vjs-big-play-button," +
+          ".vjs-tab-shield .vjs-loading-spinner," +
+          ".vjs-tab-shield .vjs-poster" +
+          "{display:none!important;visibility:hidden!important;opacity:0!important}";
+        (document.head || document.documentElement).appendChild(s);
+      } catch {}
+    }
+
+    function _container() {
+      try { return video?.el?.() || videoEl?.parentElement || null; }
+      catch { return null; }
+    }
+
+    return {
+      engage(durationMs) {
+        _injectStyle();
+        if (_timer) { clearTimeout(_timer); _timer = null; }
+        const ctr = _container();
+        if (ctr) ctr.classList.add("vjs-tab-shield");
+        _active = true;
+        // Auto-disengage after the immunity window
+        _timer = setTimeout(() => {
+          _timer = null;
+          this.disengage();
+        }, durationMs || 3500);
+      },
+      disengage() {
+        if (_timer) { clearTimeout(_timer); _timer = null; }
+        _active = false;
+        const ctr = _container();
+        if (ctr) ctr.classList.remove("vjs-tab-shield");
+      },
+      get active() { return _active; }
+    };
+  })();
+
   const AudioVolumeShield = {
     _savedVol: 1,
+    _savedVideoVol: 1,
     _active: false,
     _fadeRafId: null,
     _fadeTimer: null,
 
-    // Called on visibilitychange → hidden (BEFORE browser pauses audio).
-    // Mutes audio so browser caches volume=0 for auto-resume.
+    // Called on blur and visibilitychange → hidden (BEFORE browser pauses).
+    // Mutes all audio-producing elements so the browser caches volume=0.
     arm() {
-      if (!coupledMode || !audio) return;
       if (!state.intendedPlaying) return;
       try {
-        this._savedVol = audio.volume || 1;
-        audio.volume = 0;
+        // Coupled mode: mute the separate audio element
+        if (coupledMode && audio) {
+          this._savedVol = audio.volume || 1;
+          audio.volume = 0;
+        }
+        // All modes: also mute the video element (has audio in non-coupled,
+        // and browsers may resume video audio independently in coupled too)
+        const vn = getVideoNode();
+        if (vn) {
+          this._savedVideoVol = vn.volume ?? 1;
+          vn.volume = 0;
+        }
         this._active = true;
       } catch {}
     },
@@ -2730,8 +2819,14 @@ _seekPostTimers: []
       if (!this._active) return;
       this._cancel();
       this._active = false;
+      // Restore video element volume immediately (play-lock only manages
+      // the audio element volume, not the video element).
+      try {
+        const vn = getVideoNode();
+        if (vn) vn.volume = this._savedVideoVol;
+      } catch {}
       // If the play-lock is NOT active (e.g. non-coupled mode, or
-      // engagePauseIntercept didn't fire), restore volume directly
+      // engagePauseIntercept didn't fire), restore audio volume directly
       // with a short delay to let any play() calls settle first.
       if (!_playLockRafId && !_playLockIntervalId) {
         const vol = this._savedVol;
@@ -2748,8 +2843,14 @@ _seekPostTimers: []
     // Called on user pause / video end — restore volume instantly
     disarm() {
       this._cancel();
-      if (this._active && coupledMode && audio) {
-        try { audio.volume = this._savedVol; } catch {}
+      if (this._active) {
+        if (coupledMode && audio) {
+          try { audio.volume = this._savedVol; } catch {}
+        }
+        try {
+          const vn = getVideoNode();
+          if (vn) vn.volume = this._savedVideoVol;
+        } catch {}
       }
       this._active = false;
     },
@@ -2920,6 +3021,7 @@ _seekPostTimers: []
     VisibilityGuard.onUserPause();
     SmoothTabWelcomeBackManagement.onUserPause(); // drop tab-return smoothness on explicit pause
     AudioVolumeShield.disarm(); // restore audio volume on explicit pause
+    VjsUiShield.disengage(); // restore Video.js UI on explicit pause
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
@@ -7949,12 +8051,12 @@ try {
       // runs in visibilitychange→hidden instead (which only fires for
       // actual tab switches).
       //
-      // We DO set alt-tab transition flags here because a blur followed
-      // by a quick focus IS an alt-tab pattern, and the pause handler
-      // needs these flags to suppress browser-generated pauses.
+      // We DO pre-mute audio here because the browser can pause audio
+      // on blur BEFORE visibilitychange fires (alt-tab pattern). If this
+      // was just a status panel, focus will fire quickly and we restore.
+      AudioVolumeShield.arm();
+
       if (document.visibilityState === "hidden") {
-        // Page is already hidden — visibilitychange handler already ran.
-        // Just update guards, don't duplicate.
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
       }
@@ -7976,6 +8078,14 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
+      // If page was never hidden (status panel, devtools, etc.), the blur
+      // handler pre-muted audio unnecessarily — restore it immediately.
+      // If page IS hidden or was hidden, the normal tab-return flow handles it.
+      if (document.visibilityState === "visible" && AudioVolumeShield.active &&
+          !state.altTabTransitionActive) {
+        AudioVolumeShield.disarm();
+      }
+
       // Let tab-return manager handle immunity, intercept, rapid counter resets,
       // alt-tab flag clearing, instant play, and bbtab/wakeup retry.
       SmoothTabWelcomeBackManagement.onTabReturn();
