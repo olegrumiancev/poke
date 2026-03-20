@@ -8094,131 +8094,158 @@ try {
 });
 
 
-(function () {
-    function isTypingTarget(el) {
-        if (!el || !(el instanceof Element)) return false;
+ (function () {
+  'use strict';
 
-        if (el.matches('.search-bar, #fname, input[name="query"]')) return true;
-        if (el.closest('form[action="/search"]')) return true;
-        if (el.isContentEditable) return true;
+   const SEEK_STEP     = 10;   // seconds for j/l/arrow keys
+  const SEEK_STEP_BIG = 30;   // seconds for J/L (shift held)
+  const VOLUME_STEP   = 0.1;
+  const SPEED_STEP    = 0.25;
+  const SPEED_MIN     = 0.25;
+  const SPEED_MAX     = 3;
 
-        const tag = (el.tagName || '').toLowerCase();
-        if (tag === 'textarea' || tag === 'select') return true;
+   const EDITABLE_SELECTOR = [
+    'input:not([type="button"]):not([type="checkbox"]):not([type="color"])'
+      + ':not([type="file"]):not([type="hidden"]):not([type="image"])'
+      + ':not([type="radio"]):not([type="range"]):not([type="reset"])'
+      + ':not([type="submit"])',
+    'textarea',
+    'select',
+    '[contenteditable=""]',
+    '[contenteditable="true"]',
+    '[role="textbox"]',
+    '[role="searchbox"]',
+    '[role="combobox"]',
+    '[role="spinbutton"]',
+  ].join(',');
 
-        if (tag === 'input') {
-            const type = (el.getAttribute('type') || 'text').toLowerCase();
+  function isEditable(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    // Direct match OR any ancestor matches (covers shadow-dom-free cases)
+    return el.matches(EDITABLE_SELECTOR) || !!el.closest(EDITABLE_SELECTOR);
+  }
 
-            const allowedNonTypingInputs = new Set([
-                'button',
-                'checkbox',
-                'color',
-                'file',
-                'hidden',
-                'image',
-                'radio',
-                'range',
-                'reset',
-                'submit'
-            ]);
-
-            return !allowedNonTypingInputs.has(type);
-        }
-
-        if (
-            el.matches(
-                '[contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"], [role="spinbutton"]'
-            )
-        ) {
-            return true;
-        }
-
-        const parentTypingEl = el.closest(
-            '.search-bar, #fname, input[name="query"], form[action="/search"], textarea, select, input, [contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"], [role="spinbutton"]'
-        );
-
-        return !!parentTypingEl;
+   function getPlayer() {
+    if (typeof videojs === 'undefined') return null;
+    const el = document.querySelector('.video-js');
+    if (!el) return null;
+    try {
+      return videojs.getPlayer(el) || videojs(el);
+    } catch {
+      return null;
     }
+  }
 
-    function getPlayer() {
-        const videoElement = document.querySelector('.video-js');
-        if (!videoElement || typeof videojs === 'undefined') return null;
-        return videojs.getPlayer(videoElement) || videojs(videoElement);
+   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const round1 = (v) => Math.round(v * 10) / 10;
+
+  function seekBy(player, delta) {
+    const dur = player.duration();
+    if (!dur || !isFinite(dur)) return;
+    player.currentTime(clamp(player.currentTime() + delta, 0, dur));
+  }
+
+  function adjustVolume(player, delta) {
+    if (delta > 0 && player.muted()) player.muted(false);
+    const next = clamp(round1(player.volume() + delta), 0, 1);
+    player.volume(next);
+    if (next === 0) player.muted(true);
+  }
+
+  function adjustSpeed(player, delta) {
+    const next = clamp(round1(player.playbackRate() + delta), SPEED_MIN, SPEED_MAX);
+    player.playbackRate(next);
+  }
+
+  function seekToPercent(player, pct) {
+    const dur = player.duration();
+    if (!dur || !isFinite(dur)) return;
+    player.currentTime(dur * (pct / 100));
+  }
+
+  function togglePlay(player) {
+    player.paused() ? player.play() : player.pause();
+  }
+
+  function toggleFullscreen(player) {
+    player.isFullscreen() ? player.exitFullscreen() : player.requestFullscreen();
+  }
+
+  function toggleMute(player) {
+    player.muted(!player.muted());
+  }
+
+   // Each handler receives (player, event).
+  // Shift variants use uppercase key names.
+  const KEY_MAP = {
+    // Play / pause
+    'k':          (p) => { togglePlay(p); return true; },
+    ' ':          (p) => { togglePlay(p); return true; },
+
+    // Fullscreen
+    'f':          (p) => { toggleFullscreen(p); return true; },
+
+    // Mute
+    'm':          (p) => { toggleMute(p); return true; },
+
+    // Seeking (10 s / 30 s with Shift)
+    'arrowright':  (p) => { seekBy(p,  SEEK_STEP); return true; },
+    'arrowleft':   (p) => { seekBy(p, -SEEK_STEP); return true; },
+    'l':           (p) => { seekBy(p,  SEEK_STEP); return true; },
+    'j':           (p) => { seekBy(p, -SEEK_STEP); return true; },
+    'L':           (p) => { seekBy(p,  SEEK_STEP_BIG); return true; },
+    'J':           (p) => { seekBy(p, -SEEK_STEP_BIG); return true; },
+
+    // Volume
+    'arrowup':     (p) => { adjustVolume(p,  VOLUME_STEP); return true; },
+    'arrowdown':   (p) => { adjustVolume(p, -VOLUME_STEP); return true; },
+
+    // Playback speed
+    '>':           (p) => { adjustSpeed(p,  SPEED_STEP); return true; },
+    '<':           (p) => { adjustSpeed(p, -SPEED_STEP); return true; },
+
+    // Number keys, seek to 0%–90%
+    '0': (p) => { seekToPercent(p,  0); return true; },
+    '1': (p) => { seekToPercent(p, 10); return true; },
+    '2': (p) => { seekToPercent(p, 20); return true; },
+    '3': (p) => { seekToPercent(p, 30); return true; },
+    '4': (p) => { seekToPercent(p, 40); return true; },
+    '5': (p) => { seekToPercent(p, 50); return true; },
+    '6': (p) => { seekToPercent(p, 60); return true; },
+    '7': (p) => { seekToPercent(p, 70); return true; },
+    '8': (p) => { seekToPercent(p, 80); return true; },
+    '9': (p) => { seekToPercent(p, 90); return true; },
+
+    // Home / End
+    'home': (p) => { seekToPercent(p,   0); return true; },
+    'end':  (p) => { seekToPercent(p, 100); return true; },
+  };
+
+  document.addEventListener('keydown', function (e) {
+    // Bail on modifier combos, IME composition, or already-handled events
+    if (e.defaultPrevented) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.isComposing || e.keyCode === 229) return;
+
+    // if ANYTHING in the focus chain is editable, bail out.
+    if (isEditable(e.target) || isEditable(document.activeElement)) return;
+
+    const player = getPlayer();
+    if (!player) return;
+
+    // Shift-sensitive key: use raw `event.key` for >/</J/L,
+    // lowercase for everything else.
+    const raw = e.key;
+    const key = raw.length === 1 && !e.shiftKey ? raw.toLowerCase() : raw;
+
+    // Lookup. Try shift-sensitive first (raw), then normalized.
+    const handler = KEY_MAP[raw] || KEY_MAP[key.toLowerCase()];
+    if (handler && handler(player, e)) {
+      e.preventDefault();
+      e.stopPropagation();
     }
-
-    document.addEventListener('keydown', function (event) {
-        if (event.defaultPrevented) return;
-        if (event.ctrlKey || event.altKey || event.metaKey) return;
-        if (event.isComposing || event.keyCode === 229) return;
-
-        const target = event.target;
-        const active = document.activeElement;
-        const searchInput = document.querySelector('.search-bar, #fname, input[name="query"]');
-
-        if (isTypingTarget(target) || isTypingTarget(active)) return;
-        if (searchInput && active === searchInput) return;
-        if (searchInput && searchInput.matches(':focus, :focus-within')) return;
-
-        const player = getPlayer();
-        if (!player) return;
-
-        const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-
-        switch (key) {
-            case 'f':
-                event.preventDefault();
-                if (player.isFullscreen()) {
-                    player.exitFullscreen();
-                } else {
-                    player.requestFullscreen();
-                }
-                break;
-
-            case 'k':
-            case ' ':
-            case 'spacebar':
-                event.preventDefault();
-                if (player.paused()) {
-                    player.play();
-                } else {
-                    player.pause();
-                }
-                break;
-
-            case 'm':
-                event.preventDefault();
-                player.muted(!player.muted());
-                break;
-
-            case 'arrowright':
-            case 'l':
-                event.preventDefault();
-                player.currentTime(Math.min(player.duration() || Infinity, player.currentTime() + 10));
-                break;
-
-            case 'arrowleft':
-            case 'j':
-                event.preventDefault();
-                player.currentTime(Math.max(0, player.currentTime() - 10));
-                break;
-
-            case 'arrowup':
-                event.preventDefault();
-                if (player.muted() && player.volume() === 0) {
-                    player.muted(false);
-                }
-                player.volume(Math.min(1, Math.round((player.volume() + 0.1) * 10) / 10));
-                break;
-
-            case 'arrowdown':
-                event.preventDefault();
-                player.volume(Math.max(0, Math.round((player.volume() - 0.1) * 10) / 10));
-                if (player.volume() === 0) {
-                    player.muted(true);
-                }
-                break;
-        }
-    });
-})(); 
+  }, true);  // capture phase so we beat other listeners
+})();
 
 // https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/libpoketube-youtubei-objects.json
 
