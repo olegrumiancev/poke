@@ -2820,15 +2820,35 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately. No seeking — any
-    // currentTime write fires the video seeked handler which syncs audio
-    // backward, causing audible replays. Just play() and let the regular
-    // sync loop handle position correction after the grace window.
+    // Fires play() on both video and audio immediately.
+    // Flushes audio decode buffer with a zero-delta seek to prevent stale
+    // samples from replaying ("says the same thing twice"). The seeking/seeked
+    // handlers are gated by immunity so no cascade occurs.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
-        if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+        if (coupledMode && audio) {
+          // Flush stale decode buffer: writing currentTime (even same value)
+          // forces the decoder to re-fill from the current position.
+          // Forward-only: if audio drifted ahead in background, sync video
+          // to audio instead of seeking audio backward.
+          const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
+          const at = Number(audio.currentTime) || 0;
+          if (isFinite(vt) && isFinite(at)) {
+            if (at > vt + 0.3) {
+              // Audio ahead — move video forward instead
+              try { if (_vn) _vn.currentTime = at; } catch {}
+            } else if (Math.abs(at - vt) > 0.15) {
+              // Audio behind or close — sync audio to video
+              try { audio.currentTime = vt; } catch {}
+            } else {
+              // Close enough — just flush buffer at current position
+              try { audio.currentTime = at; } catch {}
+            }
+          }
+          if (audio.paused) audio.play().catch(() => {});
+        }
       } catch {}
     },
 
@@ -3470,6 +3490,9 @@ _seekPostTimers: []
 
   async function quietSeekAudio(t) {
     if (!audio || !coupledMode) return;
+    // During immunity, never seek audio — seeking flushes the decode buffer
+    // and causes audible replay artifacts.
+    if (isTabReturnImmune() && state.firstPlayCommitted) return;
     try {
       if (!isFinite(t) || t < 0) return;
       const timeDiff = Math.abs((audio.currentTime || 0) - t);
@@ -3749,6 +3772,12 @@ _seekPostTimers: []
   }
 
   function execProgrammaticVideoPause() {
+    // Hard lockout: during immunity, never programmatically pause video.
+    // The capture-phase guard handles any browser pauses. Without this,
+    // the sync loop, buffer checks, and retry systems all compete to
+    // pause/resume, causing the visible play-pause stutter.
+    if (isTabReturnImmune() && state.intendedPlaying &&
+        !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) return;
     state.isProgrammaticVideoPause = true;
     try { video.pause(); } catch {}
     try { videoEl.pause(); } catch {}
@@ -3803,6 +3832,9 @@ _seekPostTimers: []
 
   async function execProgrammaticAudioPause(ms = 500) {
     if (!coupledMode || !audio) return;
+    // Hard lockout: during immunity, never programmatically pause audio.
+    if (isTabReturnImmune() && state.intendedPlaying &&
+        !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) return;
     const until = now() + Math.max(300, Number(ms) || 0);
     state.audioPauseUntil = Math.max(state.audioPauseUntil, until);
     state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + 250);
@@ -3999,6 +4031,7 @@ _seekPostTimers: []
 
   async function kickAudio() {
     if (!coupledMode) return;
+    if (isTabReturnImmune() && state.intendedPlaying) return;
     try {
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
@@ -4048,6 +4081,8 @@ _seekPostTimers: []
     if (!platform.useBgControllerRetry) return;
     if (mediaSessionForcedPauseActive()) return;
     if (userPauseLockActive()) return;
+    // During immunity, instantPlay() + capture guard handle everything.
+    if (isTabReturnImmune() && state.intendedPlaying) return;
     // Don't schedule bgResumeRetry if the wakeup timer is already pending —
     // competing resume attempts cause the visible play→pause stutter on tab return.
     if (state.wakeupTimer) return;
@@ -4119,6 +4154,7 @@ _seekPostTimers: []
   async function seamlessBgCatchUp() {
     if (!coupledMode || !platform.useBgControllerRetry) return;
     if (!state.intendedPlaying) return;
+    if (isTabReturnImmune()) return;
     if (state.restarting || state.seeking || state.syncing) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
     if (now() < state.bgCatchUpCooldownUntil) return;
@@ -5431,6 +5467,15 @@ _seekPostTimers: []
     state.syncTimer = null;
     state.syncScheduledAt = 0;
     enforcePlaybackRateSync();
+
+    // Hard lockout: during immunity, don't run the sync loop. The sync loop
+    // detects state mismatches (video paused, audio playing, etc.) and "fixes" them
+    // by pausing/resuming/seeking, which competes with instantPlay() and the
+    // capture-phase guard, causing play-pause stutter. Just reschedule for later.
+    if (isTabReturnImmune() && state.intendedPlaying && state.firstPlayCommitted) {
+      scheduleSync(500);
+      return;
+    }
 
     // PAGE-LOAD GATE: never attempt autoplay-driven startup before window.load.
     if (!pageLoadedForAutoplay() && !state.firstPlayCommitted && wantsStartupAutoplay()) {
@@ -7718,6 +7763,9 @@ _seekPostTimers: []
   function executeSeamlessWakeup() {
     if (!state.intendedPlaying && !state.resumeOnVisible &&
         !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
+    // During immunity, instantPlay() + capture guard handle everything.
+    // Don't fire competing wakeup/retry machinery.
+    if (isTabReturnImmune() && state.firstPlayCommitted) return;
     // Cancel and replace any existing wakeup timer (don't silently drop)
     if (state.wakeupTimer) { clearTimeout(state.wakeupTimer); state.wakeupTimer = null; }
 
@@ -7934,11 +7982,12 @@ _seekPostTimers: []
         BackgroundPlaybackManager.onBecomeBackground();
         if (state.intendedPlaying) {
           startBgAudioKeepalive();
-          // Set brief immunity so the capture-phase guard catches the browser's
-          // auto-pause that fires right after visibilitychange→hidden. Without
-          // this, there's a 200ms gap (until keepalive ticks) where media is
-          // silent. The guard restarts playback instantly — zero silence gap.
-          state.tabReturnImmuneUntil = now() + 1000;
+          // Immunity so the capture-phase guard catches the browser's auto-pause
+          // that fires right after visibilitychange→hidden, AND keeps catching
+          // pauses for quick alt-tab round-trips (user returns within 3s).
+          // Without this, there's a silence gap before keepalive or onTabReturn
+          // can restart playback.
+          state.tabReturnImmuneUntil = now() + 3000;
         }
 
         // Tab-switch protection: visibilitychange→hidden fires WITHOUT a preceding
@@ -7996,8 +8045,8 @@ _seekPostTimers: []
       // changing visibilityState to "hidden" (e.g., overlay windows).
       if (state.intendedPlaying) {
         startBgAudioKeepalive();
-        // Brief immunity so capture guard catches browser's auto-pause on blur
-        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 1000);
+        // Immunity so capture guard catches browser's auto-pause on blur/alt-tab
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 3000);
       }
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
