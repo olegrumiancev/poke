@@ -2491,8 +2491,16 @@ _seekPostTimers: []
         }
       }
     } catch {}
-    // Resume audio immediately — no volume manipulation to avoid audible gaps
-    if (audio.paused && state.intendedPlaying) { try { audio.play().catch(() => {}); } catch {} }
+    // Resume audio: flush decode buffer first to prevent replay artifact,
+    // then play. The buffer flush (micro-seek) discards stale decoded frames
+    // so the browser doesn't replay audio from before the pause point.
+    if (audio.paused && state.intendedPlaying) {
+      try {
+        const t = audio.currentTime;
+        if (isFinite(t)) audio.currentTime = t + 0.001;
+      } catch {}
+      try { audio.play().catch(() => {}); } catch {}
+    }
   }
 
   function cancelTabReturnAudioMute() {
@@ -2540,20 +2548,23 @@ _seekPostTimers: []
   function _audioEventPauseSuppressor(e) {
     if (!(state.tabReturnImmuneUntil > now())) return;
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return;
+    // Swallow the event so no other listener sees it.
+    // Do NOT call audio.play() here — the play-lock handles resume.
+    // Calling play() from the pause suppressor causes decode buffer replay
     e.stopImmediatePropagation();
-    try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
   }
 
-  // rAF play-lock: keep calling play() every frame for ~800ms so even if the
-  // browser pauses internally between frames, the gap is at most one frame (~16ms).
-  // Does NOT touch audio volume — volume manipulation causes audible silence gaps
-  // that are far more noticeable than the browser's native resume.
-  let _playLockIntervalId = null;
+  // rAF play-lock: if the browser pauses video/audio during tab return,
+  // counter-play once per frame for 800ms. Uses a decode buffer flush on
+  // the FIRST audio resume to prevent the "hel-hello" replay artifact.
+  // Only uses rAF (no aggressive 4ms interval — that caused multiple replays).
+  let _playLockAudioFlushed = false;
 
   function _startPlayLock() {
     _stopPlayLock();
     const startTime = now();
     const lockDuration = 800;
+    _playLockAudioFlushed = false;
 
     const tick = () => {
       if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
@@ -2569,15 +2580,26 @@ _seekPostTimers: []
           const vn = getVideoNode();
           if (vn && vn.paused) vn.play().catch(() => {});
           if (videoEl && videoEl !== vn && videoEl.paused) videoEl.play().catch(() => {});
-          if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
+          if (coupledMode && audio && audio.paused) {
+            // Flush decode buffer ONCE before first resume to prevent
+            // replay artifact ("hel-hello"). Setting currentTime to itself
+            // forces the browser to discard stale decoded audio frames.
+            if (!_playLockAudioFlushed) {
+              _playLockAudioFlushed = true;
+              try {
+                const t = audio.currentTime;
+                if (isFinite(t)) audio.currentTime = t + 0.001;
+              } catch {}
+            }
+            audio.play().catch(() => {});
+          }
         } catch {}
       }
     };
 
-    // Two parallel pumps for maximum responsiveness:
-    // 1. rAF — fires once per rendered frame (~16ms), ideal for video
-    // 2. 4ms interval for the first 300ms — catches sub-frame browser pauses
-    //    that rAF alone would miss (rAF is throttled in some browsers)
+    // Single rAF pump — one play() per rendered frame is enough.
+    // Aggressive sub-frame intervals (4ms) caused multiple decode buffer
+    // replays, making the "hel-hello" artifact worse.
     const rafPump = () => {
       _playLockRafId = null;
       tick();
@@ -2586,21 +2608,11 @@ _seekPostTimers: []
       }
     };
     _playLockRafId = requestAnimationFrame(rafPump);
-    const _intervalMs = platform.mobile ? 8 : 4;
-    _playLockIntervalId = setInterval(() => {
-      if ((now() - startTime) > 300) {
-        clearInterval(_playLockIntervalId);
-        _playLockIntervalId = null;
-        return;
-      }
-      tick();
-    }, _intervalMs);
   }
 
   function _stopPlayLock() {
     if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
     if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
-    if (_playLockIntervalId) { clearInterval(_playLockIntervalId); _playLockIntervalId = null; }
   }
 
   function engagePauseIntercept() {
@@ -2787,15 +2799,19 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately, no timers or rAF.
-    // Audio is kept muted here — the rAF play-lock handles volume restoration
-    // once playback is confirmed stable, so the pause→play transition is silent.
+    // Fires play() on both video and audio immediately.
+    // Audio gets a decode buffer flush before play to prevent replay artifact.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
-        if (coupledMode && audio) {
-          if (audio.paused) audio.play().catch(() => {});
+        if (coupledMode && audio && audio.paused) {
+          // Flush decode buffer to prevent "hel-hello" replay
+          try {
+            const t = audio.currentTime;
+            if (isFinite(t)) audio.currentTime = t + 0.001;
+          } catch {}
+          audio.play().catch(() => {});
         }
       } catch {}
     },
@@ -7971,7 +7987,6 @@ _seekPostTimers: []
       clearTimeout(state.heartbeatTimer);
       clearTimeout(state.bgSilentTimeSyncTimer);
       if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
-      if (_playLockIntervalId) { clearInterval(_playLockIntervalId); _playLockIntervalId = null; }
       if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
       if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
       if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
