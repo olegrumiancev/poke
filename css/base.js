@@ -2491,14 +2491,9 @@ _seekPostTimers: []
         }
       }
     } catch {}
-    // Resume audio: flush decode buffer first to prevent replay artifact,
-    // then play. The buffer flush (micro-seek) discards stale decoded frames
-    // so the browser doesn't replay audio from before the pause point.
+    // Resume audio immediately — let the browser handle decode buffer naturally.
+    // Don't seek or manipulate currentTime — that adds latency and glitches.
     if (audio.paused && state.intendedPlaying) {
-      try {
-        const t = audio.currentTime;
-        if (isFinite(t)) audio.currentTime = t + 0.001;
-      } catch {}
       try { audio.play().catch(() => {}); } catch {}
     }
   }
@@ -2551,61 +2546,31 @@ _seekPostTimers: []
     // Swallow the event so no other listener sees it.
     // Do NOT call audio.play() here — the play-lock handles resume.
     // Calling play() from the pause suppressor causes decode buffer replay
-    e.stopImmediatePropagation();
+     e.stopImmediatePropagation();
   }
 
   // rAF play-lock: if the browser pauses video/audio during tab return,
-  // counter-play once per frame for 800ms. Uses a decode buffer flush on
-  // the FIRST audio resume to prevent the "hel-hello" replay artifact.
-  // Only uses rAF (no aggressive 4ms interval — that caused multiple replays).
-  let _playLockAudioFlushed = false;
-
+  // counter-play once per rendered frame for 800ms. Only uses rAF — no
+  // aggressive sub-frame intervals, no seeking, no volume manipulation.
+  // Just play() if paused — let the browser resume naturally.
   function _startPlayLock() {
     _stopPlayLock();
     const startTime = now();
     const lockDuration = 800;
-    _playLockAudioFlushed = false;
 
-    const tick = () => {
-      if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) {
-        _stopPlayLock();
-        return;
-      }
-      if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) {
-        _stopPlayLock();
-        return;
-      }
+    const rafPump = () => {
+      _playLockRafId = null;
+      if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return;
+      if (now() - startTime > lockDuration || !(state.tabReturnImmuneUntil > now())) return;
       if (state.intendedPlaying) {
         try {
           const vn = getVideoNode();
           if (vn && vn.paused) vn.play().catch(() => {});
           if (videoEl && videoEl !== vn && videoEl.paused) videoEl.play().catch(() => {});
-          if (coupledMode && audio && audio.paused) {
-            // Flush decode buffer ONCE before first resume to prevent
-            // replay artifact ("hel-hello"). Setting currentTime to itself
-            // forces the browser to discard stale decoded audio frames.
-            if (!_playLockAudioFlushed) {
-              _playLockAudioFlushed = true;
-              try {
-                const t = audio.currentTime;
-                if (isFinite(t)) audio.currentTime = t + 0.001;
-              } catch {}
-            }
-            audio.play().catch(() => {});
-          }
+          if (coupledMode && audio && audio.paused) audio.play().catch(() => {});
         } catch {}
       }
-    };
-
-    // Single rAF pump — one play() per rendered frame is enough.
-    // Aggressive sub-frame intervals (4ms) caused multiple decode buffer
-    // replays, making the "hel-hello" artifact worse.
-    const rafPump = () => {
-      _playLockRafId = null;
-      tick();
-      if (_playLockRafId === null && (now() - startTime) < lockDuration && state.tabReturnImmuneUntil > now()) {
-        _playLockRafId = requestAnimationFrame(rafPump);
-      }
+      _playLockRafId = requestAnimationFrame(rafPump);
     };
     _playLockRafId = requestAnimationFrame(rafPump);
   }
@@ -2799,18 +2764,13 @@ _seekPostTimers: []
              (!state.firstPlayCommitted && wantsStartupAutoplay());
     },
 
-    // Fires play() on both video and audio immediately.
-    // Audio gets a decode buffer flush before play to prevent replay artifact.
+    // Fires play() on both video and audio immediately. No seeking or
+    // buffer manipulation — let the browser resume naturally.
     instantPlay() {
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
         if (coupledMode && audio && audio.paused) {
-          // Flush decode buffer to prevent "hel-hello" replay
-          try {
-            const t = audio.currentTime;
-            if (isFinite(t)) audio.currentTime = t + 0.001;
-          } catch {}
           audio.play().catch(() => {});
         }
       } catch {}
@@ -6092,6 +6052,14 @@ _seekPostTimers: []
       tryUnlockAudioContext();
       state.lastUserActionTime = now();
 
+      // Autoplay fallback: if startup autoplay was wanted but hasn't fired yet
+      // (Chromium may block autoplay without user gesture), use this interaction
+      // as the gesture to kick playback.
+      if (wantsStartupAutoplay() && !state.firstPlayCommitted && !state.startupKickInFlight &&
+          pageLoadedForAutoplay() && coupledMode) {
+        scheduleStartupAutoplayKick();
+      }
+
       const isPlayCtrl = isPlayControlTarget(event.target);
       const isTechSurface = isTechSurfaceTarget(event.target);
 
@@ -7917,10 +7885,13 @@ _seekPostTimers: []
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
-      // Call onTabLeave() on blur to keep state balanced with onTabReturn()
-      // which fires on focus. The smart check in onTabReturn() handles the
-      // spurious blur/focus from status panels, devtools, etc.
-      SmoothTabWelcomeBackManagement.onTabLeave();
+      // Do NOT call SmoothTabWelcomeBackManagement.onTabLeave() on blur.
+      // Blur fires for many non-tab-switch reasons (status panel, devtools,
+      // address bar, alt-tab). Calling onTabLeave() here disengages the
+      // pause intercept, allowing the browser to pause media during alt-tab.
+      // onTabLeave() is called from visibilitychange→hidden instead (actual
+      // tab switches). The smart check in onTabReturn() handles spurious
+      // blur/focus cycles (returns early if media is still playing).
 
       if (document.visibilityState === "hidden") {
         VisibilityGuard.onTabHide();
