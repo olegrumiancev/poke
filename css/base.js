@@ -2407,6 +2407,25 @@ _seekPostTimers: []
   }
 
   if (!state.pageFullyLoaded) {
+    // Strip native autoplay attribute so the browser doesn't start playback
+    // before the page is fully loaded. We re-trigger autoplay manually once
+    // window.load fires and all our gates are ready.
+    try {
+      if (videoEl && videoEl.hasAttribute("autoplay")) {
+        videoEl.removeAttribute("autoplay");
+        videoEl.autoplay = false;
+      }
+      const innerV = videoEl?.querySelector?.("video");
+      if (innerV && innerV.hasAttribute("autoplay")) {
+        innerV.removeAttribute("autoplay");
+        innerV.autoplay = false;
+      }
+      // If the video already started playing before we could strip autoplay, pause it
+      if (videoEl && !videoEl.paused) {
+        videoEl.pause();
+      }
+    } catch {}
+
     window.addEventListener("load", () => {
       state.pageFullyLoaded = true;
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
@@ -6274,6 +6293,11 @@ try {
       // TAB RETURN + STARTUP IMMUNITY: accept play if we were playing or during startup.
       // Never override an explicit user pause.
       if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
+        // Don't commit first play before page is fully loaded
+        if (!state.firstPlayCommitted && !pageLoadedForAutoplay()) {
+          execProgrammaticVideoPause();
+          return;
+        }
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
         if (!coupledMode) MediumQualityManager.markUserPlayed();
@@ -6318,8 +6342,13 @@ try {
           }
           return;
         }
-        // Startup autoplay (before user has ever interacted) → accept
+        // Startup autoplay (before user has ever interacted) → accept only after page load
         if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
+          if (!pageLoadedForAutoplay()) {
+            // Page not fully loaded yet — reject this play and wait for window.load
+            execProgrammaticVideoPause();
+            return;
+          }
           state.intendedPlaying = true;
           state.bufferHoldIntendedPlaying = true;
           state.firstPlayCommitted = true;
@@ -6374,8 +6403,9 @@ try {
         const isUserAction = (now() - state.lastUserActionTime) < 1500;
 
         if (isUserAction || userPlayIntentActive() || wantsStartupAutoplay()) {
-          // PAGE-LOAD GATE — skip if startup autoplay is desired
-          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay() && !wantsStartupAutoplay()) {
+          // PAGE-LOAD GATE — block autoplay until page is fully loaded.
+          // User-initiated plays are always allowed regardless of page load state.
+          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay()) {
             execProgrammaticVideoPause();
             return;
           }
@@ -6769,6 +6799,11 @@ try {
       }
       // Tab-return immunity: video is playing — that's exactly what we want. Accept it.
       if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
+        // Don't commit first play before page is fully loaded
+        if (!state.firstPlayCommitted && !pageLoadedForAutoplay()) {
+          execProgrammaticVideoPause();
+          return;
+        }
         state.videoWaiting = false;
         state.videoStallSince = 0;
         state.intendedPlaying = true;
@@ -6793,9 +6828,10 @@ try {
           execProgrammaticVideoPause();
           return;
         }
-        // Commit first play
+        // Commit first play — only after page is fully loaded (or user action)
         if (!state.firstPlayCommitted) {
-          if (wantsStartupAutoplay() || pageLoadedForAutoplay() || (state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000)) {
+          const _userAction = state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000;
+          if ((pageLoadedForAutoplay() && wantsStartupAutoplay()) || _userAction) {
             state.firstPlayCommitted = true;
             state.startupKickDone = true;
             state.startupPhase = false;
@@ -6823,7 +6859,8 @@ try {
       state.videoStallSince = 0;
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
-        if (wantsStartupAutoplay() || pageLoadedForAutoplay() || state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000) {
+        const _userAction = state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000;
+        if (pageLoadedForAutoplay() || _userAction) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
@@ -7811,6 +7848,23 @@ try {
         updateLastKnownGoodVT();
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
+
+        // Tab-switch protection: visibilitychange→hidden fires WITHOUT a preceding
+        // blur event on tab switches (unlike alt-tab). Set the same transition
+        // flags that the blur handler sets, so when the tab returns the pause
+        // handler knows we're in a tab-switch transition and can suppress
+        // spurious browser pauses.
+        if (state.intendedPlaying) {
+          state.altTabTransitionActive = true;
+          state.altTabTransitionUntil = now() + ALT_TAB_TRANSITION_MS;
+          state.focusStableUntil = now() + ALT_TAB_TRANSITION_MS;
+          if (platform.chromiumOnlyBrowser) {
+            setChromiumAutoPauseBlock(ALT_TAB_TRANSITION_MS + 2000);
+            setChromiumBgPauseBlock(CHROMIUM_BG_PAUSE_BLOCK_MS);
+            setChromiumPauseEventSuppress(ALT_TAB_TRANSITION_MS);
+          }
+        }
+
         state.bgTransitionInProgress = true;
         if (platform.useBgControllerRetry) {
           noteBackgroundEntry();
