@@ -2407,25 +2407,6 @@ _seekPostTimers: []
   }
 
   if (!state.pageFullyLoaded) {
-    // Strip native autoplay attribute so the browser doesn't start playback
-    // before the page is fully loaded. We re-trigger autoplay manually once
-    // window.load fires and all our gates are ready.
-    try {
-      if (videoEl && videoEl.hasAttribute("autoplay")) {
-        videoEl.removeAttribute("autoplay");
-        videoEl.autoplay = false;
-      }
-      const innerV = videoEl?.querySelector?.("video");
-      if (innerV && innerV.hasAttribute("autoplay")) {
-        innerV.removeAttribute("autoplay");
-        innerV.autoplay = false;
-      }
-      // If the video already started playing before we could strip autoplay, pause it
-      if (videoEl && !videoEl.paused) {
-        videoEl.pause();
-      }
-    } catch {}
-
     window.addEventListener("load", () => {
       state.pageFullyLoaded = true;
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
@@ -2703,252 +2684,83 @@ _seekPostTimers: []
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // FREEZE-FRAME OVERLAY  (three-layer tab-transition visual shield)
+  // AUDIO VOLUME SHIELD  (silent tab-transition audio management)
   // ═══════════════════════════════════════════════════════════════════════
   //
-  // WHY the old counter-play approach fails:
-  //   The browser pauses the <video> internally during visibility changes.
-  //   No JS can run between the browser's pause and the first rendered
-  //   paused frame.  Even a synchronous play() in a capture-phase "pause"
-  //   listener only takes effect on the NEXT frame, so the user always
-  //   sees at least one paused frame.  Additionally, Video.js reacts to
-  //   the pause event and shows its big-play-button / loading-spinner /
-  //   changes control-bar icons — all highly visible.
+  // The #1 user-noticeable artefact during tab switches is AUDIO: the
+  // browser internally pauses the <audio> element when the tab goes
+  // hidden, then resumes it at its previous volume when the tab returns.
+  // JS cannot run between the browser's internal resume and the first
+  // audio sample being sent to the speakers, so the user hears a "pop"
+  // (silence gap → sudden full-volume resume).
   //
-  // THREE-LAYER SOLUTION:
+  // FIX: Set audio.volume = 0 BEFORE the tab goes hidden.  The browser
+  // caches the element's current volume, so when it auto-resumes on tab
+  // return it resumes at volume 0 — completely silent.  Our tab-return
+  // code then fades volume back to the target over ~80ms, producing a
+  // smooth, inaudible transition.
   //
-  //   Layer 1 — CSS injection  (instant, no JS timing dependency)
-  //     A <style> tag with rules keyed to a class on the Video.js
-  //     container.  When the class is present, all Video.js overlays
-  //     that betray "paused" state are hidden:  big-play-button,
-  //     loading-spinner, poster image.  This is instant because
-  //     CSS applies on the next composite — no JS round-trip needed.
-  //
-  //   Layer 2 — Canvas freeze-frame  (covers the actual <video> element)
-  //     drawImage() captures the last decoded video frame onto a <canvas>
-  //     with matching object-fit, positioned over the <video>.  Even if
-  //     the browser shows a paused/buffering frame underneath, the canvas
-  //     shows the frozen last-good frame on top.  If drawImage fails
-  //     (e.g. CORS), the browser's own last-frame display is still
-  //     visible because we never hide the <video> itself.
-  //
-  //   Layer 3 — Stable-playback gate
-  //     Nothing is revealed until the video is *confirmed* playing with
-  //     currentTime advancing for ≥3 consecutive rAF ticks.  Only then
-  //     does the canvas dissolve (fast opacity transition) and the CSS
-  //     freeze class get removed.
-  //
+  // This is the ONLY approach that works because it acts before the
+  // browser's internal pause, not after.
   // ═══════════════════════════════════════════════════════════════════════
-  const FreezeFrameOverlay = (() => {
-    let _canvas = null;
-    let _ctx = null;
-    let _active = false;
-    let _gen = 0;
-    let _stabilityRafId = null;
-    let _dissolveTimer = null;
-    let _styleEl = null;
+  const AudioVolumeShield = {
+    _savedVol: 1,
+    _active: false,
+    _fadeRafId: null,
+    _fadeTimer: null,
 
-    // ── helpers ──────────────────────────────────────────────────────────
-    function _vel() {
-      // Always returns the actual <video> DOM node
+    // Called on visibilitychange → hidden (BEFORE browser pauses audio).
+    // Mutes audio so browser caches volume=0 for auto-resume.
+    arm() {
+      if (!coupledMode || !audio) return;
+      if (!state.intendedPlaying) return;
       try {
-        const vn = getVideoNode();
-        if (vn?.tagName === "VIDEO") return vn;
+        this._savedVol = audio.volume || 1;
+        audio.volume = 0;
+        this._active = true;
       } catch {}
-      try { return video?.el?.()?.querySelector?.("video") || videoEl; }
-      catch { return videoEl; }
-    }
+    },
 
-    function _container() {
-      try { return video?.el?.() || _vel()?.parentElement || null; }
-      catch { return null; }
-    }
-
-    // ── Layer 1: CSS injection ──────────────────────────────────────────
-    function _injectStyles() {
-      if (_styleEl) return;
-      try {
-        _styleEl = document.createElement("style");
-        _styleEl.id = "ff-freeze-styles";
-        _styleEl.textContent = [
-          // Hide Video.js pause/loading indicators while frozen
-          ".ff-freeze .vjs-loading-spinner,",
-          ".ff-freeze .vjs-big-play-button,",
-          ".ff-freeze .vjs-poster",
-          "{display:none!important;visibility:hidden!important}",
-
-          // Freeze-frame canvas — lives inside the Video.js container,
-          // above the <video> and above all VJS overlays.
-          ".ff-freeze-cvs{",
-            "position:absolute!important;",
-            "top:0!important;left:0!important;",
-            "width:100%!important;height:100%!important;",
-            "pointer-events:none!important;",
-            "z-index:2147483647!important;",   // max 32-bit int
-            "transition:opacity 60ms ease-out;",
-          "}",
-        ].join("");
-        (document.head || document.documentElement).appendChild(_styleEl);
-      } catch {}
-    }
-
-    // ── Layer 2: Canvas freeze-frame ────────────────────────────────────
-    function _ensureCanvas() {
-      if (_canvas) return _canvas;
-      _injectStyles();
-      const ctr = _container();
-      if (!ctr) return null;
-
-      _canvas = document.createElement("canvas");
-      _canvas.className = "ff-freeze-cvs";
-      _canvas.style.display = "none";
-      _canvas.style.opacity = "0";
-
-      // Match the <video>'s object-fit so the canvas frame aligns exactly
-      const vel = _vel();
-      if (vel) {
-        try {
-          const cs = getComputedStyle(vel);
-          _canvas.style.objectFit = cs.objectFit || "contain";
-          _canvas.style.objectPosition = cs.objectPosition || "center";
-        } catch { _canvas.style.objectFit = "contain"; }
-      } else {
-        _canvas.style.objectFit = "contain";
-      }
-
-      // Ensure the container can be an offset-parent for the canvas
-      try {
-        const pos = getComputedStyle(ctr).position;
-        if (!pos || pos === "static") ctr.style.position = "relative";
-      } catch {}
-
-      ctr.appendChild(_canvas);
-      _ctx = _canvas.getContext("2d", { alpha: false });
-      return _canvas;
-    }
-
-    function _capture() {
-      const vel = _vel();
-      if (!vel?.videoWidth || !vel?.videoHeight || vel.readyState < 2) return false;
-      const c = _ensureCanvas();
-      if (!c || !_ctx) return false;
-      try {
-        c.width  = vel.videoWidth;
-        c.height = vel.videoHeight;
-        _ctx.drawImage(vel, 0, 0);
-        return true;
-      } catch {
-        // CORS or SecurityError — canvas capture fails, but Layer 1
-        // (CSS) still suppresses Video.js UI.  The browser keeps
-        // displaying the last decoded frame in the <video> element,
-        // so visual continuity is still mostly preserved.
-        return false;
-      }
-    }
-
-    // ── orchestration ───────────────────────────────────────────────────
-    function _cancelPending() {
-      if (_stabilityRafId)  { cancelAnimationFrame(_stabilityRafId); _stabilityRafId = null; }
-      if (_dissolveTimer)   { clearTimeout(_dissolveTimer); _dissolveTimer = null; }
-    }
-
-    function _engage() {
-      _gen++;
-      _cancelPending();
-
-      // Layer 1: CSS class on container → hides VJS overlays instantly
-      const ctr = _container();
-      if (ctr) ctr.classList.add("ff-freeze");
-
-      // Layer 2: Capture frame & show canvas
-      const captured = _capture();
-      if (captured && _canvas) {
-        _canvas.style.display = "block";
-        _canvas.style.opacity = "1";
-      }
-      _active = true;
-    }
-
-    function _disengage() {
-      // Dissolve canvas with opacity transition, then clean up
-      const myGen = _gen;
-      if (_canvas) _canvas.style.opacity = "0";
-      _dissolveTimer = setTimeout(() => {
-        if (_gen !== myGen) return;
-        if (_canvas) _canvas.style.display = "none";
-        // Remove CSS freeze class → Video.js overlays return to normal
-        const ctr = _container();
-        if (ctr) ctr.classList.remove("ff-freeze");
-        _dissolveTimer = null;
-      }, 100);
-      _active = false;
-    }
-
-    function _hardHide() {
-      _cancelPending();
-      _active = false;
-      if (_canvas) { _canvas.style.opacity = "0"; _canvas.style.display = "none"; }
-      const ctr = _container();
-      if (ctr) ctr.classList.remove("ff-freeze");
-    }
-
-    // ── Layer 3: Stable-playback gate ───────────────────────────────────
-    function _waitThenDissolve() {
-      _cancelPending();
-      const myGen = ++_gen;
-      let stableFrames = 0;
-      let lastTime = -1;
-      const NEEDED = 3;          // 3 advancing rAF ticks ≈ 50 ms
-      const MAX_WAIT = 2500;     // don't hold overlay forever
-      const t0 = performance.now();
-
-      function tick() {
-        if (myGen !== _gen || !_active) return;
-        if (performance.now() - t0 > MAX_WAIT) { _disengage(); return; }
-        try {
-          const vel = _vel();
-          if (!vel || vel.paused || vel.seeking) {
-            stableFrames = 0;
-            _stabilityRafId = requestAnimationFrame(tick);
-            return;
+    // Called on visibilitychange → visible.  Audio is at volume 0
+    // (either we set it, or the play-lock did).  The play-lock
+    // (_startPlayLock) handles volume restoration with a quadratic
+    // ease-in — we just mark ourselves inactive.  If the play-lock
+    // is NOT active, we restore volume directly after a short delay.
+    fadeIn() {
+      if (!this._active) return;
+      this._cancel();
+      this._active = false;
+      // If the play-lock is NOT active (e.g. non-coupled mode, or
+      // engagePauseIntercept didn't fire), restore volume directly
+      // with a short delay to let any play() calls settle first.
+      if (!_playLockRafId && !_playLockIntervalId) {
+        const vol = this._savedVol;
+        this._fadeTimer = setTimeout(() => {
+          this._fadeTimer = null;
+          if (!state.intendedPlaying) return;
+          if (coupledMode && audio) {
+            try { audio.volume = vol; } catch {}
           }
-          const ct = vel.currentTime;
-          if (lastTime >= 0 && ct !== lastTime) stableFrames++;
-          else if (lastTime >= 0)                stableFrames = 0;
-          lastTime = ct;
-          if (stableFrames >= NEEDED) { _disengage(); return; }
-        } catch {}
-        _stabilityRafId = requestAnimationFrame(tick);
+        }, 100);
       }
-      _stabilityRafId = requestAnimationFrame(tick);
-    }
+    },
 
-    // ── public API ──────────────────────────────────────────────────────
-    return {
-      get active() { return _active; },
-
-      onTabLeave() {
-        // Only engage if playback was active (user-paused → no overlay)
-        if (!state.intendedPlaying && state.firstPlayCommitted) return;
-        _engage();
-      },
-
-      onTabReturn() {
-        // If overlay wasn't shown on leave (e.g. engage failed), try now
-        if (!_active && state.intendedPlaying) _engage();
-        if (_active) _waitThenDissolve();
-      },
-
-      onUserPause() { _hardHide(); },
-
-      cleanup() {
-        _hardHide();
-        try { if (_canvas?.parentElement) _canvas.parentElement.removeChild(_canvas); } catch {}
-        _canvas = null;
-        _ctx = null;
+    // Called on user pause / video end — restore volume instantly
+    disarm() {
+      this._cancel();
+      if (this._active && coupledMode && audio) {
+        try { audio.volume = this._savedVol; } catch {}
       }
-    };
-  })();
+      this._active = false;
+    },
+
+    _cancel() {
+      if (this._fadeRafId) { cancelAnimationFrame(this._fadeRafId); this._fadeRafId = null; }
+      if (this._fadeTimer) { clearTimeout(this._fadeTimer); this._fadeTimer = null; }
+    },
+
+    get active() { return this._active; }
+  };
 
   // --- smooth tab welcome-back management
   // Consolidates the tab-return smoothness logic that was previously spread
@@ -2968,9 +2780,8 @@ _seekPostTimers: []
       this._lastReturnAt = now();
       state.tabReturnGen++;
 
-      // Freeze-frame overlay: keep it showing while we restart playback.
-      // It will dissolve once video is confirmed playing and advancing.
-      FreezeFrameOverlay.onTabReturn();
+      // Audio volume shield: trigger fade-in (audio was muted on leave)
+      AudioVolumeShield.fadeIn();
 
       if (this.shouldResume()) {
         state.tabReturnImmuneUntil = now() + 3000;
@@ -3005,9 +2816,9 @@ _seekPostTimers: []
     // Called when the tab goes away (from blur or visibilitychange→hidden).
     // Cancels in-flight tab-return work and snapshots state for QRO.
     onTabLeave() {
-      // Freeze-frame: capture the current video frame BEFORE the browser
-      // pauses the video, so we have a pristine last-frame to show.
-      FreezeFrameOverlay.onTabLeave();
+      // Audio volume shield: mute audio BEFORE browser pauses it, so
+      // when browser auto-resumes on tab return it resumes at volume 0.
+      AudioVolumeShield.arm();
 
       state.tabReturnGen++;
       state.tabReturnImmuneUntil = 0;
@@ -3108,7 +2919,7 @@ _seekPostTimers: []
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
     SmoothTabWelcomeBackManagement.onUserPause(); // drop tab-return smoothness on explicit pause
-    FreezeFrameOverlay.onUserPause(); // remove freeze overlay on explicit pause
+    AudioVolumeShield.disarm(); // restore audio volume on explicit pause
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
@@ -3495,6 +3306,7 @@ _seekPostTimers: []
     // Don't touch volume while the play-lock is managing the fade-in —
     // competing volume writes cause the pause→play pop we're trying to hide.
     if (_playLockRafId && _playLockVolRestoreStart === 0) return;
+    if (AudioVolumeShield.active) return; // don't fight the volume shield
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -3522,8 +3334,9 @@ _seekPostTimers: []
   function updateAudioGainImmediate() {
     if (!audio) return;
     if (state.audioFading) return;
-    // Don't touch volume while play-lock is managing the fade-in
+    // Don't touch volume while play-lock or volume shield is active
     if (_playLockRafId && _playLockVolRestoreStart === 0) return;
+    if (AudioVolumeShield.active) return;
     try {
       const target = clamp01(targetVolFromVideo());
       // During tab-return, don't jump volume — fade to prevent pop
@@ -6550,11 +6363,6 @@ try {
       // TAB RETURN + STARTUP IMMUNITY: accept play if we were playing or during startup.
       // Never override an explicit user pause.
       if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
-        // Don't commit first play before page is fully loaded
-        if (!state.firstPlayCommitted && !pageLoadedForAutoplay()) {
-          execProgrammaticVideoPause();
-          return;
-        }
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
         if (!coupledMode) MediumQualityManager.markUserPlayed();
@@ -6599,13 +6407,8 @@ try {
           }
           return;
         }
-        // Startup autoplay (before user has ever interacted) → accept only after page load
+        // Startup autoplay (before user has ever interacted) → accept
         if (!state.firstPlayCommitted && wantsStartupAutoplay()) {
-          if (!pageLoadedForAutoplay()) {
-            // Page not fully loaded yet — reject this play and wait for window.load
-            execProgrammaticVideoPause();
-            return;
-          }
           state.intendedPlaying = true;
           state.bufferHoldIntendedPlaying = true;
           state.firstPlayCommitted = true;
@@ -6660,9 +6463,8 @@ try {
         const isUserAction = (now() - state.lastUserActionTime) < 1500;
 
         if (isUserAction || userPlayIntentActive() || wantsStartupAutoplay()) {
-          // PAGE-LOAD GATE — block autoplay until page is fully loaded.
-          // User-initiated plays are always allowed regardless of page load state.
-          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay()) {
+          // PAGE-LOAD GATE — skip if startup autoplay is desired
+          if (!isUserAction && !userPlayIntentActive() && !pageLoadedForAutoplay() && !wantsStartupAutoplay()) {
             execProgrammaticVideoPause();
             return;
           }
@@ -7056,11 +6858,6 @@ try {
       }
       // Tab-return immunity: video is playing — that's exactly what we want. Accept it.
       if (state.tabReturnImmuneUntil > now() && (state.intendedPlaying || !state.firstPlayCommitted)) {
-        // Don't commit first play before page is fully loaded
-        if (!state.firstPlayCommitted && !pageLoadedForAutoplay()) {
-          execProgrammaticVideoPause();
-          return;
-        }
         state.videoWaiting = false;
         state.videoStallSince = 0;
         state.intendedPlaying = true;
@@ -7085,10 +6882,9 @@ try {
           execProgrammaticVideoPause();
           return;
         }
-        // Commit first play — only after page is fully loaded (or user action)
+        // Commit first play
         if (!state.firstPlayCommitted) {
-          const _userAction = state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000;
-          if ((pageLoadedForAutoplay() && wantsStartupAutoplay()) || _userAction) {
+          if (wantsStartupAutoplay() || pageLoadedForAutoplay() || (state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000)) {
             state.firstPlayCommitted = true;
             state.startupKickDone = true;
             state.startupPhase = false;
@@ -7116,8 +6912,7 @@ try {
       state.videoStallSince = 0;
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
-        const _userAction = state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000;
-        if (pageLoadedForAutoplay() || _userAction) {
+        if (wantsStartupAutoplay() || pageLoadedForAutoplay() || state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
@@ -7699,7 +7494,7 @@ try {
         state.bgHiddenWasPlaying = false;
         state.tabReturnImmuneUntil = 0;
         disengagePauseIntercept();
-        FreezeFrameOverlay.onUserPause(); // remove overlay on video end
+        AudioVolumeShield.disarm();
         state.playSessionId++;
         updateMediaSessionPlaybackState();
         pauseHard();
@@ -8146,11 +7941,23 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
-      // Let tab-return manager clean up: bumps gen, clears immunity,
-      // disengages intercept, cancels audio mute, clears timers, snapshots QRO.
-      SmoothTabWelcomeBackManagement.onTabLeave();
-      VisibilityGuard.onTabHide();
-      BackgroundPlaybackManager.onBecomeBackground();
+      // DON'T call SmoothTabWelcomeBackManagement.onTabLeave() on blur.
+      // Blur fires for many reasons that aren't tab switches: opening
+      // browser status panels, notification popups, address bar clicks,
+      // devtools, etc.  Killing immunity/intercepts here causes the
+      // video to pause when it shouldn't.  The heavy tab-leave logic
+      // runs in visibilitychange→hidden instead (which only fires for
+      // actual tab switches).
+      //
+      // We DO set alt-tab transition flags here because a blur followed
+      // by a quick focus IS an alt-tab pattern, and the pause handler
+      // needs these flags to suppress browser-generated pauses.
+      if (document.visibilityState === "hidden") {
+        // Page is already hidden — visibilitychange handler already ran.
+        // Just update guards, don't duplicate.
+        VisibilityGuard.onTabHide();
+        BackgroundPlaybackManager.onBecomeBackground();
+      }
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
       state.focusLossCount++;
@@ -8215,7 +8022,7 @@ try {
       if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
       if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
       if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
-      try { FreezeFrameOverlay.cleanup(); } catch {}
+      try { AudioVolumeShield.disarm(); } catch {}
       if (state._seekPostTimers.length) { state._seekPostTimers.forEach(t => clearTimeout(t)); state._seekPostTimers = []; }
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
