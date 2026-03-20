@@ -6233,6 +6233,9 @@ try {
 
     video.on("pause", () => {
       if (state.seeking || state.seekBuffering) return;
+      // Also check the native element's seeking flag — the "seeking" event handler
+      // may not have fired yet, but the element is already seeking
+      try { if (getVideoNode()?.seeking) return; } catch {}
       // Immunity check: after tab return, reject pause events if we were playing or in startup.
       // Never fight the user's explicit pause.
       if (state.tabReturnImmuneUntil > now() &&
@@ -6285,6 +6288,13 @@ try {
         // 6. Page hidden → flag for resume on return
         if (document.visibilityState === "hidden") {
           if (platform.useBgControllerRetry) state.resumeOnVisible = true;
+          return;
+        }
+        // 6.5. Recently seeked — browser may fire pause during seek settle
+        if (state.seekCooldownUntil > now()) {
+          VisibilityGuard.onPlayCalled();
+          const _vn = getVideoNode();
+          if (_vn && typeof _vn.play === "function") _vn.play().catch(() => {});
           return;
         }
         // 7. Genuine foreground pause we can't explain → honour it
@@ -6464,6 +6474,14 @@ try {
           return;
             }
 
+            // --- seek settle guard
+            // A recent seek can cause the browser to fire a stray pause event
+            // after the seek completes. Counter-play instead of honouring it.
+            if (state.seekCooldownUntil > now() && state.intendedPlaying) {
+              if (_shouldCounterPlay()) _counterPlay();
+              return;
+            }
+
             // --- real user pause
             // All guards passed. This is a real, unexplained pause on a focused, visible,
             // stable page with no transition or grace window active. Honour it.
@@ -6481,9 +6499,16 @@ try {
       if (!state.intendedPlaying || state.restarting) return;
       if (!state.startupPrimed || state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted)) return;
 
-      // Defer audio pause by 150ms — micro-stalls (<150ms) won't kill audio.
-      // Never kill audio during tab-return immunity — browser stalls are expected.
-      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(state.tabReturnImmuneUntil > now())) {
+      // Don't stall-pause audio during tab-return immunity or near end of video
+      // (near-end stalls resolve into "ended" almost immediately, so pausing audio
+      // just creates an audible gap right before the natural stop).
+      let _nearEnd = false;
+      try {
+        const _dur = Number(video.duration()) || 0;
+        const _ct = Number(video.currentTime()) || 0;
+        if (_dur > 1 && _ct > _dur - 2.5) _nearEnd = true;
+      } catch {}
+      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(state.tabReturnImmuneUntil > now()) && !_nearEnd) {
         // Pause audio immediately — no delay. Hearing audio without video is worse
         // than a brief audio cut on micro-stalls.
         if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
