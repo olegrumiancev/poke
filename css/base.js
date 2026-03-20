@@ -3280,8 +3280,8 @@ _allowAudioTimeWrite: false
   let _toggleDebounceTimer = null;
   let _toggleDebounceCount = 0;
   let _toggleDebounceWindowStart = 0;
-  const TOGGLE_DEBOUNCE_WINDOW_MS = 600;  // rapid clicks within 600ms = spam
-  const TOGGLE_DEBOUNCE_THRESHOLD = 3;    // 3+ clicks in window triggers debounce
+  const TOGGLE_DEBOUNCE_WINDOW_MS = 300;  // rapid clicks within 300ms = spam
+  const TOGGLE_DEBOUNCE_THRESHOLD = 6;    // 6+ clicks in window triggers debounce
   const TOGGLE_DEBOUNCE_DELAY_MS = 200;   // wait 200ms for spam to settle
 
   function isToggleSpamming() {
@@ -3316,16 +3316,37 @@ _allowAudioTimeWrite: false
     const doAction = () => {
       _toggleDebounceTimer = null;
       if (wantPlay) {
-        if (getVideoPaused()) {
-          markUserPlayIntent(1200);
-          playTogether().catch(() => {});
+        // Reset audio state that may have been trashed by rapid pause/play spam.
+        // Without this, audio can get stuck muted or paused after spam settles.
+        state.isProgrammaticAudioPause = false;
+        state.audioPlayGeneration++;
+        state.audioPausedSince = 0;
+        state.audioPauseUntil = 0;
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+        cancelActiveFade();
+        markUserPlayIntent(1200);
+        playTogether().catch(() => {});
+        // Belt: after a short settle, force audio to play if video is playing
+        if (coupledMode && audio) {
+          setTimeout(() => {
+            if (!state.intendedPlaying) return;
+            if (!getVideoPaused() && audio.paused) {
+              const vt = Number(video.currentTime()) || 0;
+              if (isFinite(vt)) safeSetAudioTime(vt);
+              audio.play().catch(() => {});
+            }
+            // Restore volume in case it's stuck at 0
+            const tv = targetVolFromVideo();
+            if (audio.volume < tv - 0.05) {
+              softUnmuteAudio(80).catch(() => {});
+            }
+          }, 150);
         }
       } else {
-        if (!getVideoPaused()) {
-          markUserPauseIntent(1200);
-          clearPendingPlayResumesForPause();
-          pauseTogether();
-        }
+        markUserPauseIntent(1200);
+        clearPendingPlayResumesForPause();
+        pauseTogether();
       }
     };
 
