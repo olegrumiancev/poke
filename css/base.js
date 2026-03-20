@@ -2388,13 +2388,9 @@ _seekPostTimers: []
   }
   function saveVolume() {
     if (state.volumeSaveScheduled) return;
-    // Don't persist volume while AudioVolumeShield has temporarily muted
-    if (AudioVolumeShield.active) return;
     state.volumeSaveScheduled = true;
     setTimeout(() => {
       try {
-        // Double-check shield isn't active when the delayed save fires
-        if (AudioVolumeShield.active) { state.volumeSaveScheduled = false; return; }
         localStorage.setItem(VOLUME_STORAGE_KEY, String(video.volume()));
         localStorage.setItem(MUTED_STORAGE_KEY, String(video.muted()));
       } catch {}
@@ -2522,11 +2518,6 @@ _seekPostTimers: []
     // Capture target volume and mute audio immediately to mask pause→play pop
     if (coupledMode && audio) {
       _playLockTargetVol = targetVolFromVideo();
-      // If AudioVolumeShield muted the video element, targetVolFromVideo()
-      // returns 0.  Use the shield's saved volume instead.
-      if (_playLockTargetVol < 0.01 && AudioVolumeShield._savedVideoVol > 0.01) {
-        _playLockTargetVol = AudioVolumeShield._savedVideoVol;
-      }
       if (_playLockTargetVol < 0.01) _playLockTargetVol = 1;
       try { cancelActiveFade(); audio.volume = 0; } catch {}
       _playLockVolRestoreStart = 0; // not started yet
@@ -2603,23 +2594,12 @@ _seekPostTimers: []
     if (coupledMode && audio && _playLockTargetVol > 0 && !audio.paused) {
       try { audio.volume = _playLockTargetVol; } catch {}
     }
-    // Also ensure video element volume is restored (AudioVolumeShield may
-    // have muted it and fadeIn may not have run yet)
-    if (AudioVolumeShield._savedVideoVol > 0) {
-      try {
-        const vn = getVideoNode();
-        if (vn && vn.volume < 0.01) vn.volume = AudioVolumeShield._savedVideoVol;
-      } catch {}
-    }
     _playLockVolRestoreStart = 0;
   }
 
   function engagePauseIntercept() {
     if (_pauseInterceptActive) return;
     _pauseInterceptActive = true;
-    // Suppress Video.js UI indicators (big play button, spinner) during
-    // the entire tab-return immunity window so the user can't see pause state.
-    VjsUiShield.engage(3500);
 
     // Layer 1: replace .pause() with no-op on native elements
     const vn = getVideoNode();
@@ -2676,7 +2656,6 @@ _seekPostTimers: []
     _pauseInterceptActive = false;
     if (_pauseInterceptTimer) { clearTimeout(_pauseInterceptTimer); _pauseInterceptTimer = null; }
     _stopPlayLock();
-    VjsUiShield.disengage();
 
     // Restore saved .pause() references (not prototype — video.js may have its own override)
     const vn = getVideoNode();
@@ -2707,162 +2686,6 @@ _seekPostTimers: []
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // AUDIO VOLUME SHIELD  (silent tab-transition audio management)
-  // ═══════════════════════════════════════════════════════════════════════
-  //
-  // The #1 user-noticeable artefact during tab switches is AUDIO: the
-  // browser internally pauses the <audio> element when the tab goes
-  // hidden, then resumes it at its previous volume when the tab returns.
-  // JS cannot run between the browser's internal resume and the first
-  // audio sample being sent to the speakers, so the user hears a "pop"
-  // (silence gap → sudden full-volume resume).
-  //
-  // FIX: Set audio.volume = 0 BEFORE the tab goes hidden.  The browser
-  // caches the element's current volume, so when it auto-resumes on tab
-  // return it resumes at volume 0 — completely silent.  Our tab-return
-  // code then fades volume back to the target over ~80ms, producing a
-  // smooth, inaudible transition.
-  //
-  // This is the ONLY approach that works because it acts before the
-  // browser's internal pause, not after.
-  // ═══════════════════════════════════════════════════════════════════════
-
-  // ── Video.js UI suppression during tab transitions ──────────────────
-  // When the browser fires a pause event during tab switch, Video.js
-  // reacts by showing the big-play-button and loading-spinner. This is
-  // the most visible "tell" that a play-pause happened. We inject a tiny
-  // CSS rule and toggle a class on the Video.js container to hide these
-  // indicators during the tab-return immunity window.
-  const VjsUiShield = (() => {
-    let _styleInjected = false;
-    let _active = false;
-    let _timer = null;
-
-    function _injectStyle() {
-      if (_styleInjected) return;
-      _styleInjected = true;
-      try {
-        const s = document.createElement("style");
-        s.id = "vjs-tab-shield";
-        s.textContent =
-          ".vjs-tab-shield .vjs-big-play-button," +
-          ".vjs-tab-shield .vjs-loading-spinner," +
-          ".vjs-tab-shield .vjs-poster" +
-          "{display:none!important;visibility:hidden!important;opacity:0!important}";
-        (document.head || document.documentElement).appendChild(s);
-      } catch {}
-    }
-
-    function _container() {
-      try { return video?.el?.() || videoEl?.parentElement || null; }
-      catch { return null; }
-    }
-
-    return {
-      engage(durationMs) {
-        _injectStyle();
-        if (_timer) { clearTimeout(_timer); _timer = null; }
-        const ctr = _container();
-        if (ctr) ctr.classList.add("vjs-tab-shield");
-        _active = true;
-        // Auto-disengage after the immunity window
-        _timer = setTimeout(() => {
-          _timer = null;
-          this.disengage();
-        }, durationMs || 3500);
-      },
-      disengage() {
-        if (_timer) { clearTimeout(_timer); _timer = null; }
-        _active = false;
-        const ctr = _container();
-        if (ctr) ctr.classList.remove("vjs-tab-shield");
-      },
-      get active() { return _active; }
-    };
-  })();
-
-  const AudioVolumeShield = {
-    _savedVol: 1,
-    _savedVideoVol: 1,
-    _active: false,
-    _fadeRafId: null,
-    _fadeTimer: null,
-
-    // Called on blur and visibilitychange → hidden (BEFORE browser pauses).
-    // Mutes all audio-producing elements so the browser caches volume=0.
-    arm() {
-      if (!state.intendedPlaying) return;
-      try {
-        // Coupled mode: mute the separate audio element
-        if (coupledMode && audio) {
-          this._savedVol = audio.volume || 1;
-          audio.volume = 0;
-        }
-        // All modes: also mute the video element (has audio in non-coupled,
-        // and browsers may resume video audio independently in coupled too)
-        const vn = getVideoNode();
-        if (vn) {
-          this._savedVideoVol = vn.volume ?? 1;
-          vn.volume = 0;
-        }
-        this._active = true;
-      } catch {}
-    },
-
-    // Called on visibilitychange → visible.  Audio is at volume 0
-    // (either we set it, or the play-lock did).  The play-lock
-    // (_startPlayLock) handles volume restoration with a quadratic
-    // ease-in — we just mark ourselves inactive.  If the play-lock
-    // is NOT active, we restore volume directly after a short delay.
-    fadeIn() {
-      if (!this._active) return;
-      this._cancel();
-      this._active = false;
-      // Restore video element volume immediately (play-lock only manages
-      // the audio element volume, not the video element).
-      try {
-        const vn = getVideoNode();
-        if (vn) vn.volume = this._savedVideoVol;
-      } catch {}
-      // If the play-lock is NOT active (e.g. non-coupled mode, or
-      // engagePauseIntercept didn't fire), restore audio volume directly
-      // with a short delay to let any play() calls settle first.
-      if (!_playLockRafId && !_playLockIntervalId) {
-        const vol = this._savedVol;
-        this._fadeTimer = setTimeout(() => {
-          this._fadeTimer = null;
-          if (!state.intendedPlaying) return;
-          if (coupledMode && audio) {
-            try { audio.volume = vol; } catch {}
-          }
-        }, 100);
-      }
-    },
-
-    // Called on user pause / video end — restore volume instantly
-    disarm() {
-      this._cancel();
-      if (this._active) {
-        if (coupledMode && audio) {
-          try { audio.volume = this._savedVol; } catch {}
-        }
-        try {
-          const vn = getVideoNode();
-          if (vn) vn.volume = this._savedVideoVol;
-        } catch {}
-      }
-      this._active = false;
-    },
-
-    _cancel() {
-      if (this._fadeRafId) { cancelAnimationFrame(this._fadeRafId); this._fadeRafId = null; }
-      if (this._fadeTimer) { clearTimeout(this._fadeTimer); this._fadeTimer = null; }
-    },
-
-    get active() { return this._active; }
-  };
-
   // --- smooth tab welcome-back management
   // Consolidates the tab-return smoothness logic that was previously spread
   // across the visibilitychange, focus, and blur handlers. Each handler still
@@ -2881,8 +2704,18 @@ _seekPostTimers: []
       this._lastReturnAt = now();
       state.tabReturnGen++;
 
-      // Audio volume shield: trigger fade-in (audio was muted on leave)
-      AudioVolumeShield.fadeIn();
+      // Smart check: if video+audio are already playing and page is visible,
+      // this is a spurious blur/focus cycle (status panel, devtools, address bar, etc.)
+      // Skip heavy pause intercept / play-lock machinery entirely.
+      const videoPlaying = !getVideoPaused();
+      const audioPlaying = !coupledMode || (audio && !audio.paused);
+      if (videoPlaying && audioPlaying && document.visibilityState === "visible") {
+        state.rapidPlayPauseCount = 0;
+        state.rapidPlayPauseResetAt = now();
+        state.altTabTransitionActive = false;
+        state.altTabTransitionUntil = 0;
+        return;
+      }
 
       if (this.shouldResume()) {
         state.tabReturnImmuneUntil = now() + 3000;
@@ -2917,10 +2750,6 @@ _seekPostTimers: []
     // Called when the tab goes away (from blur or visibilitychange→hidden).
     // Cancels in-flight tab-return work and snapshots state for QRO.
     onTabLeave() {
-      // Audio volume shield: mute audio BEFORE browser pauses it, so
-      // when browser auto-resumes on tab return it resumes at volume 0.
-      AudioVolumeShield.arm();
-
       state.tabReturnGen++;
       state.tabReturnImmuneUntil = 0;
       disengagePauseIntercept();
@@ -3020,8 +2849,6 @@ _seekPostTimers: []
   function markUserPauseIntent(ms = 1800) {
     VisibilityGuard.onUserPause();
     SmoothTabWelcomeBackManagement.onUserPause(); // drop tab-return smoothness on explicit pause
-    AudioVolumeShield.disarm(); // restore audio volume on explicit pause
-    VjsUiShield.disengage(); // restore Video.js UI on explicit pause
     state.userPauseIntentPresetAt = now();
     state.userPlayIntentPresetAt = 0;
     state.userGesturePauseIntent = true;
@@ -3408,7 +3235,6 @@ _seekPostTimers: []
     // Don't touch volume while the play-lock is managing the fade-in —
     // competing volume writes cause the pause→play pop we're trying to hide.
     if (_playLockRafId && _playLockVolRestoreStart === 0) return;
-    if (AudioVolumeShield.active) return; // don't fight the volume shield
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -3436,9 +3262,8 @@ _seekPostTimers: []
   function updateAudioGainImmediate() {
     if (!audio) return;
     if (state.audioFading) return;
-    // Don't touch volume while play-lock or volume shield is active
+    // Don't touch volume while play-lock is active
     if (_playLockRafId && _playLockVolRestoreStart === 0) return;
-    if (AudioVolumeShield.active) return;
     try {
       const target = clamp01(targetVolFromVideo());
       // During tab-return, don't jump volume — fade to prevent pop
@@ -7596,7 +7421,6 @@ try {
         state.bgHiddenWasPlaying = false;
         state.tabReturnImmuneUntil = 0;
         disengagePauseIntercept();
-        AudioVolumeShield.disarm();
         state.playSessionId++;
         updateMediaSessionPlaybackState();
         pauseHard();
@@ -8043,18 +7867,10 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("blur", () => {
-      // DON'T call SmoothTabWelcomeBackManagement.onTabLeave() on blur.
-      // Blur fires for many reasons that aren't tab switches: opening
-      // browser status panels, notification popups, address bar clicks,
-      // devtools, etc.  Killing immunity/intercepts here causes the
-      // video to pause when it shouldn't.  The heavy tab-leave logic
-      // runs in visibilitychange→hidden instead (which only fires for
-      // actual tab switches).
-      //
-      // We DO pre-mute audio here because the browser can pause audio
-      // on blur BEFORE visibilitychange fires (alt-tab pattern). If this
-      // was just a status panel, focus will fire quickly and we restore.
-      AudioVolumeShield.arm();
+      // Call onTabLeave() on blur to keep state balanced with onTabReturn()
+      // which fires on focus. The smart check in onTabReturn() handles the
+      // spurious blur/focus from status panels, devtools, etc.
+      SmoothTabWelcomeBackManagement.onTabLeave();
 
       if (document.visibilityState === "hidden") {
         VisibilityGuard.onTabHide();
@@ -8078,14 +7894,6 @@ try {
       }
     }, { passive: true, capture: true });
     window.addEventListener("focus", () => {
-      // If page was never hidden (status panel, devtools, etc.), the blur
-      // handler pre-muted audio unnecessarily — restore it immediately.
-      // If page IS hidden or was hidden, the normal tab-return flow handles it.
-      if (document.visibilityState === "visible" && AudioVolumeShield.active &&
-          !state.altTabTransitionActive) {
-        AudioVolumeShield.disarm();
-      }
-
       // Let tab-return manager handle immunity, intercept, rapid counter resets,
       // alt-tab flag clearing, instant play, and bbtab/wakeup retry.
       SmoothTabWelcomeBackManagement.onTabReturn();
@@ -8132,7 +7940,6 @@ try {
       if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
       if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
       if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
-      try { AudioVolumeShield.disarm(); } catch {}
       if (state._seekPostTimers.length) { state._seekPostTimers.forEach(t => clearTimeout(t)); state._seekPostTimers = []; }
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
