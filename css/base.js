@@ -74,12 +74,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (isFirefox) return false;
         try {
           const hasChrome = typeof window.chrome !== "undefined" && window.chrome !== null;
-          const hasChromeCSS = CSS.supports("overflow", "overlay");
-          return hasChrome && hasChromeCSS;
+          // "overflow: overlay" was removed in Chromium 114+. Use multiple signals instead.
+          const hasChromiumAPI = !!(window.chrome?.runtime || window.chrome?.csi || window.chrome?.loadTimes);
+          const hasBlink = !!window.CSS?.highlights || (typeof CSS !== "undefined" && CSS.supports?.("color", "oklch(0% 0 0)"));
+          return hasChrome || hasChromiumAPI || (hasBlink && !isFirefox);
         } catch { return false; }
       })();
       const isIosWebKit = (() => {
-        if (isFirefox) return false;
+        // Firefox on iOS is actually WebKit (Apple mandates it), so don't skip it
         try {
           return (typeof GestureEvent !== "undefined" && navigator.maxTouchPoints > 1);
         } catch { return false; }
@@ -556,7 +558,8 @@ userPlayIntentPresetAt: 0,
 _stallAudioPauseTimer: null,
 seekBuffering: false,
 seekBufferResumeTimer: null,
-_allowAudioTimeWrite: false
+_allowAudioTimeWrite: false,
+_seekPostTimers: []
   };
 
   // Gate audio.play() — block during seeking/seekBuffering so nothing can restart audio mid-seek.
@@ -1568,12 +1571,22 @@ _allowAudioTimeWrite: false
 
       function tick() {
         _samplePositions();
+        // Watchdog: if _inRecovery has been stuck for >3s, force-clear it
+        if (_inRecovery && (_now() - _lastRecoveryAt) > 3000) _inRecovery = false;
         if (!state.intendedPlaying || _inRecovery) return;
         if ((_now() - _lastRecoveryAt) < RECOVERY_COOLDOWN) return;
         if (state.seeking || state.syncing || state.strictBufferHold) return;
         if (document.visibilityState === "hidden") return;
 
         const videoPaused = getVideoPaused();
+
+        // If video is playing normally, reset attempt counter so stall
+        // recovery stays available across the full session
+        if (!videoPaused && !_isVideoPositionFrozen() && _recoveryAttempts > 0) {
+          if ((_now() - _lastRecoveryAt) > 15000) {
+            _recoveryAttempts = 0;
+          }
+        }
 
         // Video freeze: video supposedly playing but position frozen
         if (!videoPaused && _isVideoPositionFrozen()) {
@@ -2558,6 +2571,7 @@ _allowAudioTimeWrite: false
       }
     };
     _playLockRafId = requestAnimationFrame(rafPump);
+    const _intervalMs = platform.mobile ? 8 : 4;
     _playLockIntervalId = setInterval(() => {
       if ((now() - startTime) > 300) {
         // After 300ms, rAF alone is enough — stop the interval
@@ -2566,7 +2580,7 @@ _allowAudioTimeWrite: false
         return;
       }
       tick();
-    }, 4);
+    }, _intervalMs);
   }
 
   function _stopPlayLock() {
@@ -2640,15 +2654,14 @@ _allowAudioTimeWrite: false
     if (_pauseInterceptTimer) { clearTimeout(_pauseInterceptTimer); _pauseInterceptTimer = null; }
     _stopPlayLock();
 
-    // Restore native .pause() methods
+    // Restore saved .pause() references (not prototype — video.js may have its own override)
     const vn = getVideoNode();
     if (vn && _origVideoPause) {
-      try { vn.pause = HTMLMediaElement.prototype.pause; } catch {}
+      try { vn.pause = _origVideoPause; } catch {}
     }
     if (audio && _origAudioPause) {
-      try { audio.pause = HTMLMediaElement.prototype.pause; } catch {}
+      try { audio.pause = _origAudioPause; } catch {}
     }
-    // Restore video.js wrapper
     if (_origVjsPause) {
       try { video.pause = _origVjsPause; } catch {}
       _origVjsPause = null;
@@ -2676,11 +2689,16 @@ _allowAudioTimeWrite: false
   // does its own platform-specific or manager-specific work, but delegates
   // the shared "make playback seamless across tab switches" bookkeeping here.
   const SmoothTabWelcomeBackManagement = {
+    _lastReturnAt: 0,
 
     // Called when the tab becomes active again (from visibilitychange→visible
     // or from the focus event). Sets up immunity, intercepts pause, starts
     // audio sync, and kicks off the bring-back-to-tab retry machinery.
+    // Deduplicates: if called twice within 100ms (focus + visibilitychange),
+    // the second call only refreshes immunity without re-firing retries.
     onTabReturn() {
+      const isDuplicate = (now() - this._lastReturnAt) < 100;
+      this._lastReturnAt = now();
       state.tabReturnGen++;
 
       if (this.shouldResume()) {
@@ -2701,11 +2719,15 @@ _allowAudioTimeWrite: false
       state.altTabTransitionActive = false;
       state.altTabTransitionUntil = 0;
 
-      // If we should be playing, do it right away
+      // If we should be playing, do it right away.
+      // On duplicate calls (focus + visibilitychange within 100ms), only
+      // do the instant play — don't re-fire the full retry/wakeup machinery.
       if (state.intendedPlaying) {
         this.instantPlay();
-        startBringBackRetry();
-        executeSeamlessWakeup();
+        if (!isDuplicate) {
+          startBringBackRetry();
+          executeSeamlessWakeup();
+        }
       }
     },
 
@@ -4159,9 +4181,12 @@ try {
     }
   }
 
+  // Cancel any active non-coupled buffer wait from a previous armResumeAfterBuffer call
+  let _ncBufferWaitCleanup = null;
   function armResumeAfterBuffer(timeoutMs = 9000) {
     if (!coupledMode) {
-      // Non-coupled mode: simpler buffer-wait — just wait for video readyState
+      // Cancel previous non-coupled buffer wait to prevent listener leaks
+      if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
       if (!state.intendedPlaying || state.restarting || state.seeking) return;
       const vNode = getVideoNode();
       if (!vNode) return;
@@ -4169,6 +4194,7 @@ try {
       const ncResume = () => {
         if (ncDone) return;
         ncDone = true;
+        _ncBufferWaitCleanup = null;
         try { vNode.removeEventListener("canplay", ncCheck); } catch {}
         try { vNode.removeEventListener("canplaythrough", ncCheck); } catch {}
         try { clearTimeout(ncTimeout); } catch {}
@@ -4178,10 +4204,10 @@ try {
         state.strictBufferReason = "";
         if (getVideoPaused()) execProgrammaticVideoPlay();
       };
+      _ncBufferWaitCleanup = ncResume; // store so next call can cancel us
       const ncCheck = () => {
         if (Number(vNode.readyState || 0) >= HAVE_FUTURE_DATA) ncResume();
       };
-      // Already ready?
       if (Number(vNode.readyState || 0) >= HAVE_FUTURE_DATA) { ncResume(); return; }
       try { vNode.addEventListener("canplay", ncCheck, { passive: true }); } catch {}
       try { vNode.addEventListener("canplaythrough", ncCheck, { passive: true }); } catch {}
@@ -4587,6 +4613,10 @@ try {
         } else if (!state.firstPlayCommitted || (state.startupPhase && !state.audioEverStarted)) {
           // --- startup guard for dual-fail
           armResumeAfterBuffer(8000);
+        } else if (state.intendedPlaying && (inBgReturnGrace() || state.seeking || state.seekBuffering || state.networkRecoverUntil > now())) {
+          // Transient failure during tab return, seek, or network recovery — don't kill intendedPlaying,
+          // arm buffer recovery instead so playback retries automatically.
+          armResumeAfterBuffer(5000);
         } else {
           state.intendedPlaying = false;
           state.playSessionId = (state.playSessionId || 0) + 1;
@@ -5008,9 +5038,14 @@ try {
         }
       }
       // Post-seek audio guarantee with aggressive retry windows
+      // Clear any previous seek guarantee timers
+      if (state._seekPostTimers.length) {
+        state._seekPostTimers.forEach(t => clearTimeout(t));
+        state._seekPostTimers = [];
+      }
       const _seekGuaranteeSession = state.playSessionId;
       [100, 250, 500, 900, 1500, 2500].forEach(delay => {
-        setTimeout(() => {
+        const tid = setTimeout(() => {
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
           if (!coupledMode || !audio) return;
@@ -5029,6 +5064,7 @@ try {
           .then(ok => { if (ok) softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {}); })
           .catch(() => {});
         }, delay);
+        state._seekPostTimers.push(tid);
       });
       scheduleSync(0);
     } finally {
@@ -7000,12 +7036,12 @@ try {
       if (audioEventsSquelched() || state.restarting || state.isProgrammaticAudioPause || state.isProgrammaticVideoPause) return;
       if (now() < state.audioPauseUntil || now() < state.audioPlayUntil) return;
 
-      // Snapshot grace state at event-fire time. RAF can run up to 300ms later;
-      // a pause event that fired at T=7.9s would miss inBgReturnGrace() inside
-      // the RAF (which runs at T=8.1s) and be misclassified as a user pause.
+      // Snapshot grace state now. Use setTimeout(0) instead of rAF — rAF is
+      // throttled to 0fps in background tabs, so audio pause events would
+      // never be processed. setTimeout(0) fires reliably even when backgrounded.
       const _inGraceAtPauseFire = inBgReturnGrace();
 
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         if (state.seeking || state.restarting || state.isProgrammaticAudioPause) return;
         if (audio && !audio.paused) return;
 
@@ -7210,7 +7246,28 @@ try {
         try { UltraStabilizer.onSeekStart(); } catch {}
         if (state.restarting) return;
         if (state.bgSilentTimeSyncing) return;
+
+        // Android Chromium random seek protection:
+        // Android Chrome fires spurious seeking events (buffer adjustments, tiny position
+        // corrections) that disrupt playback. Ignore micro-seeks (<0.5s change) that
+        // weren't triggered by a user action or programmatic seek target.
+        if (platform.androidChromium && state.pendingSeekTarget == null) {
+          const _curTime = Number(videoEl.currentTime) || 0;
+          const _prevTime = state.lastKnownGoodVT || 0;
+          const _delta = Math.abs(_curTime - _prevTime);
+          const _recentUserAction = (now() - state.lastUserActionTime) < 2000;
+          if (_delta < 0.5 && !_recentUserAction && !state.seeking && state.intendedPlaying) {
+            // Spurious micro-seek — ignore it entirely
+            return;
+          }
+        }
+
         clearSeekBuffering();
+        // Cancel any pending post-seek guarantee timers from the previous seek
+        if (state._seekPostTimers.length) {
+          state._seekPostTimers.forEach(t => clearTimeout(t));
+          state._seekPostTimers = [];
+        }
         state.seekId++;
         const currentSeekId = state.seekId;
         state.strictBufferHold = false; state.bufferHoldSince = 0;
@@ -7419,7 +7476,7 @@ try {
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
-          audio.play().catch(() => {});
+          execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
         }
       }
     });
@@ -7516,9 +7573,8 @@ try {
   function executeSeamlessWakeup() {
     if (!state.intendedPlaying && !state.resumeOnVisible &&
         !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
-    if (state.wakeupTimer) return;
-    clearTimeout(state.wakeupTimer);
-    state.wakeupTimer = null;
+    // Cancel and replace any existing wakeup timer (don't silently drop)
+    if (state.wakeupTimer) { clearTimeout(state.wakeupTimer); state.wakeupTimer = null; }
 
     const wakeDelay = platform.chromiumOnlyBrowser ? 50 : 30;
     const myGen = state.tabReturnGen;
@@ -7842,6 +7898,12 @@ try {
       clearTimeout(state.wakeupTimer);
       clearTimeout(state.heartbeatTimer);
       clearTimeout(state.bgSilentTimeSyncTimer);
+      if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
+      if (_playLockIntervalId) { clearInterval(_playLockIntervalId); _playLockIntervalId = null; }
+      if (_playLockRafId) { cancelAnimationFrame(_playLockRafId); _playLockRafId = null; }
+      if (_playLockTimer) { clearTimeout(_playLockTimer); _playLockTimer = null; }
+      if (_ncBufferWaitCleanup) { try { _ncBufferWaitCleanup(); } catch {} _ncBufferWaitCleanup = null; }
+      if (state._seekPostTimers.length) { state._seekPostTimers.forEach(t => clearTimeout(t)); state._seekPostTimers = []; }
       if (state.bbtabRetryRafId) { cancelAnimationFrame(state.bbtabRetryRafId); state.bbtabRetryRafId = null; }
       if (state.bbtabRetryTimer) { clearTimeout(state.bbtabRetryTimer); state.bbtabRetryTimer = null; }
       if (state.bbtabAudioSyncTimer) { clearTimeout(state.bbtabAudioSyncTimer); state.bbtabAudioSyncTimer = null; }
