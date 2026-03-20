@@ -1256,7 +1256,7 @@ _seekPostTimers: []
           vn.play().catch(() => {});
           _preemptiveFired = true;
         }
-        if (coupledMode && audio && !state.tabReturnAudioMuted) {
+        if (coupledMode && audio && !state.tabReturnAudioMuted && !isTabReturnImmune()) {
           try {
             const vt = Number(video.currentTime()) || 0;
             if (isFinite(vt) && Math.abs((audio.currentTime || 0) - vt) > 0.15) {
@@ -3448,6 +3448,11 @@ _seekPostTimers: []
 
   function safeSetAudioTime(t) {
     if (!audio) return;
+    // During immunity (tab return/hide/autoplay), never seek audio.
+    // Seeking flushes the decode buffer and causes replay artifacts.
+    // Let audio continue from its current position — the sync loop
+    // will correct drift after the immunity window expires.
+    if (isTabReturnImmune() && state.firstPlayCommitted) return;
     try {
       if (isFinite(t) && t >= 0) {
         // Never seek audio to 0 after first play unless explicitly restarting/looping
@@ -3862,12 +3867,13 @@ _seekPostTimers: []
       squelchAudioEvents(squelchMs);
 
       const audioActuallyPaused = audio.paused;
+      const isUserPlay = (now() - state.lastUserActionTime) < 2000;
       if (audioActuallyPaused) {
         cancelActiveFade();
         // Only mute before play if audio has played before AND we're not in
-        // tab-return immunity. During tab return, volume=0 causes an audible
-        // dip as multiple systems race to restart audio.
-        if (state.audioEverStarted && !isTabReturnImmune()) {
+        // tab-return immunity or user-initiated play. During tab return or user play,
+        // volume=0 causes an audible dip / perceived delay.
+        if (state.audioEverStarted && !isTabReturnImmune() && !isUserPlay) {
           audio.volume = 0;
         }
       }
@@ -3881,7 +3887,7 @@ _seekPostTimers: []
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
 
-      if (audioActuallyPaused) {
+      if (audioActuallyPaused && !isUserPlay) {
         fadeAudioIn(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {});
       } else {
         updateAudioGainImmediate();
@@ -4573,8 +4579,10 @@ _seekPostTimers: []
       // Let the browser buffer naturally while playing; the video will stall
       // briefly if needed, which is less jarring than an explicit pause+resume.
       const isStartupKick = state.startupPhase || !state.firstPlayCommitted;
+      const isRecentUserPlay = (now() - state.lastUserActionTime) < 2000;
       const blockOnBuffer =
       !isStartupKick &&
+      !isRecentUserPlay &&
       !bypassBufferForBgReturn &&
       !inBackground &&
       !startupSettleActive() &&
@@ -4894,8 +4902,8 @@ _seekPostTimers: []
       state.strictBufferHoldFrames = 0;
       state.strictBufferHoldConfirmed = false;
       if (!state.intendedPlaying || state.restarting) return;
-      // Final audio sync before resume
-      if (coupledMode && audio) {
+      // Final audio sync before resume — skip during tab-return immunity to avoid replay
+      if (coupledMode && audio && !isTabReturnImmune()) {
         const _vt = Number(video.currentTime()) || 0;
         if (isFinite(_vt)) { try { audio.currentTime = _vt; } catch {} }
       }
@@ -6416,6 +6424,8 @@ _seekPostTimers: []
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPhase = false;
+          // Immunity protects against browser re-pausing right after autoplay
+          state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 2000);
           markMediaAction("play");
           forceUnmuteForPlaybackIfAllowed();
           updateMediaSessionPlaybackState();
@@ -7409,7 +7419,13 @@ _seekPostTimers: []
         state.rapidPlayPauseResetAt = now();
         state.loopPreventionCooldownUntil = 0;
 
-        if (!state.firstPlayCommitted) {
+        // Only commit firstPlay from user-initiated or programmatic seeks.
+        // Browser-fired seeks (buffer adjustments, autoplay setup) should NOT
+        // commit — doing so prevents the play handler from accepting autoplay
+        // via the !firstPlayCommitted && wantsStartupAutoplay() path.
+        const _isUserOrProgrammaticSeek = state.pendingSeekTarget != null ||
+          (now() - state.lastUserActionTime) < 2000;
+        if (!state.firstPlayCommitted && _isUserOrProgrammaticSeek) {
           state.firstPlayCommitted = true;
           state.startupKickDone = true;
           state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
@@ -7664,7 +7680,7 @@ _seekPostTimers: []
         if (coupledMode && audio && !state.tabReturnAudioMuted) {
           const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
           const at = Number(audio.currentTime) || 0;
-          if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5) {
+          if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5 && !isTabReturnImmune()) {
             try { audio.currentTime = vt; } catch {}
           }
           if (audio.paused && !state.isProgrammaticAudioPause) {
@@ -7916,7 +7932,14 @@ _seekPostTimers: []
         updateLastKnownGoodVT();
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
-        if (state.intendedPlaying) startBgAudioKeepalive();
+        if (state.intendedPlaying) {
+          startBgAudioKeepalive();
+          // Set brief immunity so the capture-phase guard catches the browser's
+          // auto-pause that fires right after visibilitychange→hidden. Without
+          // this, there's a 200ms gap (until keepalive ticks) where media is
+          // silent. The guard restarts playback instantly — zero silence gap.
+          state.tabReturnImmuneUntil = now() + 1000;
+        }
 
         // Tab-switch protection: visibilitychange→hidden fires WITHOUT a preceding
         // blur event on tab switches (unlike alt-tab). Set the same transition
@@ -7971,7 +7994,11 @@ _seekPostTimers: []
       }
       // Start keepalive on blur too — alt-tab fires blur without always
       // changing visibilityState to "hidden" (e.g., overlay windows).
-      if (state.intendedPlaying) startBgAudioKeepalive();
+      if (state.intendedPlaying) {
+        startBgAudioKeepalive();
+        // Brief immunity so capture guard catches browser's auto-pause on blur
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + 1000);
+      }
       if (!platform.chromiumOnlyBrowser) return;
       state.lastFocusLoss = now();
       state.focusLossCount++;
