@@ -15,7 +15,7 @@ var versionclient = "youtube.player.web_20250917_22_RC00"
  */
 
 // "It takes a lot of hard work to make something simple." ~ Steve Jobs 
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const video = videojs("video", {
     controls: true,
     autoplay: true,
@@ -1100,6 +1100,9 @@ _seekPostTimers: []
       // --- THE play. Exactly one per element. ---
       _doSingleCleanPlay(myGen);
 
+      // --- Start watchdog to monitor recovery health ---
+      _startWatchdog(myGen);
+
       // --- Progressive retry: if play() didn't stick, try again ---
       RETRY_INTERVALS.forEach((delay, i) => {
         const tid = setTimeout(() => {
@@ -1309,8 +1312,7 @@ _seekPostTimers: []
       } catch {}
     }
 
-    // No-ops — rate nudge removed, but keep the function signature so
-    // callers don't break
+    // No-ops — rate nudge removed
     function _stopRateNudge() {
       state.audioRateNudgeActive = false;
       state.audioRateNudgeUntil = 0;
@@ -1324,6 +1326,7 @@ _seekPostTimers: []
       _phaseAt = now();
       _stopRateNudge();
       _clearAllTimers();
+      _stopWatchdog();
     }
 
     // -----------------------------------------------------------------------
@@ -1333,6 +1336,7 @@ _seekPostTimers: []
       _recoveryGen++;
       _stopRateNudge();
       _clearAllTimers();
+      _stopWatchdog();
       _phase = PHASE_IDLE;
       _phaseAt = now();
     }
@@ -1345,6 +1349,170 @@ _seekPostTimers: []
       if (_warmFadeTimer) { clearTimeout(_warmFadeTimer); _warmFadeTimer = null; }
       _retryTimers.forEach(t => clearTimeout(t));
       _retryTimers = [];
+    }
+
+    // -----------------------------------------------------------------------
+    // WATCHDOG — heartbeat monitor that detects if recovery broke something
+    // -----------------------------------------------------------------------
+    // The watchdog runs every 500ms during RECOVERING and SETTLING. It checks
+    // for conditions that indicate something went wrong:
+    //   1. Audio paused when it shouldn't be (disconnected)
+    //   2. Video paused when it shouldn't be
+    //   3. Audio volume stuck at 0 (warm fade failed)
+    //   4. Both elements paused (total playback failure)
+    //   5. Phase stuck for too long (state machine deadlock)
+    //   6. Audio position frozen (decoder stalled)
+    // If any of these are detected, the watchdog takes corrective action
+    // immediately rather than waiting for the next retry timer.
+    let _watchdogId = null;
+    let _lastWatchdogAudioPos = 0;
+    let _audioFrozenCount = 0;
+
+    function _startWatchdog(gen) {
+      _stopWatchdog();
+      _lastWatchdogAudioPos = 0;
+      _audioFrozenCount = 0;
+      _watchdogId = setInterval(() => {
+        if (_recoveryGen !== gen) { _stopWatchdog(); return; }
+        if (!state.intendedPlaying) { _stopWatchdog(); return; }
+        _watchdogTick(gen);
+      }, 500);
+    }
+
+    function _stopWatchdog() {
+      if (_watchdogId) { clearInterval(_watchdogId); _watchdogId = null; }
+      _audioFrozenCount = 0;
+    }
+
+    function _watchdogTick(gen) {
+      if (_recoveryGen !== gen) return;
+      if (!state.intendedPlaying) return;
+
+      const vn = getVideoNode();
+      const videoPaused = vn ? vn.paused : true;
+      const audioPaused = coupledMode && audio ? audio.paused : false;
+      const audioVol = coupledMode && audio ? audio.volume : 1;
+
+      // --- Check 1: Both paused — total failure. Force restart. ---
+      if (videoPaused && audioPaused) {
+        _consecutiveFailures++;
+        _emergencyRestart(gen);
+        return;
+      }
+
+      // --- Check 2: Audio paused but video playing — audio disconnected ---
+      if (!videoPaused && audioPaused && coupledMode && audio) {
+        // Clear any stale blocks that might be preventing audio start
+        state.isProgrammaticAudioPause = false;
+        state.videoStallAudioPaused = false;
+        state.stallAudioResumeHoldUntil = 0;
+        state.audioPauseUntil = 0;
+        state.audioEventsSquelchedUntil = 0;
+        state.audioPlayInFlight = null;
+        DONTMAKEITDOUBLEPLAY.resetAll();
+        // Re-play audio
+        try { audio.play().catch(() => {}); } catch {}
+        // Schedule a volume fix
+        setTimeout(() => {
+          if (_recoveryGen !== gen || !state.intendedPlaying) return;
+          if (!audio.paused && audio.volume < 0.01) {
+            _microFadeAudioUp(targetVolFromVideo(), gen);
+          }
+        }, 150);
+        return;
+      }
+
+      // --- Check 3: Video paused but audio playing — video stalled ---
+      if (videoPaused && !audioPaused && vn) {
+        try { vn.play().catch(() => {}); } catch {}
+        return;
+      }
+
+      // --- Check 4: Audio volume stuck at 0 (warm fade failed or was killed) ---
+      if (coupledMode && audio && !audioPaused && audioVol < 0.01 && _phase !== PHASE_RECOVERING) {
+        // We're past recovery but volume is still 0 — fade was killed or never ran
+        const targetVol = targetVolFromVideo();
+        if (targetVol > 0.01) {
+          _microFadeAudioUp(targetVol, gen);
+        }
+      }
+
+      // --- Check 5: Audio position frozen (decoder stalled) ---
+      if (coupledMode && audio && !audioPaused) {
+        const currentPos = Number(audio.currentTime) || 0;
+        if (_lastWatchdogAudioPos > 0 && Math.abs(currentPos - _lastWatchdogAudioPos) < 0.01) {
+          _audioFrozenCount++;
+          if (_audioFrozenCount >= 4) { // 2 seconds of frozen audio
+            // Audio is "playing" but position isn't moving — decoder is stalled.
+            // Pause and re-play to force decoder reset.
+            _audioFrozenCount = 0;
+            try {
+              audio.pause();
+              audio.volume = 0;
+            } catch {}
+            setTimeout(() => {
+              if (_recoveryGen !== gen || !state.intendedPlaying) return;
+              try { audio.play().catch(() => {}); } catch {}
+              setTimeout(() => {
+                if (_recoveryGen !== gen || !state.intendedPlaying) return;
+                _microFadeAudioUp(targetVolFromVideo(), gen);
+              }, 150);
+            }, 50);
+            return;
+          }
+        } else {
+          _audioFrozenCount = 0;
+        }
+        _lastWatchdogAudioPos = currentPos;
+      }
+
+      // --- Check 6: Phase stuck too long (state machine deadlock) ---
+      const phaseAge = now() - _phaseAt;
+      if (_phase === PHASE_RECOVERING && phaseAge > RECOVERY_DURATION_MS + 2000) {
+        // Recovery should have transitioned to settling by now — force it
+        _enterSettling(gen);
+      } else if (_phase === PHASE_SETTLING && phaseAge > SETTLING_DURATION_MS + 2000) {
+        // Settling should have gone idle by now — force it
+        _goIdle();
+      }
+    }
+
+    // Emergency restart — clear everything and force play from scratch
+    function _emergencyRestart(gen) {
+      if (_recoveryGen !== gen) return;
+
+      // Clear ALL possible blocks
+      state.isProgrammaticAudioPause = false;
+      state.isProgrammaticVideoPause = false;
+      state.videoStallAudioPaused = false;
+      state.stallAudioResumeHoldUntil = 0;
+      state.stallAudioPausedSince = 0;
+      state.audioPauseUntil = 0;
+      state.audioPlayUntil = 0;
+      state.audioEventsSquelchedUntil = 0;
+      state.audioPlayInFlight = null;
+      state.strictBufferHold = false;
+      state.bufferHoldSince = 0;
+      state.videoWaiting = false;
+      cancelActiveFade();
+      DONTMAKEITDOUBLEPLAY.resetAll();
+
+      // Force play both
+      const vn = getVideoNode();
+      if (vn && vn.paused) {
+        try { vn.play().catch(() => {}); } catch {}
+      }
+      if (coupledMode && audio) {
+        try { audio.volume = 0; } catch {}
+        if (audio.paused) {
+          try { audio.play().catch(() => {}); } catch {}
+        }
+        // Fade up after decoder starts
+        setTimeout(() => {
+          if (_recoveryGen !== gen || !state.intendedPlaying) return;
+          _microFadeAudioUp(targetVolFromVideo(), gen);
+        }, 150);
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -3488,6 +3656,25 @@ _seekPostTimers: []
       state.chromiumPauseGuardUntil = 0;
       state.chromiumBgSettlingUntil = 0;
       state.chromiumAudioStartLockUntil = Math.max(state.chromiumAudioStartLockUntil, now() + 120);
+    }
+    // Immediately kick audio — don't wait for the play event → playTogether chain.
+    // The video.on("play") event fires asynchronously after Video.js processes the
+    // click, adding 50-200ms of perceived delay. By starting audio here, it begins
+    // at the same time as video. playTogether() will see audio already playing and
+    // skip the audio section (no double-play).
+    if (coupledMode && audio && audio.paused) {
+      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+      // Sync audio position to video before playing
+      if (isFinite(vt) && Math.abs((Number(audio.currentTime) || 0) - vt) > 0.15) {
+        try { audio.currentTime = vt; } catch {}
+      }
+      try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
+      try {
+        const vol = targetVolFromVideo();
+        if (audio.volume < vol * 0.5) audio.volume = vol;
+      } catch {}
+      try { audio.play().catch(() => {}); } catch {}
+      state.audioEverStarted = true;
     }
   }
   function userPauseIntentActive() { return now() < state.userPauseUntil; }
