@@ -954,6 +954,412 @@ _seekPostTimers: []
     return { install, reset, resetAll };
   })();
 
+  // ---------------------------------------------------------------------------
+  // --- NotMakePlayBackFixingNoticable (NMPBFN)
+  // ---------------------------------------------------------------------------
+  // THE single authority for background playback recovery. Every other system
+  // (sync loop, retry shots, keepalive, pause handlers, seek handlers, volume
+  // faders) defers to this during recovery. This eliminates the "too many cooks"
+  // problem where 8+ systems all fire play/pause/seek/volume within 0-3s of
+  // tab return, causing audible double-plays, silences, and stutters.
+  //
+  // How it works — 4-phase state machine:
+  //
+  //   IDLE ──blur/hide──▶ GUARDING ──visible/focus──▶ RECOVERING ──3s──▶ SETTLING ──5s──▶ IDLE
+  //                        │                           │                  │
+  //                        │ keepalive active           │ single play()    │ rate nudge sync
+  //                        │ snapshot state              │ block everything │ inaudible correction
+  //                        │ immunity active             │ no seeks         │ no seeks
+  //                        ▼                           ▼                  ▼
+  //                      user pause ──────────────────▶ abort() ──▶ IDLE
+  //
+  // GUARDING: Tab is hidden/blurred. Keepalive runs. State is snapshotted.
+  //           Immunity is active so capture guard catches browser pauses.
+  //
+  // RECOVERING: Tab just returned. Exactly ONE play() is called per element.
+  //             ALL other systems are blocked: no seeks, no pauses, no volume
+  //             changes, no sync loop, no retry shots. The capture guard +
+  //             DONTMAKEITDOUBLEPLAY handle any browser re-pauses.
+  //
+  // SETTLING: Recovery play succeeded. Now we need to sync audio/video
+  //           positions. Instead of seeking (which causes audible glitches),
+  //           we adjust audio.playbackRate by ±2-3%. At 1.03x, audio catches
+  //           up by ~30ms per second. Human ear can't detect ±3% rate change.
+  //           After positions converge (<50ms drift), rate resets to 1.0.
+  //
+  // IDLE: Normal operation. All systems run normally.
+  //
+  const NotMakePlayBackFixingNoticable = (() => {
+    // --- Phase constants
+    const PHASE_IDLE       = 0;
+    const PHASE_GUARDING   = 1;
+    const PHASE_RECOVERING = 2;
+    const PHASE_SETTLING   = 3;
+
+    // --- Timing constants
+    const RECOVERY_DURATION_MS   = 3000;  // How long RECOVERING phase lasts
+    const SETTLING_DURATION_MS   = 8000;  // How long SETTLING phase lasts
+    const RATE_NUDGE_INTERVAL_MS = 300;   // How often to check drift and nudge rate
+    const RATE_NUDGE_AMOUNT      = 0.03;  // ±3% rate adjustment (inaudible)
+    const DRIFT_TOLERANCE        = 0.05;  // 50ms — close enough, stop nudging
+    const BIG_DRIFT_THRESHOLD    = 2.0;   // If drift > 2s, seek instead of nudge
+    const RETRY_INTERVALS        = [200, 500, 1000, 2000]; // Progressive retry delays
+    const PLAY_CHECK_MS          = 100;   // How soon to verify play() worked
+
+    // --- State
+    let _phase       = PHASE_IDLE;
+    let _phaseAt     = 0;
+    let _snapshotVt  = 0;     // Video position when we went to background
+    let _snapshotAt  = 0;     // Audio position when we went to background
+    let _snapshotVol = 1;     // Audio volume when we went to background
+    let _snapshotVideoVol = 1; // Video volume when we went to background
+    let _recoveryGen = 0;     // Incremented each recovery — stale timers check this
+    let _settleTimer = null;
+    let _rateNudgeId = null;
+    let _retryTimers = [];
+    let _playAttempts = 0;
+    let _lastRecoveryAt = 0;
+    let _consecutiveFailures = 0;
+
+    // -----------------------------------------------------------------------
+    // PHASE 1: GUARDING — tab is going away
+    // -----------------------------------------------------------------------
+    function onGoBackground() {
+      // Don't re-enter if already guarding
+      if (_phase === PHASE_GUARDING) return;
+
+      _phase = PHASE_GUARDING;
+      _phaseAt = now();
+
+      // Snapshot current playback state so we can restore it perfectly
+      _takeSnapshot();
+
+      // Ensure immunity is active so capture guard catches browser pauses
+      if (state.intendedPlaying) {
+        state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + RECOVERY_DURATION_MS);
+      }
+    }
+
+    function _takeSnapshot() {
+      try {
+        _snapshotVt = Number(video.currentTime()) || 0;
+      } catch { _snapshotVt = 0; }
+      if (coupledMode && audio) {
+        try { _snapshotAt = Number(audio.currentTime) || 0; } catch { _snapshotAt = 0; }
+        try { _snapshotVol = audio.volume; } catch { _snapshotVol = 1; }
+        try { _snapshotVideoVol = Number(video.volume()) || 1; } catch { _snapshotVideoVol = 1; }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // PHASE 2: RECOVERING — tab just returned, resume playback
+    // -----------------------------------------------------------------------
+    function onReturn() {
+      if (!state.intendedPlaying && !state.resumeOnVisible &&
+          !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
+
+      // If already recovering from a very recent return (<500ms), skip
+      if (_phase === PHASE_RECOVERING && (now() - _phaseAt) < 500) return;
+
+      _phase = PHASE_RECOVERING;
+      _phaseAt = now();
+      _recoveryGen++;
+      _playAttempts = 0;
+      _lastRecoveryAt = now();
+      const myGen = _recoveryGen;
+
+      // Clear any old timers
+      _clearAllTimers();
+
+      // Set immunity for the full recovery window
+      state.tabReturnImmuneUntil = Math.max(state.tabReturnImmuneUntil, now() + RECOVERY_DURATION_MS);
+
+      // Reset play dedup so our play() calls go through
+      DONTMAKEITDOUBLEPLAY.resetAll();
+
+      // Reset rapid play/pause counters — browser-driven events during
+      // recovery must not trigger loop detection
+      state.rapidPlayPauseCount = 0;
+      state.rapidPlayPauseResetAt = now();
+      state.rapidToggleDetected = false;
+      state.rapidToggleUntil = 0;
+      state.loopPreventionCooldownUntil = 0;
+
+      // Clear alt-tab transition flags
+      state.altTabTransitionActive = false;
+      state.altTabTransitionUntil = 0;
+
+      // Clear any audio pause locks that would block our play
+      state.isProgrammaticAudioPause = false;
+      state.isProgrammaticVideoPause = false;
+      state.audioPauseUntil = 0;
+      state.audioPlayUntil = 0;
+      state.audioEventsSquelchedUntil = 0;
+      state.audioPlayInFlight = null;
+
+      // --- THE play. Exactly one per element. ---
+      _doSingleCleanPlay(myGen);
+
+      // --- Progressive retry: if play() didn't stick, try again ---
+      RETRY_INTERVALS.forEach((delay, i) => {
+        const tid = setTimeout(() => {
+          if (_recoveryGen !== myGen) return;
+          if (_phase !== PHASE_RECOVERING) return;
+          if (!state.intendedPlaying) return;
+          _verifyAndRetryPlay(myGen, i);
+        }, delay);
+        _retryTimers.push(tid);
+      });
+
+      // --- Transition to SETTLING after recovery window ---
+      _settleTimer = setTimeout(() => {
+        if (_recoveryGen !== myGen) return;
+        _enterSettling(myGen);
+      }, RECOVERY_DURATION_MS);
+    }
+
+    // The ONE clean play call. No seeks. No volume changes. Just play().
+    function _doSingleCleanPlay(gen) {
+      if (_recoveryGen !== gen) return;
+      _playAttempts++;
+      try {
+        // Restore audio volume to what it was (in case something zeroed it)
+        if (coupledMode && audio) {
+          const targetVol = _snapshotVol > 0.01 ? _snapshotVol : targetVolFromVideo();
+          try { if (Math.abs(audio.volume - targetVol) > 0.02) audio.volume = targetVol; } catch {}
+          try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
+        }
+
+        // Play video
+        const vn = getVideoNode();
+        if (vn && vn.paused) {
+          try { vn.play().catch(() => {}); } catch {}
+        }
+
+        // Play audio
+        if (coupledMode && audio && audio.paused) {
+          try { audio.play().catch(() => {}); } catch {}
+        }
+
+        // Ensure video isn't muted (user controls volume via VideoJS bar)
+        try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
+      } catch {}
+    }
+
+    // Verify play worked. If not, retry with reset.
+    function _verifyAndRetryPlay(gen, attempt) {
+      if (_recoveryGen !== gen) return;
+      if (!state.intendedPlaying) return;
+
+      const vn = getVideoNode();
+      const videoPaused = vn ? vn.paused : true;
+      const audioPaused = coupledMode && audio ? audio.paused : false;
+
+      if (!videoPaused && !audioPaused) {
+        // Both playing — recovery succeeded
+        _consecutiveFailures = 0;
+        return;
+      }
+
+      // Something is still paused. Clear any blocks and retry.
+      state.isProgrammaticAudioPause = false;
+      state.isProgrammaticVideoPause = false;
+      state.audioPauseUntil = 0;
+      state.audioPlayUntil = 0;
+      state.audioEventsSquelchedUntil = 0;
+      state.audioPlayInFlight = null;
+
+      // Reset dedup so retry play goes through
+      DONTMAKEITDOUBLEPLAY.resetAll();
+
+      // Retry
+      _doSingleCleanPlay(gen);
+
+      // After last retry, if still failing, try a harder approach
+      if (attempt >= RETRY_INTERVALS.length - 1) {
+        setTimeout(() => {
+          if (_recoveryGen !== gen) return;
+          const vStillPaused = getVideoPaused();
+          const aStillPaused = coupledMode && audio && audio.paused;
+          if (vStillPaused || aStillPaused) {
+            _consecutiveFailures++;
+            // Hard reset: cancel all fades, clear all locks, force play
+            cancelActiveFade();
+            state.isProgrammaticAudioPause = false;
+            state.isProgrammaticVideoPause = false;
+            state.strictBufferHold = false;
+            state.videoStallAudioPaused = false;
+            state.stallAudioResumeHoldUntil = 0;
+            state.audioPlayGeneration++;
+            if (coupledMode && audio) {
+              try { audio.volume = targetVolFromVideo(); } catch {}
+              try { if (audio.muted) audio.muted = false; } catch {}
+            }
+            DONTMAKEITDOUBLEPLAY.resetAll();
+            _doSingleCleanPlay(gen);
+          }
+        }, 500);
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // PHASE 3: SETTLING — playback resumed, sync positions via rate nudge
+    // -----------------------------------------------------------------------
+    function _enterSettling(gen) {
+      if (_recoveryGen !== gen) return;
+      _phase = PHASE_SETTLING;
+      _phaseAt = now();
+
+      // Start rate nudge sync — completely inaudible drift correction
+      _startRateNudge(gen);
+
+      // After settling period, go idle
+      _settleTimer = setTimeout(() => {
+        if (_recoveryGen !== gen) return;
+        _goIdle();
+      }, SETTLING_DURATION_MS);
+    }
+
+    // Rate nudge: instead of seeking audio to match video (which causes an
+    // audible pop/silence), we slightly speed up or slow down audio playback.
+    // At ±3%, audio catches up by ~30ms per second. A 0.5s drift corrects
+    // in ~17 seconds. This is completely inaudible — human ear can't detect
+    // ±3% speed change, especially on speech/music.
+    //
+    // If drift is >2s (e.g., long background session), we do ONE quiet seek
+    // at the start of settling (audio is already playing, so the seek just
+    // repositions the decode buffer).
+    function _startRateNudge(gen) {
+      if (!coupledMode || !audio) return;
+      _stopRateNudge();
+
+      // Check if we need a one-time catch-up seek for large drift
+      try {
+        const vt = Number(video.currentTime()) || 0;
+        const at = Number(audio.currentTime) || 0;
+        if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > BIG_DRIFT_THRESHOLD) {
+          // Large drift — one clean seek. Audio is playing so this just
+          // repositions; the decode buffer refills from the new position.
+          // We do this at the start of settling (not recovering) so
+          // there's already been 3s of clean playback.
+          if (at > vt) {
+            // Audio ahead — move video to audio (no audio glitch)
+            try { const _vn = getVideoNode(); if (_vn) _vn.currentTime = at; } catch {}
+          } else {
+            // Audio behind — seek audio to video
+            try { audio.currentTime = vt; } catch {}
+          }
+        }
+      } catch {}
+
+      // Start periodic rate nudge
+      _rateNudgeId = setInterval(() => {
+        if (_recoveryGen !== gen) { _stopRateNudge(); return; }
+        if (!state.intendedPlaying) { _stopRateNudge(); return; }
+        if (!audio || audio.paused || getVideoPaused()) return;
+        // Don't nudge during user-initiated seeks
+        if (state.seeking || state.seekBuffering) return;
+
+        try {
+          const vt = Number(video.currentTime()) || 0;
+          const at = Number(audio.currentTime) || 0;
+          if (!isFinite(vt) || !isFinite(at)) return;
+
+          const drift = at - vt; // positive = audio ahead, negative = audio behind
+          const baseRate = Number(video.playbackRate()) || 1;
+
+          if (Math.abs(drift) <= DRIFT_TOLERANCE) {
+            // Synced — lock to base rate
+            if (Math.abs(audio.playbackRate - baseRate) > 0.001) {
+              audio.playbackRate = baseRate;
+              state.audioRateNudgeActive = false;
+            }
+          } else if (drift > 0) {
+            // Audio ahead — slow it down
+            audio.playbackRate = baseRate * (1 - RATE_NUDGE_AMOUNT);
+            state.audioRateNudgeActive = true;
+            state.audioRateNudgeUntil = now() + RATE_NUDGE_INTERVAL_MS + 100;
+          } else {
+            // Audio behind — speed it up
+            audio.playbackRate = baseRate * (1 + RATE_NUDGE_AMOUNT);
+            state.audioRateNudgeActive = true;
+            state.audioRateNudgeUntil = now() + RATE_NUDGE_INTERVAL_MS + 100;
+          }
+        } catch {}
+      }, RATE_NUDGE_INTERVAL_MS);
+    }
+
+    function _stopRateNudge() {
+      if (_rateNudgeId) { clearInterval(_rateNudgeId); _rateNudgeId = null; }
+      // Reset to base rate
+      try {
+        if (audio) {
+          const baseRate = Number(video.playbackRate()) || 1;
+          audio.playbackRate = baseRate;
+          state.audioRateNudgeActive = false;
+          state.audioRateNudgeUntil = 0;
+        }
+      } catch {}
+    }
+
+    // -----------------------------------------------------------------------
+    // IDLE — normal operation
+    // -----------------------------------------------------------------------
+    function _goIdle() {
+      _phase = PHASE_IDLE;
+      _phaseAt = now();
+      _stopRateNudge();
+      _clearAllTimers();
+    }
+
+    // -----------------------------------------------------------------------
+    // ABORT — user explicitly paused, or error recovery
+    // -----------------------------------------------------------------------
+    function abort() {
+      _recoveryGen++;
+      _stopRateNudge();
+      _clearAllTimers();
+      _phase = PHASE_IDLE;
+      _phaseAt = now();
+    }
+
+    // -----------------------------------------------------------------------
+    // Timer management
+    // -----------------------------------------------------------------------
+    function _clearAllTimers() {
+      if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
+      _retryTimers.forEach(t => clearTimeout(t));
+      _retryTimers = [];
+    }
+
+    // -----------------------------------------------------------------------
+    // Query functions — used by other systems to know when to back off
+    // -----------------------------------------------------------------------
+    function isRecovering()  { return _phase === PHASE_RECOVERING; }
+    function isSettling()    { return _phase === PHASE_SETTLING; }
+    function isGuarding()    { return _phase === PHASE_GUARDING; }
+    function isActive()      { return _phase >= PHASE_RECOVERING; }
+
+    // Should other systems block their seek/pause/volume operations?
+    function shouldBlockSeek()    { return _phase === PHASE_RECOVERING; }
+    function shouldBlockPause()   { return _phase === PHASE_RECOVERING; }
+    function shouldBlockVolume()  { return _phase === PHASE_RECOVERING; }
+    function shouldBlockSync()    { return _phase === PHASE_RECOVERING || _phase === PHASE_SETTLING; }
+
+    // How long since we started recovering?
+    function recoveryAge() { return _phase >= PHASE_RECOVERING ? now() - _lastRecoveryAt : Infinity; }
+
+    // Phase label for debugging
+    function getPhaseLabel() { return ['IDLE','GUARDING','RECOVERING','SETTLING'][_phase] || '?'; }
+
+    return {
+      onGoBackground, onReturn, abort,
+      isRecovering, isSettling, isGuarding, isActive,
+      shouldBlockSeek, shouldBlockPause, shouldBlockVolume, shouldBlockSync,
+      recoveryAge, getPhaseLabel,
+    };
+  })();
+
   // --- VisibilityGuard (VG)
   const VisibilityGuard = (() => {
     let _suppressUntil   = 0;
@@ -2862,11 +3268,12 @@ _seekPostTimers: []
       state.altTabTransitionActive = false;
       state.altTabTransitionUntil = 0;
 
-      // Single clean resume — play video and audio ONCE. Duplicate calls
-      // (visibilitychange + focus fire within ms of each other) skip
-      // instantPlay to avoid double decode-buffer flush / double play().
+      // Single clean resume — delegate to NotMakePlayBackFixingNoticable for
+      // comprehensive recovery. It handles play, retry, drift correction, and
+      // blocks all competing systems. Duplicate calls (visibilitychange + focus
+      // fire within ms of each other) are deduped inside onReturn().
       if (this.shouldResume() && !isDuplicate) {
-        this.instantPlay();
+        NotMakePlayBackFixingNoticable.onReturn();
       }
     },
 
@@ -2889,6 +3296,7 @@ _seekPostTimers: []
       state.tabReturnImmuneUntil = 0;
       disengagePauseIntercept();
       cancelTabReturnAudioMute();
+      NotMakePlayBackFixingNoticable.abort();
     },
 
     // True while the tab-return immunity window is still open
@@ -3542,7 +3950,7 @@ _seekPostTimers: []
     // Seeking flushes the decode buffer and causes replay artifacts.
     // Let audio continue from its current position — the sync loop
     // will correct drift after the immunity window expires.
-    if (isTabReturnImmune() && state.firstPlayCommitted) return;
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSeek()) && state.firstPlayCommitted) return;
     try {
       if (isFinite(t) && t >= 0) {
         // Never seek audio to 0 after first play unless explicitly restarting/looping
@@ -3560,9 +3968,9 @@ _seekPostTimers: []
 
   async function quietSeekAudio(t) {
     if (!audio || !coupledMode) return;
-    // During immunity, never seek audio — seeking flushes the decode buffer
-    // and causes audible replay artifacts.
-    if (isTabReturnImmune() && state.firstPlayCommitted) return;
+    // During immunity or NMPBFN recovery, never seek audio — seeking flushes
+    // the decode buffer and causes audible replay artifacts.
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSeek()) && state.firstPlayCommitted) return;
     try {
       if (!isFinite(t) || t < 0) return;
       const timeDiff = Math.abs((audio.currentTime || 0) - t);
@@ -3621,6 +4029,8 @@ _seekPostTimers: []
 
   function resetAudioPlaybackRate() {
     if (!audio) return;
+    // Don't reset rate during NMPBFN settling — it's doing inaudible drift correction
+    if (NotMakePlayBackFixingNoticable.isSettling()) return;
     try {
       const baseRate = Number(video.playbackRate()) || 1;
       if (Math.abs((audio.playbackRate || baseRate) - baseRate) > 0.0001) {
@@ -3638,6 +4048,8 @@ _seekPostTimers: []
   function enforcePlaybackRateSync() {
     if (!coupledMode || !audio) return;
     if (state.audioRateNudgeActive && now() < state.audioRateNudgeUntil) return;
+    // Don't fight with NMPBFN rate nudge during settling phase
+    if (NotMakePlayBackFixingNoticable.isSettling()) return;
     try {
       const targetRate = Number(video.playbackRate()) || 1;
       const currentRate = Number(audio.playbackRate) || 1;
@@ -3842,11 +4254,9 @@ _seekPostTimers: []
   }
 
   function execProgrammaticVideoPause() {
-    // Hard lockout: during immunity, never programmatically pause video.
-    // The capture-phase guard handles any browser pauses. Without this,
-    // the sync loop, buffer checks, and retry systems all compete to
-    // pause/resume, causing the visible play-pause stutter.
-    if (isTabReturnImmune() && state.intendedPlaying &&
+    // Hard lockout: during immunity or NMPBFN recovery, never programmatically
+    // pause video. The capture-phase guard handles any browser pauses.
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockPause()) && state.intendedPlaying &&
         !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) return;
     state.isProgrammaticVideoPause = true;
     try { video.pause(); } catch {}
@@ -3902,8 +4312,8 @@ _seekPostTimers: []
 
   async function execProgrammaticAudioPause(ms = 500) {
     if (!coupledMode || !audio) return;
-    // Hard lockout: during immunity, never programmatically pause audio.
-    if (isTabReturnImmune() && state.intendedPlaying &&
+    // Hard lockout: during immunity or NMPBFN recovery, never programmatically pause audio.
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockPause()) && state.intendedPlaying &&
         !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) return;
     const until = now() + Math.max(300, Number(ms) || 0);
     state.audioPauseUntil = Math.max(state.audioPauseUntil, until);
@@ -4102,7 +4512,7 @@ _seekPostTimers: []
 
   async function kickAudio() {
     if (!coupledMode) return;
-    if (isTabReturnImmune() && state.intendedPlaying) return;
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.isActive()) && state.intendedPlaying) return;
     try {
       const vt = Number(video.currentTime());
       const at = Number(audio.currentTime);
@@ -4152,8 +4562,8 @@ _seekPostTimers: []
     if (!platform.useBgControllerRetry) return;
     if (mediaSessionForcedPauseActive()) return;
     if (userPauseLockActive()) return;
-    // During immunity, instantPlay() + capture guard handle everything.
-    if (isTabReturnImmune() && state.intendedPlaying) return;
+    // During immunity or NMPBFN recovery, the recovery system handles everything.
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.isRecovering()) && state.intendedPlaying) return;
     // Don't schedule bgResumeRetry if the wakeup timer is already pending —
     // competing resume attempts cause the visible play→pause stutter on tab return.
     if (state.wakeupTimer) return;
@@ -4225,7 +4635,7 @@ _seekPostTimers: []
   async function seamlessBgCatchUp() {
     if (!coupledMode || !platform.useBgControllerRetry) return;
     if (!state.intendedPlaying) return;
-    if (isTabReturnImmune()) return;
+    if (isTabReturnImmune() || NotMakePlayBackFixingNoticable.isActive()) return;
     if (state.restarting || state.seeking || state.syncing) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
     if (now() < state.bgCatchUpCooldownUntil) return;
@@ -5540,11 +5950,11 @@ _seekPostTimers: []
     state.syncScheduledAt = 0;
     enforcePlaybackRateSync();
 
-    // Hard lockout: during immunity, don't run the sync loop. The sync loop
-    // detects state mismatches (video paused, audio playing, etc.) and "fixes" them
-    // by pausing/resuming/seeking, which competes with instantPlay() and the
-    // capture-phase guard, causing play-pause stutter. Just reschedule for later.
-    if (isTabReturnImmune() && state.intendedPlaying && state.firstPlayCommitted) {
+    // Hard lockout: during immunity OR NMPBFN recovery/settling, don't run the
+    // sync loop. The sync loop detects state mismatches and "fixes" them by
+    // pausing/resuming/seeking, which competes with the recovery system.
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSync()) &&
+        state.intendedPlaying && state.firstPlayCommitted) {
       scheduleSync(500);
       return;
     }
@@ -7840,9 +8250,9 @@ _seekPostTimers: []
   function executeSeamlessWakeup() {
     if (!state.intendedPlaying && !state.resumeOnVisible &&
         !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
-    // During immunity, instantPlay() + capture guard handle everything.
+    // During immunity or NMPBFN recovery, the recovery system handles everything.
     // Don't fire competing wakeup/retry machinery.
-    if (isTabReturnImmune() && state.firstPlayCommitted) return;
+    if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.isRecovering()) && state.firstPlayCommitted) return;
     // Cancel and replace any existing wakeup timer (don't silently drop)
     if (state.wakeupTimer) { clearTimeout(state.wakeupTimer); state.wakeupTimer = null; }
 
@@ -8058,6 +8468,7 @@ _seekPostTimers: []
         // Let tab-return manager clean up: bumps gen, clears immunity,
         // disengages intercept, cancels audio mute, clears timers, snapshots QRO.
         SmoothTabWelcomeBackManagement.onTabLeave();
+        NotMakePlayBackFixingNoticable.onGoBackground();
         updateLastKnownGoodVT();
         VisibilityGuard.onTabHide();
         BackgroundPlaybackManager.onBecomeBackground();
@@ -8124,6 +8535,7 @@ _seekPostTimers: []
       }
       // Start keepalive on blur too — alt-tab fires blur without always
       // changing visibilityState to "hidden" (e.g., overlay windows).
+      NotMakePlayBackFixingNoticable.onGoBackground();
       if (state.intendedPlaying) {
         startBgAudioKeepalive();
         // Immunity so capture guard catches browser's auto-pause on blur/alt-tab
