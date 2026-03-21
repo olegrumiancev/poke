@@ -573,10 +573,11 @@ _seekPostTimers: []
       return _origAudioPlay();
     };
   }
-  // Gate audio.currentTime — during seeking, only allow writes from the seeking/seeked handlers
-  // (they set _allowAudioTimeWrite=true). All other writes are blocked to prevent desync.
+  // Gate audio.currentTime — during seeking, only allow writes from seek handlers
+  // (they set _allowAudioTimeWrite=true). Safety: if state.seeking stuck >10s, force-clear.
   if (audio) {
     state._allowAudioTimeWrite = false;
+    state._seekStartedAt = 0;
     const _audioCtDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
     if (_audioCtDesc && _audioCtDesc.set) {
       const _origSet = _audioCtDesc.set;
@@ -584,7 +585,18 @@ _seekPostTimers: []
       Object.defineProperty(audio, "currentTime", {
         get() { return _origGet.call(this); },
         set(v) {
-          if ((state.seeking || state.seekBuffering) && !state._allowAudioTimeWrite) return;
+          if ((state.seeking || state.seekBuffering) && !state._allowAudioTimeWrite) {
+            // Safety: if seeking stuck for >10s, force-clear and allow the write
+            if (state._seekStartedAt > 0 && (performance.now() - state._seekStartedAt) > 10000) {
+              state.seeking = false;
+              state.seekBuffering = false;
+              state.seekResumeInFlight = false;
+              state.seekCompleted = true; state._seekStartedAt = 0;
+              state._seekStartedAt = 0;
+            } else {
+              return;
+            }
+          }
           _origSet.call(this, v);
         },
         configurable: true
@@ -3971,9 +3983,10 @@ _seekPostTimers: []
   function updateAudioGainImmediate() {
     if (!audio) return;
     if (state.audioFading) return;
+    // Don't fight NMPBFN's warm-start fade during recovery
+    if (NotMakePlayBackFixingNoticable.isActive()) return;
     try {
       const target = clamp01(targetVolFromVideo());
-      // During tab-return, don't jump volume — fade to prevent pop
       if (inBgReturnGrace() && audio.volume < target - 0.05) {
         softUnmuteAudio(120).catch(() => {});
         return;
@@ -4573,12 +4586,6 @@ _seekPostTimers: []
       const isUserPlay = (now() - state.lastUserActionTime) < 2000;
       if (audioActuallyPaused) {
         cancelActiveFade();
-        // Only mute before play if audio has played before AND we're not in
-        // tab-return immunity or user-initiated play. During tab return or user play,
-        // volume=0 causes an audible dip / perceived delay.
-        if (state.audioEverStarted && !isTabReturnImmune() && !isUserPlay) {
-          audio.volume = 0;
-        }
       }
 
       const p = audio.play();
@@ -5560,22 +5567,28 @@ _seekPostTimers: []
     const vNode = getVideoNode();
     const vRS = Number(vNode?.readyState || 0);
 
-    // Also check buffered ranges at the seek position
+    // Check buffered ranges at seek position for BOTH video and audio
     const seekPos = Number(video.currentTime()) || 0;
-    let hasBufferAtPos = false;
+    let videoBuffered = false;
     try {
       const buf = vNode.buffered;
       for (let i = 0; i < buf.length; i++) {
-        if (buf.start(i) <= seekPos + 0.2 && buf.end(i) > seekPos) {
-          hasBufferAtPos = true;
-          break;
-        }
+        if (buf.start(i) <= seekPos + 0.2 && buf.end(i) > seekPos) { videoBuffered = true; break; }
       }
     } catch {}
+    let audioBuffered = !forCoupled || !audio;
+    if (forCoupled && audio) {
+      try {
+        const abuf = audio.buffered;
+        for (let i = 0; i < abuf.length; i++) {
+          if (abuf.start(i) <= seekPos + 0.5 && abuf.end(i) > seekPos) { audioBuffered = true; break; }
+        }
+      } catch {}
+    }
 
-    // If buffer covers the seek position, don't wait — readyState may briefly drop after seek
-    if (hasBufferAtPos) return false;
-    if (vRS >= HAVE_FUTURE_DATA) return false;
+    // Both tracks buffered → no need to wait
+    if (videoBuffered && audioBuffered) return false;
+    if (vRS >= HAVE_FUTURE_DATA && audioBuffered) return false;
 
     // Enter seek-buffering state
     state.seekBuffering = true;
@@ -5592,6 +5605,10 @@ _seekPostTimers: []
       try { vNode.removeEventListener("canplay", onReady); } catch {}
       try { vNode.removeEventListener("canplaythrough", onReady); } catch {}
       try { vNode.removeEventListener("playing", onReady); } catch {}
+      if (audio) {
+        try { audio.removeEventListener("canplay", onReady); } catch {}
+        try { audio.removeEventListener("canplaythrough", onReady); } catch {}
+      }
       try { clearTimeout(fallbackTimer); } catch {}
       try { clearInterval(pollTimer); } catch {}
       state.seekBuffering = false;
@@ -5630,23 +5647,49 @@ _seekPostTimers: []
     };
     const onReady = () => {
       const rs = Number(vNode?.readyState || 0);
-      if (rs >= HAVE_FUTURE_DATA) resume();
+      if (rs < HAVE_FUTURE_DATA) return;
+      // Also check audio is buffered before resuming
+      if (forCoupled && audio) {
+        const pos = Number(video.currentTime()) || 0;
+        let aBuf = false;
+        try {
+          const abuf = audio.buffered;
+          for (let i = 0; i < abuf.length; i++) {
+            if (abuf.start(i) <= pos + 0.5 && abuf.end(i) > pos) { aBuf = true; break; }
+          }
+        } catch {}
+        if (!aBuf && (Number(audio.readyState) || 0) < HAVE_FUTURE_DATA) return;
+      }
+      resume();
     };
     try { vNode.addEventListener("canplay", onReady, { passive: true }); } catch {}
     try { vNode.addEventListener("canplaythrough", onReady, { passive: true }); } catch {}
     try { vNode.addEventListener("playing", onReady, { passive: true }); } catch {}
+    // Also listen for audio ready events in coupled mode
+    if (forCoupled && audio) {
+      try { audio.addEventListener("canplay", onReady, { passive: true }); } catch {}
+      try { audio.addEventListener("canplaythrough", onReady, { passive: true }); } catch {}
+    }
     const pollTimer = setInterval(() => {
       if (done) { clearInterval(pollTimer); return; }
       const rs = Number(vNode?.readyState || 0);
-      let buffered = false;
+      const pos = Number(video.currentTime()) || 0;
+      let vBuf = false, aBuf = !forCoupled || !audio;
       try {
-        const pos = Number(video.currentTime()) || 0;
         const buf = vNode.buffered;
         for (let i = 0; i < buf.length; i++) {
-          if (buf.start(i) <= pos + 0.1 && buf.end(i) >= pos + 0.2) { buffered = true; break; }
+          if (buf.start(i) <= pos + 0.1 && buf.end(i) >= pos + 0.2) { vBuf = true; break; }
         }
       } catch {}
-      if (rs >= HAVE_FUTURE_DATA || buffered) resume();
+      if (forCoupled && audio) {
+        try {
+          const abuf = audio.buffered;
+          for (let i = 0; i < abuf.length; i++) {
+            if (abuf.start(i) <= pos + 0.5 && abuf.end(i) > pos) { aBuf = true; break; }
+          }
+        } catch {}
+      }
+      if ((rs >= HAVE_FUTURE_DATA || vBuf) && aBuf) resume();
     }, 300);
     const fallbackTimer = setTimeout(resume, 10000);
     state.seekBufferResumeTimer = fallbackTimer;
@@ -5668,7 +5711,7 @@ _seekPostTimers: []
       state.seeking = false;
       state.firstSeekDone = true;
       state.pendingSeekTarget = null;
-      state.seekCompleted = true;
+      state.seekCompleted = true; state._seekStartedAt = 0;
       state.seekCooldownUntil = now() + 600;
       setFastSync(2200);
 
@@ -5715,7 +5758,7 @@ _seekPostTimers: []
       if (state.seekId === currentSeekId) {
         state.seeking = false;
         state.firstSeekDone = true;
-        state.seekCompleted = true;
+        state.seekCompleted = true; state._seekStartedAt = 0;
         state.audioPlayUntil = 0;
         state.audioPauseUntil = 0;
         state.pendingSeekTarget = null;
@@ -5749,7 +5792,7 @@ _seekPostTimers: []
       if (state.seekId === currentSeekId) {
         state.seeking = false;
         state.firstSeekDone = true;
-        state.seekCompleted = true;
+        state.seekCompleted = true; state._seekStartedAt = 0;
         state.audioPlayUntil = 0;
         state.audioPauseUntil = 0;
         state.seekCooldownUntil = now() + 600;
@@ -5770,7 +5813,7 @@ _seekPostTimers: []
         if (state.seekId === currentSeekId) {
           state.seeking = false;
           state.firstSeekDone = true;
-          state.seekCompleted = true;
+          state.seekCompleted = true; state._seekStartedAt = 0;
           state.seekCooldownUntil = now() + 600;
         }
         startSeekBufferWait(true);
@@ -5799,7 +5842,7 @@ _seekPostTimers: []
     if (state.seekId === currentSeekId) {
       state.seeking = false;
       state.firstSeekDone = true;
-      state.seekCompleted = true;
+      state.seekCompleted = true; state._seekStartedAt = 0;
       state.audioPlayUntil = 0;
       state.audioPauseUntil = 0;
     }
@@ -6119,9 +6162,15 @@ _seekPostTimers: []
     state.syncScheduledAt = 0;
     enforcePlaybackRateSync();
 
-    // Hard lockout: during immunity OR NMPBFN recovery/settling, don't run the
-    // sync loop. The sync loop detects state mismatches and "fixes" them by
-    // pausing/resuming/seeking, which competes with the recovery system.
+    // Safety: unstick seeking if stuck >8s
+    if ((state.seeking || state.seekBuffering) && state._seekStartedAt > 0 &&
+        (performance.now() - state._seekStartedAt) > 8000) {
+      state.seeking = false;
+      state.seekBuffering = false;
+      state.seekResumeInFlight = false;
+      state.seekCompleted = true; state._seekStartedAt = 0;
+    }
+
     if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSync()) &&
         state.intendedPlaying && state.firstPlayCommitted) {
       scheduleSync(500);
@@ -6228,7 +6277,7 @@ _seekPostTimers: []
 
     if (state.intendedPlaying && !audio.paused && !state.userMutedVideo && !state.userMutedAudio) {
       try { if (audio.muted) audio.muted = false; } catch {}
-      if (!state.audioFading) {
+      if (!state.audioFading && !NotMakePlayBackFixingNoticable.isActive()) {
         const target = clamp01(targetVolFromVideo());
         if (audio.volume < 0.05 && target > 0.05) {
           softUnmuteAudio(200).catch(() => {});
@@ -8191,6 +8240,7 @@ _seekPostTimers: []
         const currentSeekId = state.seekId;
         clearBufferHold();
         state.seeking = true;
+        state._seekStartedAt = performance.now();
         state.seekWantedPlaying = state.intendedPlaying;
         state.playRequestedDuringSeek = state.intendedPlaying;
         state.seekCompleted = false;
