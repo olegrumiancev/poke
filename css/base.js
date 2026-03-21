@@ -5796,8 +5796,11 @@ _seekPostTimers: []
           state.seekCompleted = true; state._seekStartedAt = 0;
           state.seekCooldownUntil = now() + 600;
         }
-        startSeekBufferWait(true);
-        return;
+        if (startSeekBufferWait(true)) return;
+        // startSeekBufferWait returned false = video already buffered. Clear and resume.
+        state.seekBuffering = false;
+        clearBufferHold();
+        // Fall through to normal resume below
       }
     }
 
@@ -6163,8 +6166,10 @@ _seekPostTimers: []
       return;
     }
 
-    // PAGE-LOAD GATE: never attempt autoplay-driven startup before window.load.
-    if (!pageLoadedForAutoplay() && !state.firstPlayCommitted && wantsStartupAutoplay()) {
+    // PAGE-LOAD GATE: defer sync during early loading, but only if we haven't
+    // committed a play yet. Once firstPlayCommitted, always run sync so audio
+    // can start alongside video (prevents the "video plays, audio comes later" gap).
+    if (!pageLoadedForAutoplay() && !state.firstPlayCommitted && !state.intendedPlaying) {
       scheduleSync();
       return;
     }
@@ -7715,17 +7720,15 @@ _seekPostTimers: []
       }
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
-        if (wantsStartupAutoplay() || pageLoadedForAutoplay() || state.lastUserActionTime > 0 && (now() - state.lastUserActionTime) < 2000) {
-          state.firstPlayCommitted = true;
-          state.startupKickDone = true;
-          state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
-          clearStartupAutoplayRetryTimer();
-          setTimeout(() => { state.startupPhase = false; }, 1200);
-        } else {
-          // Page not loaded + no user gesture → autoplay fired too early. Pause.
-          execProgrammaticVideoPause();
-          return;
-        }
+        // Commit the first play — don't pause for page-load gate here.
+        // Pausing creates a visible play-pause-play stutter on autoplay.
+        // If we somehow got here without page being ready, let it keep playing
+        // and let audio catch up naturally via sync loop.
+        state.firstPlayCommitted = true;
+        state.startupKickDone = true;
+        state.startupPlaySettleUntil = now() + STARTUP_SETTLE_MS;
+        clearStartupAutoplayRetryTimer();
+        setTimeout(() => { state.startupPhase = false; }, 1200);
       }
 
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive()) && !userPlayIntentActive() && !(state.tabReturnImmuneUntil > now())) {
