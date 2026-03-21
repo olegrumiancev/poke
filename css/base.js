@@ -3636,12 +3636,12 @@ _seekPostTimers: []
         try { audio.currentTime = vt; } catch {}
       }
       try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-      try {
-        const vol = targetVolFromVideo();
-        if (audio.volume < vol * 0.5) audio.volume = vol;
-      } catch {}
       try { audio.play().catch(() => {}); } catch {}
       state.audioEverStarted = true;
+      try {
+        const vol = targetVolFromVideo();
+        if (audio.volume < vol * 0.5 && vol > 0) softUnmuteAudio(80).catch(() => {});
+      } catch {}
     }
   }
   function userPauseIntentActive() { return now() < state.userPauseUntil; }
@@ -3988,8 +3988,13 @@ _seekPostTimers: []
         softUnmuteAudio(120).catch(() => {});
         return;
       }
-      cancelActiveFade();
-      audio.volume = target;
+      // If volume jump is large (>0.15), fade instead of snap to avoid audible pop
+      if (Math.abs(audio.volume - target) > 0.15) {
+        softUnmuteAudio(100).catch(() => {});
+      } else {
+        cancelActiveFade();
+        audio.volume = target;
+      }
     } catch {}
   }
 
@@ -7710,7 +7715,7 @@ _seekPostTimers: []
       // This eliminates the multi-second delay from cascading startup gates.
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !state.seeking && !state.seekBuffering) {
+          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
         // Clear any stale blocks
         state.isProgrammaticAudioPause = false;
         state.videoStallAudioPaused = false;
@@ -7724,10 +7729,13 @@ _seekPostTimers: []
           try { audio.currentTime = _vtNow; } catch {}
         }
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-        const _targetVol = targetVolFromVideo();
-        try { if (audio.volume < _targetVol * 0.5) audio.volume = _targetVol; } catch {}
         try { audio.play().catch(() => {}); } catch {}
         state.audioEverStarted = true;
+        // Fade audio volume up instead of snapping to prevent audible volume spike
+        const _targetVol = targetVolFromVideo();
+        if (audio.volume < _targetVol * 0.5 && _targetVol > 0) {
+          softUnmuteAudio(120).catch(() => {});
+        }
       }
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
@@ -7792,13 +7800,14 @@ _seekPostTimers: []
       // --- STARTUP AUDIO FAILSAFE: if audio is still paused 1.5s from now,
       // force-start it. This catches cases where the startup kick above missed
       // (e.g., audio wasn't ready yet, or a gate re-paused it).
-      if (coupledMode && audio && audio.paused && state.intendedPlaying) {
+      if (coupledMode && audio && audio.paused && state.intendedPlaying && !NotMakePlayBackFixingNoticable.isRecovering()) {
         const _failsafeSession = state.playSessionId;
         setTimeout(() => {
           if (state.playSessionId !== _failsafeSession) return;
           if (!state.intendedPlaying || !coupledMode || !audio) return;
-          if (!audio.paused) return; // audio started on its own, great
+          if (!audio.paused) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+          if (NotMakePlayBackFixingNoticable.isActive()) return;
           // Audio is still paused 1.5s after video started playing — force it
           state.isProgrammaticAudioPause = false;
           state.videoStallAudioPaused = false;
@@ -7811,9 +7820,9 @@ _seekPostTimers: []
             try { audio.currentTime = _vt; } catch {}
           }
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-          try { audio.volume = targetVolFromVideo(); } catch {}
           try { audio.play().catch(() => {}); } catch {}
           state.audioEverStarted = true;
+          softUnmuteAudio(120).catch(() => {});
         }, 1500);
       }
 
@@ -7832,7 +7841,7 @@ _seekPostTimers: []
         state.audioEventsSquelchedUntil = 0;
         safeSetAudioTime(vtNow);
         execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 })
-        .then(ok => { if (ok) softUnmuteAudio(50).catch(() => {}); })
+        .then(ok => { if (ok) softUnmuteAudio(100).catch(() => {}); })
         .catch(() => {});
       } else {
         // Video readyState still low or hold active — wait for genuine buffer readiness.
