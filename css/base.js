@@ -3879,12 +3879,12 @@ _seekPostTimers: []
     return (vMuted || state.userMutedVideo) ? 0 : vVol;
   }
   let activeVolumeFade = null;
-  function cancelActiveFade() {
+  function cancelActiveFade(clearFadingFlag = true) {
     if (activeVolumeFade) {
       cancelAnimationFrame(activeVolumeFade);
       activeVolumeFade = null;
     }
-    state.audioFading = false;
+    if (clearFadingFlag) state.audioFading = false;
   }
 
   function fadeAndPauseAudio(fadeMs, onDone) {
@@ -3915,7 +3915,7 @@ _seekPostTimers: []
 
   async function doVolumeFade(targetVol, ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
-    cancelActiveFade();
+    cancelActiveFade(false); // cancel previous animation but keep audioFading=true
     const from = clamp01(audio.volume);
     const target = clamp01(targetVol);
     if (document.visibilityState === "hidden" || ms <= 0 || Math.abs(target - from) < 0.001 || audio.paused) {
@@ -3977,25 +3977,28 @@ _seekPostTimers: []
     state.audioFadeCompleteUntil = now() + AUDIO_POP_PREVENT_MS;
   }
 
+  let _updatingGain = false;
   function updateAudioGainImmediate() {
-    if (!audio) return;
+    if (!audio || _updatingGain) return;
     if (state.audioFading) return;
-    // Don't fight NMPBFN's warm-start fade during recovery
     if (NotMakePlayBackFixingNoticable.isActive()) return;
+    _updatingGain = true;
     try {
       const target = clamp01(targetVolFromVideo());
-      if (inBgReturnGrace() && audio.volume < target - 0.05) {
-        softUnmuteAudio(120).catch(() => {});
-        return;
-      }
-      // If volume jump is large (>0.15), fade instead of snap to avoid audible pop
-      if (Math.abs(audio.volume - target) > 0.15) {
-        softUnmuteAudio(100).catch(() => {});
+      const cur = clamp01(audio.volume);
+      const diff = target - cur;
+      if (Math.abs(diff) < 0.01) { _updatingGain = false; return; }
+      if (inBgReturnGrace() && cur < target - 0.05) {
+        // During tab return grace, step up gradually (max 0.12 per call)
+        audio.volume = clamp01(cur + Math.min(diff, 0.12));
+      } else if (Math.abs(diff) > 0.15) {
+        // Large jump: step by max 0.12 per call to avoid audible pop
+        audio.volume = clamp01(cur + Math.sign(diff) * 0.12);
       } else {
-        cancelActiveFade();
         audio.volume = target;
       }
     } catch {}
+    _updatingGain = false;
   }
 
   function forceUnmuteForPlaybackIfAllowed() {
@@ -5886,14 +5889,20 @@ _seekPostTimers: []
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
           if (!coupledMode || !audio) return;
-          if (!audio.paused || getVideoPaused()) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-          state.audioEventsSquelchedUntil = 0;
-          state.isProgrammaticAudioPause = false;
-          state.audioPauseUntil = 0;
-          state.videoStallAudioPaused = false;
-          state.stallAudioResumeHoldUntil = 0;
           const vt = Number(video.currentTime()) || 0;
+          // Fix drift even when both are playing
+          if (!audio.paused && !getVideoPaused() && isFinite(vt)) {
+            const drift = Math.abs((Number(audio.currentTime) || 0) - vt);
+            if (drift > 0.15) {
+              state._allowAudioTimeWrite = true;
+              try { audio.currentTime = vt; } catch {}
+              state._allowAudioTimeWrite = false;
+            }
+            return;
+          }
+          if (!audio.paused || getVideoPaused()) return;
+          clearAudioPauseLocks();
           state._allowAudioTimeWrite = true;
           try { if (isFinite(vt)) audio.currentTime = vt; } catch {}
           state._allowAudioTimeWrite = false;
@@ -8292,7 +8301,7 @@ _seekPostTimers: []
         state.pendingSeekTarget = seekTime;
         state.lastKnownGoodVT = seekTime;
         state.lastKnownGoodVTts = now();
-        state.seekCooldownUntil = now() + 2000;
+        state.seekCooldownUntil = now() + 800;
 
         state.videoWaiting = false;
         state.audioWaiting = false;
@@ -9049,7 +9058,7 @@ _seekPostTimers: []
     bindStartupOnce(videoEl, "canplay");
   }
   video.on("volumechange", () => {
-    if (!state.audioFading) {
+    if (!state.audioFading && !_updatingGain) {
       updateAudioGainImmediate();
     }
     state.userMutedVideo = !!video.muted();
