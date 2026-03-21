@@ -810,8 +810,7 @@ _seekPostTimers: []
   function _bgKeepaliveTick() {
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-    if (state.restarting || state.seeking) return;
-    // During NMPBFN recovery/settling, it owns all play() calls — don't compete.
+    if (state.restarting || state.seeking || state.seekBuffering || state.strictBufferHold) return;
     if (NotMakePlayBackFixingNoticable.isActive()) return;
     // Keep media alive when: hidden, immune (tab transition), or blurred
     // (alt-tab without full tab switch — window loses focus but stays "visible").
@@ -1234,11 +1233,9 @@ _seekPostTimers: []
             _consecutiveFailures++;
             // Hard reset: cancel all fades, clear all locks, force play
             cancelActiveFade();
-            state.isProgrammaticAudioPause = false;
+            clearAudioPauseLocks();
             state.isProgrammaticVideoPause = false;
-            state.strictBufferHold = false;
-            state.videoStallAudioPaused = false;
-            state.stallAudioResumeHoldUntil = 0;
+            clearBufferHold();
             state.audioPlayGeneration++;
             if (coupledMode && audio) {
               try { audio.volume = targetVolFromVideo(); } catch {}
@@ -4995,8 +4992,7 @@ _seekPostTimers: []
         try { clearTimeout(ncTimeout); } catch {}
         try { clearInterval(ncPoll); } catch {}
         if (!state.intendedPlaying || state.restarting || state.seeking) return;
-        state.strictBufferHold = false; state.bufferHoldSince = 0;
-        state.strictBufferReason = "";
+        clearBufferHold();
         if (getVideoPaused()) execProgrammaticVideoPlay();
       };
       _ncBufferWaitCleanup = ncResume; // store so next call can cancel us
@@ -5717,14 +5713,9 @@ _seekPostTimers: []
 
       if (wantedPlaying) {
         if (startSeekBufferWait(false)) return;
-        // startSeekBufferWait returned false = buffer already ready. Clear seekBuffering.
+        // Buffer already ready — clear seek buffering and resume
         state.seekBuffering = false;
-        state.strictBufferHold = false;
-        state.bufferHoldSince = 0;
-        state.strictBufferReason = "";
-        state.strictBufferHoldFrames = 0;
-        state.strictBufferHoldConfirmed = false;
-        // Always issue play() — video may be paused OR stalled after seek
+        clearBufferHold();
         state.isProgrammaticVideoPlay = true;
         try { video.play(); } catch {}
         try { videoEl.play(); } catch {}
@@ -5742,13 +5733,24 @@ _seekPostTimers: []
     const v = getVideoNode();
     const vtAtFinalize = Number(video.currentTime());
 
-    // Sync audio to exact video position — bypass gate
+    // Sync audio to exact video position — bypass gate, retry if first attempt fails
     if (isFinite(vtAtFinalize) && coupledMode && audio) {
       const atCurrent = Number(audio.currentTime);
       if (Math.abs(atCurrent - vtAtFinalize) > 0.05) {
         state._allowAudioTimeWrite = true;
         try { audio.currentTime = vtAtFinalize; } catch {}
         state._allowAudioTimeWrite = false;
+        // Verify the seek took — if audio didn't move, retry after a brief delay
+        const _fSeekId = state.seekId;
+        setTimeout(() => {
+          if (state.seekId !== _fSeekId && state.seeking) return;
+          const drift = Math.abs((Number(audio.currentTime) || 0) - vtAtFinalize);
+          if (drift > 0.2) {
+            state._allowAudioTimeWrite = true;
+            try { audio.currentTime = vtAtFinalize; } catch {}
+            state._allowAudioTimeWrite = false;
+          }
+        }, 120);
       }
     }
 
@@ -6605,7 +6607,7 @@ _seekPostTimers: []
         }
 
         // Enhanced background sync with aggressive retry
-        if (state.intendedPlaying && isHiddenBackground() && !state.seeking) {
+        if (state.intendedPlaying && isHiddenBackground() && !state.seeking && !state.seekBuffering && !state.strictBufferHold) {
           const aPausedBg = audio ? !!audio.paused : true;
           const vPausedBg = getVideoPaused();
           if (!aPausedBg && vPausedBg && !state.bgSilentTimeSyncing) {
@@ -6629,7 +6631,7 @@ _seekPostTimers: []
             }
         }
         if (!coupledMode && state.intendedPlaying && isHiddenBackground() &&
-          getVideoPaused() && !state.seeking && !state.bgResumeInFlight &&
+          getVideoPaused() && !state.seeking && !state.seekBuffering && !state.strictBufferHold && !state.bgResumeInFlight &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !MediumQualityManager.shouldBlockAutoResume() &&
           !MediumQualityManager.intentPaused) {
@@ -8284,18 +8286,15 @@ _seekPostTimers: []
         state.seekCooldownUntil = now() + 2000;
 
         state.videoWaiting = false;
-        state.videoStallAudioPaused = false;
-        state.stallAudioPausedSince = 0;
-        state.stallAudioResumeHoldUntil = 0;
-        state.audioPauseUntil = 0;
-        state.audioPausedSince = 0;
-        state.isProgrammaticAudioPause = false;
+        state.audioWaiting = false;
+        state.audioStallVideoPaused = false;
+        if (state._stallVideoPauseTimer) { clearTimeout(state._stallVideoPauseTimer); state._stallVideoPauseTimer = null; }
+        if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
+        clearAudioPauseLocks();
         state.stateChangeCooldownUntil = 0;
         state.audioFadeCompleteUntil = 0;
-        state.audioEventsSquelchedUntil = 0;
         state.audioPlayUntil = 0;
-        state.strictBufferHold = false;
-        state.bufferHoldSince = 0;
+        clearBufferHold();
 
         const watchdogSeekId = state.seekId;
         state.seekWatchdogTimer = setTimeout(() => {
@@ -8331,13 +8330,9 @@ _seekPostTimers: []
         // The seeking handler already bailed out, so state.seeking is false.
         if (isTabReturnImmune() && !state.seeking) return;
         clearSeekWatchdog();
-        state.isProgrammaticAudioPause = false;
-        state.audioPausedSince = 0;
-        state.audioPauseUntil = 0;
-        state.audioEventsSquelchedUntil = 0;
-        state.videoStallAudioPaused = false;
-        state.stallAudioPausedSince = 0;
-        state.stallAudioResumeHoldUntil = 0;
+        clearAudioPauseLocks();
+        state.audioWaiting = false;
+        state.audioStallVideoPaused = false;
         // Get the definitive seek target — video.currentTime() is reliable after seeked
         const newTime = Number(video.currentTime());
         state.lastKnownGoodVT = newTime;
@@ -9081,12 +9076,8 @@ _seekPostTimers: []
       // coupledMode was true at construction, we need to re-enable the startup path)
       state.startupPrimed = true;
       // If video was stuck waiting for audio, unblock it
-      state.videoStallAudioPaused = false;
-      state.stallAudioPausedSince = 0;
-      state.stallAudioResumeHoldUntil = 0;
-      state.strictBufferHold = false;
-      state.bufferHoldSince = 0;
-      state.strictBufferReason = "";
+      clearAudioPauseLocks();
+      clearBufferHold();
       // If intendedPlaying, kick video to start
       if (state.intendedPlaying || wantsStartupAutoplay()) {
         state.intendedPlaying = true;
