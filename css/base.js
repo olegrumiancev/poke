@@ -1122,12 +1122,11 @@ _seekPostTimers: []
         // Check if audio is already playing (retry call after successful first play).
         const audioAlreadyPlaying = coupledMode && audio && !audio.paused;
 
-        // Warm start is ONLY needed when recovering from background, where the
-        // audio decode buffer is stale and play() causes a 50-200ms silence gap.
-        // On fresh video start (no background transition), audio decoder has no
-        // stale data — warm start would just add unnecessary silence.
+        // Warm start masks decode buffer restart gap (50-200ms silence after bg pause).
+        // Skip when: fresh start (no stale buffer), audio already playing, or tab hidden
+        // (no one hears the gap, and setTimeout throttling makes the fade take seconds).
         const wasInBackground = _snapshotAt > 0 || _snapshotVt > 0;
-        const needsWarmStart = wasInBackground && !audioAlreadyPlaying;
+        const needsWarmStart = wasInBackground && !audioAlreadyPlaying && document.visibilityState !== "hidden";
 
         if (coupledMode && audio && !audioAlreadyPlaying) {
           if (needsWarmStart) {
@@ -1178,13 +1177,23 @@ _seekPostTimers: []
     // smooth steps (no setTimeout jitter). Total duration ~80ms.
     function _microFadeAudioUp(targetVol, gen) {
       if (!audio || _recoveryGen !== gen) return;
+      // In background, setTimeout is throttled to ~1s per tick — snap volume
+      // instead of a multi-second crawl that sounds broken when user returns.
+      if (document.visibilityState === "hidden") {
+        try { audio.volume = targetVol; } catch {}
+        return;
+      }
       let step = 0;
       const stepDelay = Math.max(1, Math.floor(WARM_FADE_MS / WARM_FADE_STEPS));
       function tick() {
         if (_recoveryGen !== gen || !state.intendedPlaying || !audio) return;
+        // If tab went hidden during fade, snap to target
+        if (document.visibilityState === "hidden") {
+          try { audio.volume = targetVol; } catch {}
+          return;
+        }
         step++;
         const progress = Math.min(1, step / WARM_FADE_STEPS);
-        // Ease-in curve for natural-sounding fade
         const eased = progress * progress;
         try { audio.volume = targetVol * eased; } catch {}
         if (step < WARM_FADE_STEPS) {
@@ -3509,7 +3518,11 @@ _seekPostTimers: []
   }
   function fastSyncActive() { return now() < state.fastSyncUntil; }
   function clearBufferHold() {
-    clearBufferHold();
+    state.strictBufferHold = false;
+    state.bufferHoldSince = 0;
+    state.strictBufferReason = "";
+    state.strictBufferHoldFrames = 0;
+    state.strictBufferHoldConfirmed = false;
   }
   function clearAudioPauseLocks() {
     state.isProgrammaticAudioPause = false;
@@ -3636,12 +3649,12 @@ _seekPostTimers: []
         try { audio.currentTime = vt; } catch {}
       }
       try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-      try { audio.play().catch(() => {}); } catch {}
-      state.audioEverStarted = true;
       try {
         const vol = targetVolFromVideo();
-        if (audio.volume < vol * 0.5 && vol > 0) softUnmuteAudio(80).catch(() => {});
+        if (audio.volume < vol * 0.5) audio.volume = vol;
       } catch {}
+      try { audio.play().catch(() => {}); } catch {}
+      state.audioEverStarted = true;
     }
   }
   function userPauseIntentActive() { return now() < state.userPauseUntil; }
@@ -3985,16 +3998,12 @@ _seekPostTimers: []
     _updatingGain = true;
     try {
       const target = clamp01(targetVolFromVideo());
-      const cur = clamp01(audio.volume);
-      const diff = target - cur;
-      if (Math.abs(diff) < 0.01) { _updatingGain = false; return; }
-      if (inBgReturnGrace() && cur < target - 0.05) {
-        // During tab return grace, step up gradually (max 0.12 per call)
-        audio.volume = clamp01(cur + Math.min(diff, 0.12));
-      } else if (Math.abs(diff) > 0.15) {
-        // Large jump: step by max 0.12 per call to avoid audible pop
-        audio.volume = clamp01(cur + Math.sign(diff) * 0.12);
+      if (Math.abs(audio.volume - target) < 0.01) { _updatingGain = false; return; }
+      // During tab return grace, step up gradually to avoid pop
+      if (inBgReturnGrace() && audio.volume < target - 0.05) {
+        audio.volume = clamp01(audio.volume + Math.min(target - audio.volume, 0.12));
       } else {
+        // Normal: snap immediately (user slider, regular sync)
         audio.volume = target;
       }
     } catch {}
@@ -5571,7 +5580,7 @@ _seekPostTimers: []
     const vNode = getVideoNode();
     const vRS = Number(vNode?.readyState || 0);
 
-    // Check buffered ranges at seek position for BOTH video and audio
+    // Check if VIDEO is buffered at seek position (audio handles its own buffering)
     const seekPos = Number(video.currentTime()) || 0;
     let videoBuffered = false;
     try {
@@ -5580,19 +5589,10 @@ _seekPostTimers: []
         if (buf.start(i) <= seekPos + 0.2 && buf.end(i) > seekPos) { videoBuffered = true; break; }
       }
     } catch {}
-    let audioBuffered = !forCoupled || !audio;
-    if (forCoupled && audio) {
-      try {
-        const abuf = audio.buffered;
-        for (let i = 0; i < abuf.length; i++) {
-          if (abuf.start(i) <= seekPos + 0.5 && abuf.end(i) > seekPos) { audioBuffered = true; break; }
-        }
-      } catch {}
-    }
 
-    // Both tracks buffered → no need to wait
-    if (videoBuffered && audioBuffered) return false;
-    if (vRS >= HAVE_FUTURE_DATA && audioBuffered) return false;
+    // Video buffered → no need to wait (audio syncs via playTogether)
+    if (videoBuffered) return false;
+    if (vRS >= HAVE_FUTURE_DATA) return false;
 
     // Enter seek-buffering state
     state.seekBuffering = true;
@@ -5609,10 +5609,6 @@ _seekPostTimers: []
       try { vNode.removeEventListener("canplay", onReady); } catch {}
       try { vNode.removeEventListener("canplaythrough", onReady); } catch {}
       try { vNode.removeEventListener("playing", onReady); } catch {}
-      if (audio) {
-        try { audio.removeEventListener("canplay", onReady); } catch {}
-        try { audio.removeEventListener("canplaythrough", onReady); } catch {}
-      }
       try { clearTimeout(fallbackTimer); } catch {}
       try { clearInterval(pollTimer); } catch {}
       state.seekBuffering = false;
@@ -5651,49 +5647,23 @@ _seekPostTimers: []
     };
     const onReady = () => {
       const rs = Number(vNode?.readyState || 0);
-      if (rs < HAVE_FUTURE_DATA) return;
-      // Also check audio is buffered before resuming
-      if (forCoupled && audio) {
-        const pos = Number(video.currentTime()) || 0;
-        let aBuf = false;
-        try {
-          const abuf = audio.buffered;
-          for (let i = 0; i < abuf.length; i++) {
-            if (abuf.start(i) <= pos + 0.5 && abuf.end(i) > pos) { aBuf = true; break; }
-          }
-        } catch {}
-        if (!aBuf && (Number(audio.readyState) || 0) < HAVE_FUTURE_DATA) return;
-      }
-      resume();
+      if (rs >= HAVE_FUTURE_DATA) resume();
     };
     try { vNode.addEventListener("canplay", onReady, { passive: true }); } catch {}
     try { vNode.addEventListener("canplaythrough", onReady, { passive: true }); } catch {}
     try { vNode.addEventListener("playing", onReady, { passive: true }); } catch {}
-    // Also listen for audio ready events in coupled mode
-    if (forCoupled && audio) {
-      try { audio.addEventListener("canplay", onReady, { passive: true }); } catch {}
-      try { audio.addEventListener("canplaythrough", onReady, { passive: true }); } catch {}
-    }
     const pollTimer = setInterval(() => {
       if (done) { clearInterval(pollTimer); return; }
       const rs = Number(vNode?.readyState || 0);
-      const pos = Number(video.currentTime()) || 0;
-      let vBuf = false, aBuf = !forCoupled || !audio;
+      let vBuf = false;
       try {
+        const pos = Number(video.currentTime()) || 0;
         const buf = vNode.buffered;
         for (let i = 0; i < buf.length; i++) {
           if (buf.start(i) <= pos + 0.1 && buf.end(i) >= pos + 0.2) { vBuf = true; break; }
         }
       } catch {}
-      if (forCoupled && audio) {
-        try {
-          const abuf = audio.buffered;
-          for (let i = 0; i < abuf.length; i++) {
-            if (abuf.start(i) <= pos + 0.5 && abuf.end(i) > pos) { aBuf = true; break; }
-          }
-        } catch {}
-      }
-      if ((rs >= HAVE_FUTURE_DATA || vBuf) && aBuf) resume();
+      if (rs >= HAVE_FUTURE_DATA || vBuf) resume();
     }, 300);
     const fallbackTimer = setTimeout(resume, 10000);
     state.seekBufferResumeTimer = fallbackTimer;
@@ -7738,13 +7708,10 @@ _seekPostTimers: []
           try { audio.currentTime = _vtNow; } catch {}
         }
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
+        const _targetVol = targetVolFromVideo();
+        try { if (audio.volume < _targetVol * 0.5) audio.volume = _targetVol; } catch {}
         try { audio.play().catch(() => {}); } catch {}
         state.audioEverStarted = true;
-        // Fade audio volume up instead of snapping to prevent audible volume spike
-        const _targetVol = targetVolFromVideo();
-        if (audio.volume < _targetVol * 0.5 && _targetVol > 0) {
-          softUnmuteAudio(120).catch(() => {});
-        }
       }
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
@@ -7806,6 +7773,25 @@ _seekPostTimers: []
       }
       setFastSync(2000);
 
+      // --- POST-AUTOPLAY AUDIO KICK: the startup audio kick at the top of this
+      // handler may have been skipped because intendedPlaying was false during
+      // autoplay. Now that intendedPlaying is set, try again immediately.
+      if (coupledMode && audio && audio.paused && state.intendedPlaying &&
+          !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
+          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
+        clearAudioPauseLocks();
+        DONTMAKEITDOUBLEPLAY.resetAll();
+        const _vtKick = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+        if (isFinite(_vtKick) && Math.abs((Number(audio.currentTime) || 0) - _vtKick) > 0.15) {
+          try { audio.currentTime = _vtKick; } catch {}
+        }
+        try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
+        const _vol = targetVolFromVideo();
+        try { if (audio.volume < _vol * 0.5) audio.volume = _vol; } catch {}
+        try { audio.play().catch(() => {}); } catch {}
+        state.audioEverStarted = true;
+      }
+
       // --- STARTUP AUDIO FAILSAFE: if audio is still paused 1.5s from now,
       // force-start it. This catches cases where the startup kick above missed
       // (e.g., audio wasn't ready yet, or a gate re-paused it).
@@ -7829,9 +7815,9 @@ _seekPostTimers: []
             try { audio.currentTime = _vt; } catch {}
           }
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
+          try { audio.volume = targetVolFromVideo(); } catch {}
           try { audio.play().catch(() => {}); } catch {}
           state.audioEverStarted = true;
-          softUnmuteAudio(120).catch(() => {});
         }, 1500);
       }
 
@@ -7850,7 +7836,7 @@ _seekPostTimers: []
         state.audioEventsSquelchedUntil = 0;
         safeSetAudioTime(vtNow);
         execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 })
-        .then(ok => { if (ok) softUnmuteAudio(100).catch(() => {}); })
+        .then(ok => { if (ok) softUnmuteAudio(50).catch(() => {}); })
         .catch(() => {});
       } else {
         // Video readyState still low or hold active — wait for genuine buffer readiness.
