@@ -1502,6 +1502,123 @@ _seekPostTimers: []
     };
   })();
 
+  // --- MakeSureAudioIsNotCuttingOrWeird (MSAINCOW)
+  // Centralized audio health watchdog. Runs every 400ms when audio should be playing.
+  // Detects and fixes: audio at wrong position, audio paused when shouldn't be,
+  // audio volume wrong, audio muted unexpectedly, audio disconnected from video.
+  // Single source of truth for "is audio healthy right now?"
+  const MakeSureAudioIsNotCuttingOrWeird = (() => {
+    let _timer = null;
+    let _lastAudioPos = 0;
+    let _lastCheckAt = 0;
+    let _frozenCount = 0;
+    const TICK_MS = 400;
+    const MAX_DRIFT = 0.5;
+    const FROZEN_THRESHOLD = 3; // ticks of no progress = frozen
+
+    function _shouldRun() {
+      if (!coupledMode || !audio || !state.intendedPlaying) return false;
+      if (state.seeking || state.seekBuffering || state.restarting) return false;
+      if (state.strictBufferHold || state.videoWaiting) return false;
+      if (NotMakePlayBackFixingNoticable.isRecovering()) return false;
+      if (userPauseLockActive() || mediaSessionForcedPauseActive()) return false;
+      return true;
+    }
+
+    function _tick() {
+      _timer = null;
+      if (!_shouldRun()) { _schedule(); return; }
+      const t = now();
+      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+      const at = Number(audio.currentTime) || 0;
+      const vPaused = getVideoPaused();
+      const aPaused = !!audio.paused;
+
+      // Rule 1: Audio should not be paused when video is playing
+      if (!vPaused && aPaused && state.intendedPlaying && !state.videoStallAudioPaused &&
+          t > state.stallAudioResumeHoldUntil && t > state.audioPauseUntil) {
+        safeSetAudioTime(vt);
+        execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
+        _schedule(); return;
+      }
+
+      // Rule 2: Audio position should not be wildly off from video
+      if (!vPaused && !aPaused && vt > 0.5) {
+        const drift = Math.abs(at - vt);
+        // Audio at position 0 while video is well into playback = restart bug
+        if (at < 0.3 && vt > 1.0) {
+          safeSetAudioTime(vt);
+          _schedule(); return;
+        }
+        // Large drift > 2s — correct immediately via buffered fast path
+        if (drift > 2.0) {
+          const bufAhead = bufferedAhead(audio, vt);
+          if (bufAhead > 0.1) {
+            safeSetAudioTime(vt);
+          }
+          // If not buffered, let runSync handle it
+        }
+      }
+
+      // Rule 3: Audio should not be frozen (position not advancing while playing)
+      if (!aPaused && !vPaused) {
+        if (Math.abs(at - _lastAudioPos) < 0.01 && (t - _lastCheckAt) > TICK_MS * 0.8) {
+          _frozenCount++;
+          if (_frozenCount >= FROZEN_THRESHOLD) {
+            // Audio decoder is stuck — restart it
+            _frozenCount = 0;
+            state.isProgrammaticAudioPause = true;
+            try { audio.pause(); } catch {}
+            setTimeout(() => {
+              state.isProgrammaticAudioPause = false;
+              if (!state.intendedPlaying || state.seeking) return;
+              safeSetAudioTime((() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })());
+              execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
+            }, 50);
+            _schedule(); return;
+          }
+        } else {
+          _frozenCount = 0;
+        }
+      } else {
+        _frozenCount = 0;
+      }
+
+      // Rule 4: Audio volume should match target (when not fading/recovering)
+      if (!aPaused && !state.audioFading && !NotMakePlayBackFixingNoticable.isActive()) {
+        const target = clamp01(targetVolFromVideo());
+        if (target > 0 && audio.volume < 0.01 && !state.userMutedAudio) {
+          softUnmuteAudio(100).catch(() => {});
+        }
+      }
+
+      // Rule 5: Audio should not be muted when user hasn't muted
+      if (!aPaused && audio.muted && !state.userMutedAudio && state.intendedPlaying) {
+        try { audio.muted = false; } catch {}
+      }
+
+      _lastAudioPos = at;
+      _lastCheckAt = t;
+      _schedule();
+    }
+
+    function _schedule() {
+      if (_timer) return;
+      if (!coupledMode || !state.intendedPlaying) return;
+      _timer = setTimeout(_tick, TICK_MS);
+    }
+
+    function start() { _frozenCount = 0; _lastAudioPos = 0; _lastCheckAt = now(); _schedule(); }
+    function stop() { if (_timer) { clearTimeout(_timer); _timer = null; } _frozenCount = 0; }
+    function reset() { stop(); _lastAudioPos = 0; _lastCheckAt = 0; }
+    function onPlay() { start(); }
+    function onPause() { stop(); }
+    function onSeekStart() { stop(); _frozenCount = 0; }
+    function onSeekEnd() { _lastAudioPos = Number(audio?.currentTime) || 0; _lastCheckAt = now(); start(); }
+
+    return { start, stop, reset, onPlay, onPause, onSeekStart, onSeekEnd };
+  })();
+
   // --- VisibilityGuard (VG)
   const VisibilityGuard = (() => {
     let _suppressUntil   = 0;
@@ -5913,6 +6030,7 @@ _seekPostTimers: []
       scheduleSync(0);
     } finally {
       state.seekResumeInFlight = false;
+      try { MakeSureAudioIsNotCuttingOrWeird.onSeekEnd(); } catch {}
     }
   }
 
@@ -7624,11 +7742,17 @@ _seekPostTimers: []
       } catch {}
       // During NMPBFN recovery/settling, don't stall-pause audio — NMPBFN owns playback
       if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(now() < state.seekCooldownUntil) && !(state.tabReturnImmuneUntil > now()) && !_nearEnd && !NotMakePlayBackFixingNoticable.isActive()) {
-        // Delayed stall-pause: wait 150ms so micro-stalls don't cause jarring audio cuts.
+        // Immediately mute audio so user hears no desync, then pause after 100ms
+        // if stall persists (filters micro-stalls)
+        try { audio.volume = 0; } catch {}
         if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
         state._stallAudioPauseTimer = setTimeout(() => {
           state._stallAudioPauseTimer = null;
-          if (!coupledMode || !audio || audio.paused || !state.videoWaiting) return;
+          if (!coupledMode || !audio || audio.paused || !state.videoWaiting) {
+            // Stall resolved — restore volume
+            if (audio && !audio.paused && state.intendedPlaying) softUnmuteAudio(80).catch(() => {});
+            return;
+          }
           if (state.seeking || state.seekResumeInFlight || state.seekBuffering) return;
           if (state.tabReturnImmuneUntil > now() || NotMakePlayBackFixingNoticable.isActive()) return;
           if (!state.intendedPlaying || state.restarting) return;
@@ -7641,9 +7765,9 @@ _seekPostTimers: []
           state.isProgrammaticAudioPause = true;
           squelchAudioEvents(600);
           state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 600);
-          try { audio.volume = 0; audio.pause(); } catch {}
+          try { audio.pause(); } catch {}
           setTimeout(() => { state.isProgrammaticAudioPause = false; }, 300);
-        }, 150);
+        }, 100);
       }
 
       if (platform.useBgControllerRetry && state.intendedPlaying) {
@@ -7655,6 +7779,10 @@ _seekPostTimers: []
       if (state._stallAudioPauseTimer) {
         clearTimeout(state._stallAudioPauseTimer);
         state._stallAudioPauseTimer = null;
+        // Restore audio volume — it was zeroed on waiting event
+        if (coupledMode && audio && !audio.paused && audio.volume < 0.01 && state.intendedPlaying) {
+          softUnmuteAudio(80).catch(() => {});
+        }
       }
       if (state.seeking || state.seekBuffering) {
         state.videoWaiting = false;
@@ -7722,16 +7850,13 @@ _seekPostTimers: []
       // This eliminates the multi-second delay from cascading startup gates.
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
-        // Clear any stale blocks
+          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering() &&
+          !state.strictBufferHold && !state.videoWaiting) {
         clearAudioPauseLocks();
         DONTMAKEITDOUBLEPLAY.resetAll();
         const _vtNow = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-        if (isFinite(_vtNow) && Math.abs((Number(audio.currentTime) || 0) - _vtNow) > 0.15) {
-          try { audio.currentTime = _vtNow; } catch {}
-        }
+        safeSetAudioTime(_vtNow);
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-        // Use programmatic play so onAudioPlay handler doesn't re-pause
         execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
         state.audioEverStarted = true;
       }
@@ -7798,14 +7923,13 @@ _seekPostTimers: []
       }
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
+          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering() &&
+          !state.videoWaiting) {
         clearAudioPauseLocks();
         clearBufferHold();
         DONTMAKEITDOUBLEPLAY.resetAll();
         const _vtKick = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-        if (isFinite(_vtKick) && Math.abs((Number(audio.currentTime) || 0) - _vtKick) > 0.15) {
-          try { audio.currentTime = _vtKick; } catch {}
-        }
+        safeSetAudioTime(_vtKick);
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
         const _vol = targetVolFromVideo();
         try { if (audio.volume < _vol * 0.5) audio.volume = _vol; } catch {}
@@ -7824,13 +7948,11 @@ _seekPostTimers: []
           if (!audio.paused) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (NotMakePlayBackFixingNoticable.isActive()) return;
-          // Audio is still paused 1.5s after video started playing — force it
+          if (state.strictBufferHold || state.videoWaiting) return;
           clearAudioPauseLocks();
           DONTMAKEITDOUBLEPLAY.resetAll();
           const _vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-          if (isFinite(_vt) && Math.abs((Number(audio.currentTime) || 0) - _vt) > 0.15) {
-            try { audio.currentTime = _vt; } catch {}
-          }
+          safeSetAudioTime(_vt);
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
           execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
           state.audioEverStarted = true;
@@ -7945,6 +8067,7 @@ _seekPostTimers: []
 
       state.audioEverStarted = true;
       state.audioStallSince = 0;
+      try { MakeSureAudioIsNotCuttingOrWeird.onPlay(); } catch {}
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
         state.firstPlayCommitted = true;
         state.startupKickDone = true;
@@ -7981,8 +8104,7 @@ _seekPostTimers: []
       }
     };
     const onAudioPause = () => {
-      // During tab-return immunity, counter-play immediately.
-      // (Backup path — capture-phase guard normally handles this first.)
+      try { MakeSureAudioIsNotCuttingOrWeird.onPause(); } catch {}
       if (isTabReturnImmune() && state.intendedPlaying &&
           !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000)) {
         try { if (audio && audio.paused) audio.play().catch(() => {}); } catch {}
@@ -8262,6 +8384,7 @@ _seekPostTimers: []
         clearBufferHold();
         state.seeking = true;
         state._seekStartedAt = performance.now();
+        try { MakeSureAudioIsNotCuttingOrWeird.onSeekStart(); } catch {}
         state.seekWantedPlaying = state.intendedPlaying;
         state.playRequestedDuringSeek = state.intendedPlaying;
         state.seekCompleted = false;
