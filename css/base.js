@@ -6006,7 +6006,6 @@ _seekPostTimers: []
     if (state.startupKickDone || state.startupKickInFlight || state.firstPlayCommitted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (mediaSessionForcedPauseActive() || userPauseLockActive()) return;
-    if (!pageLoadedForAutoplay()) return;
 
     clearStartupAutoplayRetryTimer();
     const count = state.startupAutoplayRetryCount;
@@ -6169,7 +6168,7 @@ _seekPostTimers: []
     // PAGE-LOAD GATE: defer sync during early loading, but only if we haven't
     // committed a play yet. Once firstPlayCommitted, always run sync so audio
     // can start alongside video (prevents the "video plays, audio comes later" gap).
-    if (!pageLoadedForAutoplay() && !state.firstPlayCommitted && !state.intendedPlaying) {
+    if (!pageLoadedForAutoplay() && !state.firstPlayCommitted && !state.intendedPlaying && !wantsStartupAutoplay()) {
       scheduleSync();
       return;
     }
@@ -6884,7 +6883,7 @@ _seekPostTimers: []
       // (Chromium may block autoplay without user gesture), use this interaction
       // as the gesture to kick playback.
       if (wantsStartupAutoplay() && !state.firstPlayCommitted && !state.startupKickInFlight &&
-          pageLoadedForAutoplay() && coupledMode) {
+          coupledMode) {
         scheduleStartupAutoplayKick();
       }
 
@@ -7754,11 +7753,6 @@ _seekPostTimers: []
           return;
         }
         if (wantsStartupAutoplay() || (now() - state.startupPrimeStartedAt) < 2600) {
-          // PAGE-LOAD GATE: autoplay recovery must also wait for window.load.
-          if (!pageLoadedForAutoplay()) {
-            execProgrammaticVideoPause();
-            return;
-          }
           clearMediaSessionForcedPause();
           state.intendedPlaying = true;
           state.bufferHoldIntendedPlaying = true;
@@ -8126,8 +8120,7 @@ _seekPostTimers: []
       });
     };
     const onReadyish = () => {
-      // Never attempt to start playback from a media-ready event before page load.
-      if (!pageLoadedForAutoplay() && !state.firstPlayCommitted) return;
+      if (!state.firstPlayCommitted && !state.intendedPlaying && !wantsStartupAutoplay()) return;
       maybePrimeStartup();
       if (!state.intendedPlaying || state.restarting || state.seeking) return;
       if (mediaSessionForcedPauseActive()) return;
@@ -8665,7 +8658,7 @@ _seekPostTimers: []
           }
           executeSeamlessWakeup();
         }
-        if (state.startupPhase && !state.startupPrimed && pageLoadedForAutoplay()) {
+        if (state.startupPhase && !state.startupPrimed) {
           maybePrimeStartup();
           scheduleStartupAutoplayKick();
         }
@@ -8758,7 +8751,7 @@ _seekPostTimers: []
           scheduleSync(300);
         }
         // Startup retry on tab-return: kick the startup kick regardless.
-        if (wantsStartupAutoplay() && pageLoadedForAutoplay()) {
+        if (wantsStartupAutoplay()) {
           state.startupAutoplayRetryCount = 0;
           if (!state.startupKickDone && !state.firstPlayCommitted) {
             if (!state.startupAutoplayRetryTimer && !state.startupKickInFlight) {
