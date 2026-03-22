@@ -694,7 +694,7 @@ height: 100%;
 
 <div class="channel-page">
 
-                                                      <% if (!cinv.error) { %>  
+                                                      <% if (!cinv?.error) { %>  
     
           <% if (!isMobile) { %>  
             <div class="channel-info-container" style="text-align: center;">
@@ -703,7 +703,7 @@ height: 100%;
     <% let bannerFound = false; %>
     <% for (let i = 0; i < cinv.authorBanners.length; i++) { %>
         <% if (cinv.authorBanners[i]?.url) { %>
-            <img src="<%- media_proxy_url %>/proxy?url=<%= cinv.authorBanners[i].url %>" style="height: 30em; object-fit: cover; pointer-events: none;" id="banner_version_<%= i %>">
+            <img src="<%- media_proxy_url %>/proxy?url=<%= cinv.authorBanners[i].url %>" style="height: 30em; object-fit: cover; pointer-events: none;" id="banner_ID_<%= i %>">
             <% bannerFound = true; %>
             <% break; %>
         <% } %>
@@ -723,18 +723,15 @@ height: 100%;
   onclick="event.preventDefault();(function(src){
     var old=document.getElementById('avatar-lightbox');
     if(old) old.remove();
-
     var overlay=document.createElement('div');
     overlay.id='avatar-lightbox';
     overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:999999;padding:24px;cursor:pointer;flex-direction:column;gap:16px;';
     overlay.onclick=function(){overlay.remove();};
-
     var img=document.createElement('img');
     img.src=src;
     img.alt='Channel Avatar';
     img.style.cssText='display:block;max-width:min(90vw,900px);max-height:80vh;width:auto;height:auto;object-fit:contain;border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,0.45);cursor:pointer;';
     img.onclick=function(e){e.stopPropagation();overlay.remove();};
-
     var btn=document.createElement('a');
     btn.href=src;
     btn.target='_blank';
@@ -743,7 +740,6 @@ height: 100%;
     btn.onmouseenter=function(){this.style.backgroundColor='#d9d9d9';};
     btn.onmouseleave=function(){this.style.backgroundColor='#f1f1f1';};
     btn.onclick=function(e){e.stopPropagation();};
-
     overlay.appendChild(img);
     overlay.appendChild(btn);
     document.body.appendChild(overlay);
