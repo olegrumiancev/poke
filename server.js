@@ -2,7 +2,7 @@
 
     Poke is an Free/Libre youtube front-end. this is our main file.
   
-    Copyright (C) 2021-2025 Poke (https://codeberg.org/ashleyirispuppy/poketube)
+    Copyright (C) 2021-2025 Poke (https://codeberg.org/ashleyirispuppy/poke)
     
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -1089,10 +1089,10 @@ ${siegeMode ? '<div class="siege-banner">SIEGE MODE ACTIVE - we are currently un
 
 <h2>source code</h2>
 <p>
-  this is all open source. you can read exactly what PokeStopSkids does
-  in <a href="https://codeberg.org/ashleyirispuppy/poketube">poke's repo on codeberg</a>.
+  this is all free software. you can read exactly what PokeStopSkids does
+  in <a href="https://codeberg.org/ashleyirispuppy/poke">poke's repo on codeberg</a>.
   if you got banned and you think it was wrong,
-  <a href="https://codeberg.org/ashleyirispuppy/poketube/issues">open an issue</a>
+  <a href="https://codeberg.org/ashleyirispuppy/poke/issues">open an issue</a>
   and we'll look into it.
 </p>
 
