@@ -71,48 +71,25 @@
   );
 
   const sha384 = modules.hash;
+  const rateLimit = require("express-rate-limit");
 
-  
   var app = modules.express();
-  app.use(ieBlockMiddleware);
-  initlog("Loaded express.js");
-  app.engine("html", require("ejs").renderFile);
-  initlog("Loaded EJS");
-  app.use(modules.express.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
-  app.use(modules.useragent.express());
-  app.use(modules.express.json()); // for parsing application/json
-  
-// ── Ultra-Smart Trust Proxy Engine ────────────────────────────────
-(function configureTrustProxy() {
+
+ (function configureTrustProxy() {
   const os = require("os");
-  const http = require("http");
   const net = require("net");
   const path = require("path");
 
-  const PRIVATE_CIDRS = [
-    "loopback",
-    "linklocal",
-    "uniquelocal",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-  ];
-
   // ─── .env loading (only if file exists) ────────────────────────
   const dotenvPath = path.resolve(process.cwd(), ".env");
-  let dotenvLoaded = false;
 
   try {
     fs.accessSync(dotenvPath, fs.constants.F_OK);
-    // .env exists — try to load it
     try {
       require("dotenv").config({ path: dotenvPath });
-      dotenvLoaded = true;
       initlog("[trust-proxy] .env file found and loaded");
     } catch (e) {
-      // dotenv package not installed — that's fine, skip it
       initlog("[trust-proxy] .env file found but dotenv not installed — reading raw");
-      // Minimal manual parse as fallback
       try {
         const raw = fs.readFileSync(dotenvPath, "utf8");
         for (const line of raw.split("\n")) {
@@ -122,23 +99,22 @@
           if (eq === -1) continue;
           const key = trimmed.slice(0, eq).trim();
           let val = trimmed.slice(eq + 1).trim();
-          // Strip surrounding quotes
           if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
             val = val.slice(1, -1);
           }
           if (!process.env[key]) process.env[key] = val;
         }
-        dotenvLoaded = true;
         initlog("[trust-proxy] .env manually parsed OK");
       } catch (readErr) {
         initlog("[trust-proxy] ⚠ Failed to read .env: " + readErr.message);
       }
     }
   } catch {
-     initlog("[trust-proxy] No .env file found — using system env only");
+    initlog("[trust-proxy] No .env file found — using system env only");
   }
 
-   function ipToLong(ip) {
+  // ─── CIDR math ─────────────────────────────────────────────────
+  function ipToLong(ip) {
     return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
   }
 
@@ -163,7 +139,8 @@
     );
   }
 
-   function detectEnvSignals() {
+  // ─── Detection: environment signals ────────────────────────────
+  function detectEnvSignals() {
     const signals = {
       "DYNO": "Heroku",
       "FLY_APP_NAME": "Fly.io",
@@ -187,11 +164,11 @@
     for (const [key, name] of Object.entries(signals)) {
       if (process.env[key]) detected.push({ key, name, value: process.env[key] });
     }
-
     return detected;
   }
 
-   function detectFilesystemSignals() {
+  // ─── Detection: filesystem signals ─────────────────────────────
+  function detectFilesystemSignals() {
     const signals = [];
 
     const checks = [
@@ -229,7 +206,8 @@
     return signals;
   }
 
-   function detectNetworkSignals() {
+  // ─── Detection: network interface signals ──────────────────────
+  function detectNetworkSignals() {
     const signals = [];
     const ifaces = os.networkInterfaces();
     const containerIfacePattern = /^(docker|br-|veth|cali|flannel|cni|wg|tun|tap|tailscale|podman)/;
@@ -239,54 +217,15 @@
         signals.push({ iface: name, type: "container-interface" });
       }
     }
-
     return signals;
   }
 
-   let confirmedProxy = null;
-
-  function installProbe(app) {
-    let probed = false;
-
-    app.use(function trustProxyProbe(req, res, next) {
-      if (probed) return next();
-
-      const hasForwardedFor = !!req.headers["x-forwarded-for"];
-      const hasForwardedProto = !!req.headers["x-forwarded-proto"];
-      const hasForwardedHost = !!req.headers["x-forwarded-host"];
-      const hasVia = !!req.headers["via"];
-      const hasCfRay = !!req.headers["cf-ray"];
-      const hasFlyReqId = !!req.headers["fly-request-id"];
-      const hasXRealIp = !!req.headers["x-real-ip"];
-      const hasXAmznTraceId = !!req.headers["x-amzn-trace-id"];
-
-      const headerScore =
-        (hasForwardedFor ? 3 : 0) +
-        (hasForwardedProto ? 2 : 0) +
-        (hasForwardedHost ? 1 : 0) +
-        (hasVia ? 2 : 0) +
-        (hasCfRay ? 3 : 0) +
-        (hasFlyReqId ? 3 : 0) +
-        (hasXRealIp ? 2 : 0) +
-        (hasXAmznTraceId ? 3 : 0);
-
-      const remoteIsPrivate = isPrivateIP(req.socket.remoteAddress?.replace("::ffff:", "") || "");
-
-      if (headerScore >= 3 && remoteIsPrivate) {
-        if (confirmedProxy !== true) {
-          confirmedProxy = true;
-          app.set("trust proxy", buildTrustFunction());
-          initlog("[trust-proxy] ✓ PROBE CONFIRMED: real proxy detected (score: " + headerScore + ")");
-          logProxyHeaders(req);
-        }
-      } else if (headerScore >= 3 && !remoteIsPrivate) {
-        initlog("[trust-proxy] ⚠ WARNING: proxy headers from PUBLIC IP " +
-          req.socket.remoteAddress + " — ignoring (possible spoof)");
-      }
-
-      probed = true;
-      next();
-    });
+  // ─── Build the trust function ──────────────────────────────────
+  function buildTrustFunction() {
+    return function smartTrustProxy(addr) {
+      const ip = addr.replace("::ffff:", "");
+      return isPrivateIP(ip);
+    };
   }
 
   function logProxyHeaders(req) {
@@ -301,15 +240,7 @@
     }
   }
 
-  // ─── Build the trust function ──────────────────────────────────
-  function buildTrustFunction() {
-    return function smartTrustProxy(addr) {
-      const ip = addr.replace("::ffff:", "");
-      return isPrivateIP(ip);
-    };
-  }
-
-  // ─── User override via env var (only if env was available) ─────
+  // ─── User override via env var ─────────────────────────────────
   function checkUserOverride() {
     const val = (process.env.TRUST_PROXY || "").toLowerCase().trim();
     if (!val) return null;
@@ -366,38 +297,95 @@
   initlog("[trust-proxy] Confidence score: " + totalConfidence);
 
   if (totalConfidence >= 2) {
+    // High confidence from heuristics — enable immediately
     app.set("trust proxy", buildTrustFunction());
     initlog("[trust-proxy] ✓ Auto-enabled (confidence: " + totalConfidence + ")");
-  } else {
-    app.set("trust proxy", false);
-    initlog("[trust-proxy] △ Low confidence — starting disabled, probe will upgrade if real proxy detected");
+    return;
   }
 
-  installProbe(app);
+  // ─── Low confidence: use a blocking probe on the first request ─
+  // This is the key fix: instead of starting with trust proxy OFF and
+  // letting the rate limiter crash, we intercept the FIRST request,
+  // inspect it, configure trust proxy, and THEN let it continue
+  // through the rest of the middleware chain (including rate limiter).
+  initlog("[trust-proxy] △ Low confidence — will probe first request before rate limiter runs");
 
+  let probeComplete = false;
+
+  app.use(function trustProxyBlockingProbe(req, res, next) {
+    if (probeComplete) return next();
+    probeComplete = true;
+
+    const hasForwardedFor = !!req.headers["x-forwarded-for"];
+    const hasForwardedProto = !!req.headers["x-forwarded-proto"];
+    const hasForwardedHost = !!req.headers["x-forwarded-host"];
+    const hasVia = !!req.headers["via"];
+    const hasCfRay = !!req.headers["cf-ray"];
+    const hasFlyReqId = !!req.headers["fly-request-id"];
+    const hasXRealIp = !!req.headers["x-real-ip"];
+    const hasXAmznTraceId = !!req.headers["x-amzn-trace-id"];
+
+    const headerScore =
+      (hasForwardedFor ? 3 : 0) +
+      (hasForwardedProto ? 2 : 0) +
+      (hasForwardedHost ? 1 : 0) +
+      (hasVia ? 2 : 0) +
+      (hasCfRay ? 3 : 0) +
+      (hasFlyReqId ? 3 : 0) +
+      (hasXRealIp ? 2 : 0) +
+      (hasXAmznTraceId ? 3 : 0);
+
+    const remoteAddr = (req.socket.remoteAddress || "").replace("::ffff:", "");
+    const remoteIsPrivate = isPrivateIP(remoteAddr);
+
+    if (headerScore >= 3 && remoteIsPrivate) {
+      // Confirmed proxy: TCP source is private + proxy headers present
+      app.set("trust proxy", buildTrustFunction());
+      initlog("[trust-proxy] ✓ PROBE CONFIRMED: real proxy detected (score: " + headerScore + ")");
+      logProxyHeaders(req);
+    } else if (headerScore >= 3 && !remoteIsPrivate) {
+      // Proxy headers from a public IP — do NOT trust, possible spoof
+      app.set("trust proxy", false);
+      initlog("[trust-proxy] ⚠ WARNING: proxy headers from PUBLIC IP " + remoteAddr + " — ignoring (possible spoof)");
+    } else {
+      // No proxy headers at all — genuinely direct connection
+      app.set("trust proxy", false);
+      initlog("[trust-proxy] ✗ No proxy headers detected — disabled");
+    }
+
+    // IMPORTANT: trust proxy is now set BEFORE this request continues
+    // to the rate limiter, so express-rate-limit won't throw
+    next();
+  });
+
+  // Periodic re-check for dynamic environments (e.g. container migration)
   setInterval(() => {
     const freshEnv = detectEnvSignals();
     const freshFs = detectFilesystemSignals();
     const freshScore = freshEnv.length * 3 + freshFs.length * 2;
 
-    if (freshScore >= 2 && confirmedProxy === null) {
-      confirmedProxy = true;
+    if (freshScore >= 2 && !probeComplete) {
       app.set("trust proxy", buildTrustFunction());
       initlog("[trust-proxy] ✓ Periodic re-check upgraded trust proxy (score: " + freshScore + ")");
     }
   }, 60_000).unref();
 
 })();
-    const rateLimit = require("express-rate-limit");
 
-const limiter = rateLimit({
-    windowMs: 15 * 1000, // 25 second window
-    max: 150, // limit each IP to 200 requests per 30 seconds
-});
-    app.use(limiter);
+  // Rate limiter goes AFTER trust proxy engine
+  const limiter = rateLimit({
+    windowMs: 15 * 1000,
+    max: 150,
+  });
+  app.use(limiter);
+  app.use(ieBlockMiddleware);
+  initlog("Loaded express.js");
+  app.engine("html", require("ejs").renderFile);
+  initlog("Loaded EJS");
+  app.use(modules.express.urlencoded({ extended: true }));
+  app.use(modules.useragent.express());
+  app.use(modules.express.json());
 
-  initlog("Loaded limitter");
-  
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
