@@ -71,13 +71,7 @@
   );
 
   const sha384 = modules.hash;
-  const rateLimit = require("express-rate-limit");
 
-const limiter = rateLimit({
-    windowMs: 15 * 1000, // 25 second window
-    max: 150, // limit each IP to 200 requests per 30 seconds
-});
-  initlog("Loaded limitter");
   
   var app = modules.express();
   app.use(limiter);
@@ -395,7 +389,13 @@ const limiter = rateLimit({
   }, 60_000).unref();
 
 })();
-  
+    const rateLimit = require("express-rate-limit");
+
+const limiter = rateLimit({
+    windowMs: 15 * 1000, // 25 second window
+    max: 150, // limit each IP to 200 requests per 30 seconds
+});
+  initlog("Loaded limitter");
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
