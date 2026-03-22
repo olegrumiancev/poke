@@ -812,7 +812,8 @@ _seekPostTimers: []
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
     if (state.restarting || state.seeking || state.seekBuffering || state.strictBufferHold) return;
-    if (NotMakePlayBackFixingNoticable.isActive()) return;
+    // Only block keepalive during RECOVERING (NMPBFN owns play), not SETTLING
+    if (NotMakePlayBackFixingNoticable.isRecovering()) return;
     // Keep media alive when: hidden, immune (tab transition), or blurred
     // (alt-tab without full tab switch — window loses focus but stays "visible").
     // No BPMM gate — oscillation circuit-breaker must never block keepalive.
@@ -873,12 +874,8 @@ _seekPostTimers: []
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    // During NMPBFN recovery, it owns all play() calls. We still swallow the
-    // pause event (stopImmediatePropagation above) so no other handler sees it,
-    // but we do NOT call play() ourselves — NMPBFN's retry system handles that.
-    if (NotMakePlayBackFixingNoticable.isRecovering()) return;
-    // Deduplicate per-element: if we already called play() on THIS element
-    // within 150ms, skip — multiple rapid play() calls create audible stutter.
+    // Always counter-play during immunity — even during NMPBFN recovery.
+    // The DONTMAKEITDOUBLEPLAY wrapper deduplicates at 300ms anyway.
     const el = e.target;
     const t = now();
     const lastPlay = _guardPlayTimes.get(el) || 0;
@@ -1043,7 +1040,8 @@ _seekPostTimers: []
     // -----------------------------------------------------------------------
     function onReturn() {
       if (!state.intendedPlaying && !state.resumeOnVisible &&
-          !(wantsStartupAutoplay() && !state.firstPlayCommitted)) return;
+          !(wantsStartupAutoplay() && !state.firstPlayCommitted) &&
+          !state.startupPhase) return;
 
       // If already recovering from a very recent return (<500ms), skip
       if (_phase === PHASE_RECOVERING && (now() - _phaseAt) < 500) return;
@@ -1115,6 +1113,13 @@ _seekPostTimers: []
     function _doSingleCleanPlay(gen) {
       if (_recoveryGen !== gen) return;
       _playAttempts++;
+      // During startup recovery, commit play intent so full machinery activates
+      if (state.startupPhase || wantsStartupAutoplay()) {
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+      }
+      // Protect newly-started audio from stall-pause for 1.5s
+      state.audioStartGraceUntil = Math.max(state.audioStartGraceUntil, now() + 1500);
       try {
         const targetVol = (coupledMode && audio)
           ? (_snapshotVol > 0.01 ? _snapshotVol : targetVolFromVideo())
@@ -3614,7 +3619,8 @@ _seekPostTimers: []
       return state.intendedPlaying ||
              state.resumeOnVisible ||
              state.bgHiddenWasPlaying ||
-             (!state.firstPlayCommitted && wantsStartupAutoplay());
+             (!state.firstPlayCommitted && wantsStartupAutoplay()) ||
+             (state.startupPhase && wantsStartupAutoplay());
     },
 
     // Fires play() on both video and audio immediately.
