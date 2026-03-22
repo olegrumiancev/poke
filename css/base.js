@@ -5835,7 +5835,6 @@ _seekPostTimers: []
       if (state.playRequestedDuringSeek || state.seekWantedPlaying) {
         state.playRequestedDuringSeek = false;
         state.seekWantedPlaying = false;
-        // Aggressively clear all blocking state before audio restart
         state.videoWaiting = false;
         clearAudioPauseLocks();
         state.audioPlayGeneration++;
@@ -5846,7 +5845,20 @@ _seekPostTimers: []
         state.audioFadeCompleteUntil = 0;
         cancelActiveFade();
         await ensureUnmutedIfNotUserMuted().catch(() => {});
-        if (state.seekId === currentSeekId || !state.seeking) {
+
+        // Fast path: if audio is already playing and near the right position,
+        // just ensure video is playing — skip full playTogether to avoid glitches.
+        const _audioAlreadySynced = coupledMode && audio && !audio.paused &&
+          Math.abs((Number(audio.currentTime) || 0) - (Number(video.currentTime()) || 0)) < 0.3;
+        if (_audioAlreadySynced) {
+          // Audio kept playing through seek (buffered fast path). Just kick video.
+          if (getVideoPaused()) execProgrammaticVideoPlay();
+          // Restore audio volume if it was zeroed
+          const _tv = targetVolFromVideo();
+          if (audio.volume < _tv * 0.5 && _tv > 0) {
+            try { audio.volume = _tv; } catch {}
+          }
+        } else if (state.seekId === currentSeekId || !state.seeking) {
           await playTogether().catch(() => {});
         }
       }
@@ -8309,14 +8321,32 @@ _seekPostTimers: []
           }
         }, SEEK_WATCHDOG_MS);
 
-        // Immediately pause+mute audio. Actual time sync happens in 'seeked'.
+        // Sync audio to seek target. If target is buffered, seek without pausing
+        // (no audible gap). Only pause+mute for unbuffered seeks.
         if (coupledMode && audio) {
-          squelchAudioEvents(600);
-          try {
-            cancelActiveFade();
-            audio.volume = 0;
-            if (!audio.paused) audio.pause();
-          } catch {}
+          const _seekTargetBuffered = (() => {
+            try {
+              const buf = audio.buffered;
+              for (let i = 0; i < buf.length; i++) {
+                if (buf.start(i) <= seekTime + 0.3 && buf.end(i) > seekTime) return true;
+              }
+            } catch {}
+            return false;
+          })();
+          if (_seekTargetBuffered && !audio.paused) {
+            // Fast path: target buffered → just move audio position, keep playing
+            state._allowAudioTimeWrite = true;
+            try { audio.currentTime = seekTime; } catch {}
+            state._allowAudioTimeWrite = false;
+          } else {
+            // Slow path: target unbuffered → pause+mute to avoid stale decode replay
+            squelchAudioEvents(600);
+            try {
+              cancelActiveFade();
+              audio.volume = 0;
+              if (!audio.paused) audio.pause();
+            } catch {}
+          }
         }
 
         if (!state.intendedPlaying) {
@@ -8344,9 +8374,13 @@ _seekPostTimers: []
         state.lastKnownGoodVTts = now();
         state.pendingSeekTarget = newTime;
         if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
-          // Allow our writes through the currentTime gate
-          state._allowAudioTimeWrite = true;
-          try { audio.currentTime = newTime; } catch {}
+          // Only seek audio if it's actually drifted from the target
+          const _curAudioTime = Number(audio.currentTime) || 0;
+          if (Math.abs(_curAudioTime - newTime) > 0.1) {
+            state._allowAudioTimeWrite = true;
+            try { audio.currentTime = newTime; } catch {}
+            state._allowAudioTimeWrite = false;
+          }
           const _seekedId = state.seekId;
           setTimeout(() => {
             if (state.seekId !== _seekedId) return;
