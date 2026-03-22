@@ -6088,18 +6088,15 @@ _seekPostTimers: []
     const t0 = Number(video.currentTime()) || 0;
     const primeWait = now() - state.startupPrimeStartedAt;
     const inBg = document.visibilityState === "hidden" || !isWindowFocused();
-    // Only require VIDEO to be buffered for priming. Audio can start via play()
-    // even without buffer — browser queues it and plays when data arrives.
-    // Waiting for both delays audio startup by seconds on slow connections.
     const vNode = getVideoNode();
-    if (!canPlayAt(vNode, t0) && !inBg) {
-      const primeWaitLong = primeWait > 2500;
-      if (!primeWaitLong) {
-        state.strictBufferHold = true;
-        if (!state.bufferHoldSince) state.bufferHoldSince = now();
-        state.strictBufferReason = "startup-buffer";
-        return;
-      }
+    const videoAlreadyPlaying = vNode && !vNode.paused;
+    // If video is already playing (autoplay succeeded), skip buffer check — just prime.
+    // Otherwise, wait for video to have enough data (but cap at 2.5s).
+    if (!videoAlreadyPlaying && !canPlayAt(vNode, t0) && !inBg && primeWait < 2500) {
+      state.strictBufferHold = true;
+      if (!state.bufferHoldSince) state.bufferHoldSince = now();
+      state.strictBufferReason = "startup-buffer";
+      return;
     }
     state.startupPrimed = true;
     clearBufferHold();
@@ -6121,9 +6118,11 @@ _seekPostTimers: []
   }
 
   function evaluateBufferHoldNeed(vt, at) {
-    if (!state.intendedPlaying || state.seeking || state.syncing) return false;
+    if (!state.intendedPlaying || state.seeking || state.seekBuffering || state.syncing) return false;
     if (!state.audioEverStarted && state.startupPhase) return false;
     if (startupSettleActive()) return false;
+    // Don't trigger buffer hold right after a seek — let the browser buffer naturally
+    if (now() < state.seekCooldownUntil) return false;
     if (document.visibilityState === "hidden" || !isWindowFocused()) return false;
     const checkTime = Math.max(vt, at || 0);
     const vNode = getVideoNode();
@@ -6299,7 +6298,7 @@ _seekPostTimers: []
     isAltTabTransitionActive() ||
     (platform.chromiumOnlyBrowser && chromiumBgPauseBlocked());
 
-    if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing) {
+    if (state.intendedPlaying && !state.restarting && !state.seeking && !state.seekBuffering && !state.syncing) {
       if (state.strictBufferHold) {
         if (!vPaused) execProgrammaticVideoPause();
         if (!aPaused) execProgrammaticAudioPause(500);
@@ -6799,19 +6798,19 @@ _seekPostTimers: []
     const onAudioWaiting = () => {
       if (!coupledMode || !state.intendedPlaying || state.restarting) return;
       if (state.seeking || state.seekResumeInFlight || state.seekBuffering) return;
+      if (now() < state.seekCooldownUntil) return; // Don't stall-pause right after a seek
       if (state.tabReturnImmuneUntil > now() || NotMakePlayBackFixingNoticable.isActive()) return;
       if (!state.startupPrimed || (state.startupPhase && !state.firstPlayCommitted)) return;
       state.audioWaiting = true;
       state.audioStallSince = state.audioStallSince || now();
-      // Delayed pause: skip micro-stalls (<150ms)
       if (state._stallVideoPauseTimer) { clearTimeout(state._stallVideoPauseTimer); state._stallVideoPauseTimer = null; }
       state._stallVideoPauseTimer = setTimeout(() => {
         state._stallVideoPauseTimer = null;
         if (!state.audioWaiting || !state.intendedPlaying || state.restarting) return;
         if (state.seeking || state.seekResumeInFlight || state.seekBuffering) return;
+        if (now() < state.seekCooldownUntil) return;
         if (state.tabReturnImmuneUntil > now() || NotMakePlayBackFixingNoticable.isActive()) return;
         if (getVideoPaused()) return;
-        // Audio stall persisted — pause video to stay in sync
         state.audioStallVideoPaused = true;
         execProgrammaticVideoPause();
       }, 150);
@@ -7599,7 +7598,7 @@ _seekPostTimers: []
         if (_dur > 1 && _ct > _dur - 2.5) _nearEnd = true;
       } catch {}
       // During NMPBFN recovery/settling, don't stall-pause audio — NMPBFN owns playback
-      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(state.tabReturnImmuneUntil > now()) && !_nearEnd && !NotMakePlayBackFixingNoticable.isActive()) {
+      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(now() < state.seekCooldownUntil) && !(state.tabReturnImmuneUntil > now()) && !_nearEnd && !NotMakePlayBackFixingNoticable.isActive()) {
         // Delayed stall-pause: wait 150ms so micro-stalls don't cause jarring audio cuts.
         if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
         state._stallAudioPauseTimer = setTimeout(() => {
@@ -7770,13 +7769,19 @@ _seekPostTimers: []
       }
       setFastSync(2000);
 
-      // --- POST-AUTOPLAY AUDIO KICK: the startup audio kick at the top of this
-      // handler may have been skipped because intendedPlaying was false during
-      // autoplay. Now that intendedPlaying is set, try again immediately.
+      // --- FORCE PRIME + AUDIO KICK: video is confirmed playing. If startup
+      // hasn't primed yet, force it now — we KNOW video has data. Then start
+      // audio immediately. This is the primary path for coupled autoplay.
+      if (coupledMode && state.startupPhase && !state.startupPrimed) {
+        maybePrimeStartup();
+        if (state.startupPrimed) scheduleStartupAutoplayKick();
+        forceAudioStartupPlay();
+      }
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
         clearAudioPauseLocks();
+        clearBufferHold();
         DONTMAKEITDOUBLEPLAY.resetAll();
         const _vtKick = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
         if (isFinite(_vtKick) && Math.abs((Number(audio.currentTime) || 0) - _vtKick) > 0.15) {
