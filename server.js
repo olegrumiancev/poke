@@ -88,7 +88,314 @@ const limiter = rateLimit({
   app.use(modules.express.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
   app.use(modules.useragent.express());
   app.use(modules.express.json()); // for parsing application/json
-  app.enable("trust proxy");
+  
+// ── Ultra-Smart Trust Proxy Engine ────────────────────────────────
+(function configureTrustProxy() {
+  const os = require("os");
+  const http = require("http");
+  const net = require("net");
+  const path = require("path");
+
+  const PRIVATE_CIDRS = [
+    "loopback",
+    "linklocal",
+    "uniquelocal",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+  ];
+
+  // ─── .env loading (only if file exists) ────────────────────────
+  const dotenvPath = path.resolve(process.cwd(), ".env");
+  let dotenvLoaded = false;
+
+  try {
+    fs.accessSync(dotenvPath, fs.constants.F_OK);
+    // .env exists — try to load it
+    try {
+      require("dotenv").config({ path: dotenvPath });
+      dotenvLoaded = true;
+      initlog("[trust-proxy] .env file found and loaded");
+    } catch (e) {
+      // dotenv package not installed — that's fine, skip it
+      initlog("[trust-proxy] .env file found but dotenv not installed — reading raw");
+      // Minimal manual parse as fallback
+      try {
+        const raw = fs.readFileSync(dotenvPath, "utf8");
+        for (const line of raw.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const eq = trimmed.indexOf("=");
+          if (eq === -1) continue;
+          const key = trimmed.slice(0, eq).trim();
+          let val = trimmed.slice(eq + 1).trim();
+          // Strip surrounding quotes
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) process.env[key] = val;
+        }
+        dotenvLoaded = true;
+        initlog("[trust-proxy] .env manually parsed OK");
+      } catch (readErr) {
+        initlog("[trust-proxy] ⚠ Failed to read .env: " + readErr.message);
+      }
+    }
+  } catch {
+     initlog("[trust-proxy] No .env file found — using system env only");
+  }
+
+   function ipToLong(ip) {
+    return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
+  }
+
+  function cidrContains(cidr, ip) {
+    if (!net.isIPv4(ip)) return false;
+    const [subnet, bits] = cidr.split("/");
+    const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1) >>> 0;
+    return (ipToLong(ip) & mask) === (ipToLong(subnet) & mask);
+  }
+
+  function isPrivateIP(ip) {
+    if (net.isIPv6(ip)) {
+      return /^(::1|fe80:|fc00:|fd00:|::ffff:((10\.)|(172\.(1[6-9]|2\d|3[01])\.)|(192\.168\.)))/i.test(ip);
+    }
+    if (!net.isIPv4(ip)) return false;
+    return (
+      cidrContains("10.0.0.0/8", ip) ||
+      cidrContains("172.16.0.0/12", ip) ||
+      cidrContains("192.168.0.0/16", ip) ||
+      cidrContains("127.0.0.0/8", ip) ||
+      cidrContains("169.254.0.0/16", ip)
+    );
+  }
+
+   function detectEnvSignals() {
+    const signals = {
+      "DYNO": "Heroku",
+      "FLY_APP_NAME": "Fly.io",
+      "RENDER_SERVICE_ID": "Render",
+      "RAILWAY_SERVICE_ID": "Railway",
+      "VERCEL": "Vercel",
+      "AWS_EXECUTION_ENV": "AWS Lambda/ECS",
+      "GAE_APPLICATION": "Google App Engine",
+      "K_SERVICE": "Cloud Run/Knative",
+      "WEBSITE_SITE_NAME": "Azure App Service",
+      "ECS_CONTAINER_METADATA_URI": "AWS ECS",
+      "ECS_CONTAINER_METADATA_URI_V4": "AWS ECS v4",
+      "KUBERNETES_SERVICE_HOST": "Kubernetes",
+      "CF_INSTANCE_IP": "Cloud Foundry",
+      "DOKKU_APP_TYPE": "Dokku",
+      "COOLIFY_APP_ID": "Coolify",
+      "CAPROVER_APP": "CapRover",
+    };
+
+    const detected = [];
+    for (const [key, name] of Object.entries(signals)) {
+      if (process.env[key]) detected.push({ key, name, value: process.env[key] });
+    }
+
+    return detected;
+  }
+
+   function detectFilesystemSignals() {
+    const signals = [];
+
+    const checks = [
+      { path: "/.dockerenv", name: "Docker" },
+      { path: "/run/.containerenv", name: "Podman" },
+      { path: "/var/run/secrets/kubernetes.io", name: "Kubernetes" },
+    ];
+
+    for (const { path, name } of checks) {
+      try {
+        fs.accessSync(path, fs.constants.F_OK);
+        signals.push({ path, name });
+      } catch {}
+    }
+
+    try {
+      const cgroup = fs.readFileSync("/proc/1/cgroup", "utf8");
+      const patterns = [
+        [/docker/i, "Docker"],
+        [/kubepods/i, "Kubernetes"],
+        [/containerd/i, "containerd"],
+        [/lxc/i, "LXC"],
+        [/podman/i, "Podman"],
+      ];
+      for (const [re, name] of patterns) {
+        if (re.test(cgroup)) signals.push({ path: "/proc/1/cgroup", name });
+      }
+    } catch {}
+
+    try {
+      const container = fs.readFileSync("/run/systemd/container", "utf8").trim();
+      if (container) signals.push({ path: "/run/systemd/container", name: container });
+    } catch {}
+
+    return signals;
+  }
+
+   function detectNetworkSignals() {
+    const signals = [];
+    const ifaces = os.networkInterfaces();
+    const containerIfacePattern = /^(docker|br-|veth|cali|flannel|cni|wg|tun|tap|tailscale|podman)/;
+
+    for (const [name, addrs] of Object.entries(ifaces)) {
+      if (containerIfacePattern.test(name)) {
+        signals.push({ iface: name, type: "container-interface" });
+      }
+    }
+
+    return signals;
+  }
+
+   let confirmedProxy = null;
+
+  function installProbe(app) {
+    let probed = false;
+
+    app.use(function trustProxyProbe(req, res, next) {
+      if (probed) return next();
+
+      const hasForwardedFor = !!req.headers["x-forwarded-for"];
+      const hasForwardedProto = !!req.headers["x-forwarded-proto"];
+      const hasForwardedHost = !!req.headers["x-forwarded-host"];
+      const hasVia = !!req.headers["via"];
+      const hasCfRay = !!req.headers["cf-ray"];
+      const hasFlyReqId = !!req.headers["fly-request-id"];
+      const hasXRealIp = !!req.headers["x-real-ip"];
+      const hasXAmznTraceId = !!req.headers["x-amzn-trace-id"];
+
+      const headerScore =
+        (hasForwardedFor ? 3 : 0) +
+        (hasForwardedProto ? 2 : 0) +
+        (hasForwardedHost ? 1 : 0) +
+        (hasVia ? 2 : 0) +
+        (hasCfRay ? 3 : 0) +
+        (hasFlyReqId ? 3 : 0) +
+        (hasXRealIp ? 2 : 0) +
+        (hasXAmznTraceId ? 3 : 0);
+
+      const remoteIsPrivate = isPrivateIP(req.socket.remoteAddress?.replace("::ffff:", "") || "");
+
+      if (headerScore >= 3 && remoteIsPrivate) {
+        if (confirmedProxy !== true) {
+          confirmedProxy = true;
+          app.set("trust proxy", buildTrustFunction());
+          initlog("[trust-proxy] ✓ PROBE CONFIRMED: real proxy detected (score: " + headerScore + ")");
+          logProxyHeaders(req);
+        }
+      } else if (headerScore >= 3 && !remoteIsPrivate) {
+        initlog("[trust-proxy] ⚠ WARNING: proxy headers from PUBLIC IP " +
+          req.socket.remoteAddress + " — ignoring (possible spoof)");
+      }
+
+      probed = true;
+      next();
+    });
+  }
+
+  function logProxyHeaders(req) {
+    const interesting = [
+      "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host",
+      "x-real-ip", "via", "cf-ray", "cf-connecting-ip",
+      "fly-request-id", "x-amzn-trace-id",
+    ];
+    const found = interesting.filter(h => req.headers[h]);
+    if (found.length) {
+      initlog("[trust-proxy]   Headers seen: " + found.join(", "));
+    }
+  }
+
+  // ─── Build the trust function ──────────────────────────────────
+  function buildTrustFunction() {
+    return function smartTrustProxy(addr) {
+      const ip = addr.replace("::ffff:", "");
+      return isPrivateIP(ip);
+    };
+  }
+
+  // ─── User override via env var (only if env was available) ─────
+  function checkUserOverride() {
+    const val = (process.env.TRUST_PROXY || "").toLowerCase().trim();
+    if (!val) return null;
+
+    if (val === "true" || val === "1" || val === "yes") return "force-on";
+    if (val === "false" || val === "0" || val === "no") return "force-off";
+
+    const num = parseInt(val, 10);
+    if (!isNaN(num) && num > 0) return num;
+
+    return val;
+  }
+
+  // ─── Main logic ────────────────────────────────────────────────
+  const override = checkUserOverride();
+
+  if (override === "force-off") {
+    app.set("trust proxy", false);
+    initlog("[trust-proxy] ✗ Force-disabled via TRUST_PROXY=false");
+    return;
+  }
+
+  if (override === "force-on") {
+    app.set("trust proxy", buildTrustFunction());
+    initlog("[trust-proxy] ✓ Force-enabled via TRUST_PROXY=true (private IPs only)");
+    return;
+  }
+
+  if (typeof override === "number") {
+    app.set("trust proxy", override);
+    initlog("[trust-proxy] ✓ Hop count set via TRUST_PROXY=" + override);
+    return;
+  }
+
+  if (typeof override === "string") {
+    app.set("trust proxy", override);
+    initlog("[trust-proxy] ✓ Custom CIDR set via TRUST_PROXY=" + override);
+    return;
+  }
+
+  // Auto-detection
+  const envSignals = detectEnvSignals();
+  const fsSignals = detectFilesystemSignals();
+  const netSignals = detectNetworkSignals();
+
+  const totalConfidence =
+    envSignals.length * 3 +
+    fsSignals.length * 2 +
+    netSignals.length * 1;
+
+  if (envSignals.length) initlog("[trust-proxy] Env signals: " + envSignals.map(s => s.name).join(", "));
+  if (fsSignals.length) initlog("[trust-proxy] FS signals: " + fsSignals.map(s => s.name).join(", "));
+  if (netSignals.length) initlog("[trust-proxy] Net signals: " + netSignals.map(s => `${s.iface}(${s.type})`).join(", "));
+  initlog("[trust-proxy] Confidence score: " + totalConfidence);
+
+  if (totalConfidence >= 2) {
+    app.set("trust proxy", buildTrustFunction());
+    initlog("[trust-proxy] ✓ Auto-enabled (confidence: " + totalConfidence + ")");
+  } else {
+    app.set("trust proxy", false);
+    initlog("[trust-proxy] △ Low confidence — starting disabled, probe will upgrade if real proxy detected");
+  }
+
+  installProbe(app);
+
+  setInterval(() => {
+    const freshEnv = detectEnvSignals();
+    const freshFs = detectFilesystemSignals();
+    const freshScore = freshEnv.length * 3 + freshFs.length * 2;
+
+    if (freshScore >= 2 && confirmedProxy === null) {
+      confirmedProxy = true;
+      app.set("trust proxy", buildTrustFunction());
+      initlog("[trust-proxy] ✓ Periodic re-check upgraded trust proxy (score: " + freshScore + ")");
+    }
+  }, 60_000).unref();
+
+})();
+  
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
