@@ -74,24 +74,38 @@
 
   var app = modules.express();
 
-// ── Ultra-Smart Trust Proxy Engine ────────────────────────────────
-// IMPORTANT: This MUST run before rate limiter and all other middleware
-// so that trust proxy is configured before anything checks req.ip
+/*
+ * poke trust proxy auto-config
+ *
+ * this has to run BEFORE the rate limiter or anything that touches req.ip,
+ * otherwise express-rate-limit freaks out about x-forwarded-for headers
+ * when trust proxy is still false. we learned that the hard way lol
+ *
+ * it figures out if we're behind a reverse proxy by checking env vars,
+ * docker/k8s files, and network interfaces. if it cant tell at startup,
+ * it sniffs the first actual request to see if proxy headers show up.
+ *
+ * even when enabled it ONLY trusts private/local IPs (10.x, 172.x, 192.168.x etc)
+ * so nobody on the public internet can spoof x-forwarded-for at the tcp level.
+ *
+ * you can also just set TRUST_PROXY in your env/.env to force it on or off.
+ */
 (function configureTrustProxy() {
   const os = require("os");
   const net = require("net");
   const path = require("path");
 
-  // ─── .env loading (only if file exists) ────────────────────────
+  // try loading .env if it exists, no big deal if it doesnt
   const dotenvPath = path.resolve(process.cwd(), ".env");
 
   try {
     fs.accessSync(dotenvPath, fs.constants.F_OK);
     try {
       require("dotenv").config({ path: dotenvPath });
-      initlog("[trust-proxy] .env file found and loaded");
+      initlog("[POKE-trust-proxy] found .env, loaded it");
     } catch (e) {
-      initlog("[trust-proxy] .env file found but dotenv not installed — reading raw");
+      // dotenv package isnt installed, just parse it ourselves
+      initlog("[POKE-trust-proxy] .env exists but no dotenv package, parsing manually");
       try {
         const raw = fs.readFileSync(dotenvPath, "utf8");
         for (const line of raw.split("\n")) {
@@ -106,16 +120,16 @@
           }
           if (!process.env[key]) process.env[key] = val;
         }
-        initlog("[trust-proxy] .env manually parsed OK");
+        initlog("[POKE-trust-proxy] .env parsed ok");
       } catch (readErr) {
-        initlog("[trust-proxy] ⚠ Failed to read .env: " + readErr.message);
+        initlog("[POKE-trust-proxy] couldnt read .env: " + readErr.message);
       }
     }
   } catch {
-    initlog("[trust-proxy] No .env file found — using system env only");
+    initlog("[POKE-trust-proxy] no .env file, thats fine");
   }
 
-  // ─── CIDR math ─────────────────────────────────────────────────
+  // ip math stuff for checking if an ip is in a cidr range
   function ipToLong(ip) {
     return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
   }
@@ -141,7 +155,7 @@
     );
   }
 
-  // ─── Detection: environment signals ────────────────────────────
+  // checks for cloud platform / container env vars
   function detectEnvSignals() {
     const signals = {
       "DYNO": "Heroku",
@@ -169,7 +183,7 @@
     return detected;
   }
 
-  // ─── Detection: filesystem signals ─────────────────────────────
+  // checks for docker/podman/k8s files on disk
   function detectFilesystemSignals() {
     const signals = [];
 
@@ -208,7 +222,7 @@
     return signals;
   }
 
-  // ─── Detection: network interface signals ──────────────────────
+  // checks for container-looking network interfaces
   function detectNetworkSignals() {
     const signals = [];
     const ifaces = os.networkInterfaces();
@@ -222,9 +236,9 @@
     return signals;
   }
 
-  // ─── Build the trust function ──────────────────────────────────
+  // only trusts private ips, never the whole internet
   function buildTrustFunction() {
-    return function smartTrustProxy(addr) {
+    return function pokeTrustProxy(addr) {
       const ip = addr.replace("::ffff:", "");
       return isPrivateIP(ip);
     };
@@ -238,11 +252,11 @@
     ];
     const found = interesting.filter(h => req.headers[h]);
     if (found.length) {
-      initlog("[trust-proxy]   Headers seen: " + found.join(", "));
+      initlog("[POKE-trust-proxy] headers we saw: " + found.join(", "));
     }
   }
 
-  // ─── User override via env var ─────────────────────────────────
+  // let people override via env var if they want
   function checkUserOverride() {
     const val = (process.env.TRUST_PROXY || "").toLowerCase().trim();
     if (!val) return null;
@@ -256,34 +270,34 @@
     return val;
   }
 
-  // ─── Main logic ────────────────────────────────────────────────
+  // ok lets actually do the thing
   const override = checkUserOverride();
 
   if (override === "force-off") {
     app.set("trust proxy", false);
-    initlog("[trust-proxy] ✗ Force-disabled via TRUST_PROXY=false");
+    initlog("[POKE-trust-proxy] force-disabled via TRUST_PROXY=false");
     return;
   }
 
   if (override === "force-on") {
     app.set("trust proxy", buildTrustFunction());
-    initlog("[trust-proxy] ✓ Force-enabled via TRUST_PROXY=true (private IPs only)");
+    initlog("[POKE-trust-proxy] force-enabled via TRUST_PROXY=true (private IPs only)");
     return;
   }
 
   if (typeof override === "number") {
     app.set("trust proxy", override);
-    initlog("[trust-proxy] ✓ Hop count set via TRUST_PROXY=" + override);
+    initlog("[POKE-trust-proxy] hop count set via TRUST_PROXY=" + override);
     return;
   }
 
   if (typeof override === "string") {
     app.set("trust proxy", override);
-    initlog("[trust-proxy] ✓ Custom CIDR set via TRUST_PROXY=" + override);
+    initlog("[POKE-trust-proxy] custom CIDR set via TRUST_PROXY=" + override);
     return;
   }
 
-  // Auto-detection
+  // no override, auto-detect
   const envSignals = detectEnvSignals();
   const fsSignals = detectFilesystemSignals();
   const netSignals = detectNetworkSignals();
@@ -293,28 +307,25 @@
     fsSignals.length * 2 +
     netSignals.length * 1;
 
-  if (envSignals.length) initlog("[trust-proxy] Env signals: " + envSignals.map(s => s.name).join(", "));
-  if (fsSignals.length) initlog("[trust-proxy] FS signals: " + fsSignals.map(s => s.name).join(", "));
-  if (netSignals.length) initlog("[trust-proxy] Net signals: " + netSignals.map(s => `${s.iface}(${s.type})`).join(", "));
-  initlog("[trust-proxy] Confidence score: " + totalConfidence);
+  if (envSignals.length) initlog("[POKE-trust-proxy] env: " + envSignals.map(s => s.name).join(", "));
+  if (fsSignals.length) initlog("[POKE-trust-proxy] fs: " + fsSignals.map(s => s.name).join(", "));
+  if (netSignals.length) initlog("[POKE-trust-proxy] net: " + netSignals.map(s => `${s.iface}(${s.type})`).join(", "));
+  initlog("[POKE-trust-proxy] confidence: " + totalConfidence);
 
   if (totalConfidence >= 2) {
-    // High confidence from heuristics — enable immediately
     app.set("trust proxy", buildTrustFunction());
-    initlog("[trust-proxy] ✓ Auto-enabled (confidence: " + totalConfidence + ")");
+    initlog("[POKE-trust-proxy] ✓ auto-enabled (confidence: " + totalConfidence + ")");
     return;
   }
 
-  // ─── Low confidence: use a blocking probe on the first request ─
-  // This is the key fix: instead of starting with trust proxy OFF and
-  // letting the rate limiter crash, we intercept the FIRST request,
-  // inspect it, configure trust proxy, and THEN let it continue
-  // through the rest of the middleware chain (including rate limiter).
-  initlog("[trust-proxy] △ Low confidence — will probe first request before rate limiter runs");
+  // not sure if theres a proxy, so we'll sniff the first real request.
+  // this middleware sits BEFORE the rate limiter in the stack so by the
+  // time express-rate-limit runs, trust proxy is already configured.
+  initlog("[POKE-trust-proxy] not sure yet, will check on first request");
 
   let probeComplete = false;
 
-  app.use(function trustProxyBlockingProbe(req, res, next) {
+  app.use(function pokeProxyProbe(req, res, next) {
     if (probeComplete) return next();
     probeComplete = true;
 
@@ -341,26 +352,24 @@
     const remoteIsPrivate = isPrivateIP(remoteAddr);
 
     if (headerScore >= 3 && remoteIsPrivate) {
-      // Confirmed proxy: TCP source is private + proxy headers present
+      // yep theres a proxy, and its coming from a local ip so its legit
       app.set("trust proxy", buildTrustFunction());
-      initlog("[trust-proxy] ✓ PROBE CONFIRMED: real proxy detected (score: " + headerScore + ")");
+      initlog("[POKE-trust-proxy] ✓ confirmed proxy on first request (score: " + headerScore + ")");
       logProxyHeaders(req);
     } else if (headerScore >= 3 && !remoteIsPrivate) {
-      // Proxy headers from a public IP — do NOT trust, possible spoof
+      // someone sending proxy headers from a public ip... nah
       app.set("trust proxy", false);
-      initlog("[trust-proxy] ⚠ WARNING: proxy headers from PUBLIC IP " + remoteAddr + " — ignoring (possible spoof)");
+      initlog("[POKE-trust-proxy] ⚠ proxy headers from public ip " + remoteAddr + ", ignoring");
     } else {
-      // No proxy headers at all — genuinely direct connection
+      // no proxy headers, direct connection
       app.set("trust proxy", false);
-      initlog("[trust-proxy] ✗ No proxy headers detected — disabled");
+      initlog("[POKE-trust-proxy] no proxy headers, disabled");
     }
 
-    // IMPORTANT: trust proxy is now set BEFORE this request continues
-    // to the rate limiter, so express-rate-limit won't throw
     next();
   });
 
-  // Periodic re-check for dynamic environments (e.g. container migration)
+  // re-check every minute in case environment changes (container stuff)
   setInterval(() => {
     const freshEnv = detectEnvSignals();
     const freshFs = detectFilesystemSignals();
@@ -368,356 +377,799 @@
 
     if (freshScore >= 2 && !probeComplete) {
       app.set("trust proxy", buildTrustFunction());
-      initlog("[trust-proxy] ✓ Periodic re-check upgraded trust proxy (score: " + freshScore + ")");
+      initlog("[POKE-trust-proxy] ✓ periodic re-check found proxy (score: " + freshScore + ")");
     }
   }, 60_000).unref();
 
 })();
 
-  // Philosophy: ONLY block traffic that is physically impossible for
-  // a human to generate. Never penalize based on user-agent, cookies,
-  // JS support, or any fingerprinting. Privacy browsers are welcome.
-  //
-  // Whitelists: known crawlers (verified by behavior, not just UA string),
-  // Cloudflare IPs, and CDN health checks.
-  //
-  (function installAntiDDoS() {
-    const net = require("net");
-    const rateLimit = require("express-rate-limit");
+/*
+ * PokeStopSkids v2
+ *
+ * poke's anti-ddos and anti-botnet system. zero fingerprinting,
+ * zero browser detection, zero cookie/js checks. we're a privacy
+ * frontend, we're not about to start spying on users to stop skids.
+ *
+ * what we actually look at (all per-IP, nothing else):
+ * - raw request volume (burst + sustained)
+ * - request timing patterns (are hits perfectly spaced? thats a bot)
+ * - path abuse (hammering /watch with random video ids)
+ * - coordinated flood detection (lots of new IPs all doing the same thing)
+ * - siege mode: if the whole server is getting slammed, lock it down
+ *
+ * what we will never look at:
+ * - user agent (empty is fine, weird is fine, tor browser is fine)
+ * - cookies, js, headers, accept-language, screen size, any of that
+ * - we dont even look at referer. privacy means privacy.
+ *
+ * crawlers are whitelisted so we dont nuke seo or link previews.
+ * cloudflare ips are exempt because cf already filters for us.
+ *
+ * skids get roasted. regular users never even know this exists.
+ */
+(function PokeStopSkids() {
+  const net = require("net");
+  const rateLimit = require("express-rate-limit");
 
-    // https://www.cloudflare.com/ips/
-    const CLOUDFLARE_V4 = [
-      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
-      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
-      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
-      "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
-      "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
-    ];
+  // cloudflare's published ip ranges - https://www.cloudflare.com/ips/
+  const CLOUDFLARE_V4 = [
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
+    "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
+    "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+  ];
 
-    function ipToLong(ip) {
-      return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
-    }
+  function ipToLong(ip) {
+    return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
+  }
 
-    function cidrContains(cidr, ip) {
-      if (!net.isIPv4(ip)) return false;
-      const [subnet, bits] = cidr.split("/");
-      const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1) >>> 0;
-      return (ipToLong(ip) & mask) === (ipToLong(subnet) & mask);
-    }
+  function cidrContains(cidr, ip) {
+    if (!net.isIPv4(ip)) return false;
+    const [subnet, bits] = cidr.split("/");
+    const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1) >>> 0;
+    return (ipToLong(ip) & mask) === (ipToLong(subnet) & mask);
+  }
 
-    function isCloudflareIP(ip) {
-      const clean = ip.replace("::ffff:", "");
-      if (!net.isIPv4(clean)) return false;
-      return CLOUDFLARE_V4.some(cidr => cidrContains(cidr, clean));
-    }
+  function isCloudflareIP(ip) {
+    const clean = ip.replace("::ffff:", "");
+    if (!net.isIPv4(clean)) return false;
+    return CLOUDFLARE_V4.some(cidr => cidrContains(cidr, clean));
+  }
 
-     // We match these loosely because crawlers are inherently high-volume
-    // and blocking them hurts SEO / link previews / federation.
-    // This does NOT grant trust — it just exempts from the DDoS checks.
-    // A fake "Googlebot" UA still can't do anything harmful, they just
-    // skip the rate check — and real abuse gets caught by the IP ban.
-    const KNOWN_BOT_PATTERNS = [
-      // Search engines
-      /googlebot/i,
-      /bingbot/i,
-      /slurp/i,                   // Yahoo
-      /duckduckbot/i,
-      /baiduspider/i,
-      /yandexbot/i,
-      /sogou/i,
-      /exabot/i,
-      /facebot/i,                 // Facebook crawler
-      /ia_archiver/i,             // Alexa / Internet Archive
-      /archive\.org_bot/i,
-      /qwantify/i,               // Qwant
-      /seznambot/i,
-      /mojeekbot/i,
-      /petalsearch/i,
-      /applebot/i,
+  // bots we like :3
+  const KNOWN_BOT_PATTERNS = [
+    // search
+    /googlebot/i, /bingbot/i, /slurp/i, /duckduckbot/i,
+    /baiduspider/i, /yandexbot/i, /sogou/i, /exabot/i,
+    /facebot/i, /ia_archiver/i, /archive\.org_bot/i,
+    /qwantify/i, /seznambot/i, /mojeekbot/i,
+    /petalsearch/i, /applebot/i,
+    // social / previews
+    /discordbot/i, /telegrambot/i, /twitterbot/i,
+    /whatsapp/i, /slackbot/i, /linkedinbot/i,
+    // fediverse <3
+    /mastodon/i, /pleroma/i, /misskey/i, /akkoma/i,
+    /lemmy/i, /kbin/i, /pixelfed/i, /gotosocial/i,
+    // uptime
+    /uptimerobot/i, /pingdom/i, /statuscake/i,
+    /site24x7/i, /hetrixtools/i, /freshping/i,
+    // cdn
+    /cloudflare/i, /cloudfront/i, /fastly/i,
+    // feeds
+    /feedfetcher/i, /feedly/i, /newsblur/i,
+    /tiny\s?tiny\s?rss/i, /miniflux/i,
+    // seo
+    /researchscan/i, /censys/i, /semrush/i, /ahrefs/i,
+  ];
 
-      // Social media / link previews
-      /discordbot/i,
-      /telegrambot/i,
-      /twitterbot/i,
-      /whatsapp/i,
-      /slackbot/i,
-      /linkedinbot/i,
-      /mastodon/i,               // Fediverse
-      /pleroma/i,                // Fediverse
-      /misskey/i,                // Fediverse
-      /akkoma/i,                 // Fediverse
+  function isKnownBot(ua) {
+    if (!ua) return false;
+    return KNOWN_BOT_PATTERNS.some(p => p.test(ua));
+  }
 
-      // Monitoring / uptime
-      /uptimerobot/i,
-      /pingdom/i,
-      /statuscake/i,
-      /site24x7/i,
-      /hetrixtools/i,
-      /freshping/i,
+  // messages for skids. rotated randomly. have fun reading these in
+  const SKID_MESSAGES = [
+    "lol",
+    "nope",
+    "nice try",
+    "do you think this is working? because its not",
+    "you paid money for this botnet didnt you",
+    "your requests are being dropped and nobody cares",
+    "this is embarrassing for you",
+    "imagine ddosing a youtube frontend. go outside",
+    "all that bandwidth for nothing lmao",
+    "you could be doing literally anything else right now",
+    "hey quick question: why",
+    "blocked <3",
+    "skill issue",
+    "maybe try a different hobby? this one isnt working out",
+    "server is still up btw. just so you know",
+    "your botnet has mass mass mass mass mass mass mass mass mass been mass mass mass mass mass mass mass mass mass blocked mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass :3",
+    "trans rights are human rights. anyway youre banned",
+    "L + ratio + blocked + server still up",
+    "every request you send makes poke mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass stronger (it doesnt but you dont know that)",
+    "have you considered mass mass mass that mass mass mass mass this mass mass mass mass mass mass is mass mass mass mass a mass mass mass waste mass mass mass of mass mass mass mass mass mass your mass mass time mass mass mass mass mass mass mass mass mass mass",
+    "you are mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass banned :3",
+    "did your mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass botnet come with a mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass receipt? mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass you should mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass get a mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass refund mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass mass",
+  ];
 
-      // CDN / infrastructure
-      /cloudflare/i,
-      /cloudfront/i,
-      /fastly/i,
+  function getSkidMessage() {
+    return SKID_MESSAGES[Math.floor(Math.random() * SKID_MESSAGES.length)];
+  }
 
-      // Feed readers
-      /feedfetcher/i,
-      /feedly/i,
-      /newsblur/i,
-      /tiny\s?tiny\s?rss/i,
-      /miniflux/i,
+  // per-ip tracking
+  const ipData = new Map();
 
-      // Research / academic
-      /researchscan/i,
-      /censys/i,
-      /semrush/i,
-      /ahrefs/i,
-    ];
+  // global flood tracking for siege mode
+  let globalRequestsLastSecond = 0;
+  let globalRequestsThisSecond = 0;
+  let siegeMode = false;
+  let siegeStartedAt = 0;
+  let lastSecondTick = Date.now();
 
-    function isKnownBot(ua) {
-      if (!ua) return false;
-      return KNOWN_BOT_PATTERNS.some(pattern => pattern.test(ua));
-    }
+  // thresholds
+  const BURST_LIMIT = 50;           // req/1s per ip (no human)
+  const SUSTAINED_LIMIT = 200;      // req/10s per ip
+  const SUSTAINED_WINDOW = 10000;
+  const BAN_BASE_MS = 30000;        // first ban 30s
+  const BAN_MAX_MS = 600000;        // max ban 10min
+  const STRIKE_DECAY_MS = 300000;   // forgive after 5min
+  const CLEANUP_INTERVAL = 60000;
+  const MAX_TRACKED_IPS = 50000;
 
-    // ─── Per-IP tracking state ─────────────────────────────────────
-    const ipData = new Map();
+  // /watch gets tighter limits because thats what people target
+  const WATCH_BURST_LIMIT = 20;     // 20 /watch req/sec is still insane
+  const WATCH_SUSTAINED_LIMIT = 80; // 80 /watch in 10s, come on
 
-    // Thresholds — intentionally VERY generous for humans
-    const BURST_LIMIT = 50;         // req/sec — physically impossible for a person
-    const SUSTAINED_LIMIT = 200;    // req/10sec — still way beyond any human
-    const SUSTAINED_WINDOW = 10000; // 10 seconds
-    const BAN_BASE_MS = 30000;      // first ban: 30 seconds
-    const BAN_MAX_MS = 600000;      // max ban: 10 minutes
-    const STRIKE_DECAY_MS = 300000; // strikes decay after 5 min of good behavior
-    const CLEANUP_INTERVAL = 60000; // clean stale entries every 60s
-    const MAX_TRACKED_IPS = 50000;  // memory cap — evict oldest if exceeded
+  // pattern detection thresholds
+  // if the time between requests has very low variance, its a script.
+  // humans are messy and random, bots are precise.
+  const TIMING_VARIANCE_THRESHOLD = 5; // ms - if stdev is under this, sus
+  const TIMING_MIN_SAMPLES = 15;       // need at least this many to judge
 
-    function getIPData(ip) {
-      let data = ipData.get(ip);
-      if (!data) {
-        // Memory protection: if we're tracking too many IPs, evict the oldest idle ones
-        if (ipData.size >= MAX_TRACKED_IPS) {
-          let oldestKey = null;
-          let oldestTime = Infinity;
-          for (const [key, val] of ipData) {
-            const lastActive = val.timestamps.length > 0
-              ? val.timestamps[val.timestamps.length - 1]
-              : 0;
-            if (lastActive < oldestTime && !val.banned) {
-              oldestTime = lastActive;
-              oldestKey = key;
-            }
+  // siege mode: if the whole server is getting hit this hard,
+  // stop serving non-essential stuff and only let through
+  // requests that look legit
+  const SIEGE_THRESHOLD = 2000;        // global req/sec to trigger siege
+  const SIEGE_COOLDOWN_MS = 30000;     // stay in siege for at least 30s
+
+  function getIPData(ip) {
+    let data = ipData.get(ip);
+    if (!data) {
+      if (ipData.size >= MAX_TRACKED_IPS) {
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, val] of ipData) {
+          const lastActive = val.ts.length > 0
+            ? val.ts[val.ts.length - 1]
+            : 0;
+          if (lastActive < oldestTime && !val.banned) {
+            oldestTime = lastActive;
+            oldestKey = key;
           }
-          if (oldestKey) ipData.delete(oldestKey);
         }
-        data = { timestamps: [], banned: false, banExpires: 0, strikes: 0, lastStrike: 0 };
-        ipData.set(ip, data);
+        if (oldestKey) ipData.delete(oldestKey);
       }
-      return data;
+      data = {
+        ts: [],           // all request timestamps (last 10s)
+        watchTs: [],      // /watch request timestamps (last 10s)
+        intervals: [],    // time gaps between requests (for pattern detection)
+        banned: false,
+        banExpires: 0,
+        strikes: 0,
+        lastStrike: 0,
+        reasons: [],      // what triggered the ban (for logging)
+        wasSkid: false,   // got caught by pattern detection, not just volume
+      };
+      ipData.set(ip, data);
+    }
+    return data;
+  }
+
+  function isBanned(data) {
+    if (!data.banned) return false;
+    if (Date.now() >= data.banExpires) {
+      data.banned = false;
+      return false;
+    }
+    return true;
+  }
+
+  function banIP(data, ip, reasons) {
+    data.strikes++;
+    data.lastStrike = Date.now();
+    data.reasons = reasons;
+    const duration = Math.min(BAN_BASE_MS * Math.pow(2, data.strikes - 1), BAN_MAX_MS);
+    data.banned = true;
+    data.banExpires = Date.now() + duration;
+    const reasonStr = reasons.join(" + ");
+    initlog(
+      `[PokeStopSkids] banned ${ip} for ${Math.round(duration / 1000)}s ` +
+      `(${reasonStr}, strike #${data.strikes})`
+    );
+  }
+
+  // check if request timing looks like a script
+  // real humans have random, messy timing between clicks.
+  // scripts and botnets have very consistent intervals.
+  // we calculate the standard deviation of the gaps between requests.
+  // low stdev = robotic = sus
+  function checkTimingPattern(data) {
+    const intervals = data.intervals;
+    if (intervals.length < TIMING_MIN_SAMPLES) return null;
+
+    // only look at the last 30 intervals
+    const recent = intervals.slice(-30);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / recent.length;
+    const stdev = Math.sqrt(variance);
+
+    // if the timing is robotically consistent AND the mean interval is small
+    // (they're going fast), thats a bot. a human with low stdev but slow
+    // requests (like reading an article every 30s) is fine.
+    if (stdev < TIMING_VARIANCE_THRESHOLD && mean < 500) {
+      return "robotic timing (stdev: " + stdev.toFixed(1) + "ms, avg: " + mean.toFixed(0) + "ms)";
     }
 
-    function isBanned(data) {
-      if (!data.banned) return false;
-      if (Date.now() >= data.banExpires) {
-        data.banned = false;
-        return false;
-      }
-      return true;
+    return null;
+  }
+
+  function checkAbuse(data, now, isWatch) {
+    const ts = data.ts;
+    const reasons = [];
+
+    // record timing interval between this and last request
+    if (ts.length > 0) {
+      const gap = now - ts[ts.length - 1];
+      data.intervals.push(gap);
+      // only keep last 50 intervals
+      if (data.intervals.length > 50) data.intervals.shift();
     }
 
-    function banIP(data, ip, reason) {
-      data.strikes++;
-      data.lastStrike = Date.now();
-      const duration = Math.min(BAN_BASE_MS * Math.pow(2, data.strikes - 1), BAN_MAX_MS);
-      data.banned = true;
-      data.banExpires = Date.now() + duration;
-      initlog(
-        `[anti-ddos] ⛔ Banned ${ip} for ${Math.round(duration / 1000)}s ` +
-        `(${reason}, strike ${data.strikes})`
+    ts.push(now);
+
+    // trim timestamps older than 10s
+    while (ts.length > 0 && ts[0] < now - SUSTAINED_WINDOW) {
+      ts.shift();
+    }
+
+    // burst check: requests in last 1 second
+    const oneSecAgo = now - 1000;
+    let burstCount = 0;
+    for (let i = ts.length - 1; i >= 0; i--) {
+      if (ts[i] >= oneSecAgo) burstCount++;
+      else break;
+    }
+    if (burstCount >= BURST_LIMIT) {
+      reasons.push("burst (" + burstCount + " req/1s)");
+    }
+
+    // sustained check
+    if (ts.length >= SUSTAINED_LIMIT) {
+      reasons.push("sustained (" + ts.length + " req/10s)");
+    }
+
+    // /watch specific checks (tighter because thats the expensive endpoint)
+    if (isWatch) {
+      data.watchTs.push(now);
+      while (data.watchTs.length > 0 && data.watchTs[0] < now - SUSTAINED_WINDOW) {
+        data.watchTs.shift();
+      }
+
+      let watchBurst = 0;
+      for (let i = data.watchTs.length - 1; i >= 0; i--) {
+        if (data.watchTs[i] >= oneSecAgo) watchBurst++;
+        else break;
+      }
+      if (watchBurst >= WATCH_BURST_LIMIT) {
+        reasons.push("/watch burst (" + watchBurst + " req/1s)");
+      }
+      if (data.watchTs.length >= WATCH_SUSTAINED_LIMIT) {
+        reasons.push("/watch sustained (" + data.watchTs.length + " req/10s)");
+      }
+    }
+
+    // timing pattern check (catches bots that stay under volume limits)
+    const timingResult = checkTimingPattern(data);
+    if (timingResult) {
+      data.wasSkid = true;
+      reasons.push(timingResult);
+    }
+
+    return reasons.length > 0 ? reasons : null;
+  }
+
+  // global per-second counter for siege mode
+  setInterval(() => {
+    globalRequestsLastSecond = globalRequestsThisSecond;
+    globalRequestsThisSecond = 0;
+
+    if (globalRequestsLastSecond >= SIEGE_THRESHOLD && !siegeMode) {
+      siegeMode = true;
+      siegeStartedAt = Date.now();
+      initlog("[PokeStopSkids] SIEGE MODE ON - " + globalRequestsLastSecond + " req/s detected, locking down");
+    }
+
+    if (siegeMode && globalRequestsLastSecond < SIEGE_THRESHOLD / 2) {
+      if (Date.now() - siegeStartedAt > SIEGE_COOLDOWN_MS) {
+        siegeMode = false;
+        initlog("[PokeStopSkids] siege mode off, traffic is back to normal");
+      }
+    }
+  }, 1000).unref();
+
+  // cleanup stale ip entries
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, data] of ipData) {
+      if (data.strikes > 0 && now - data.lastStrike > STRIKE_DECAY_MS) {
+        data.strikes = Math.max(0, data.strikes - 1);
+      }
+      while (data.ts.length > 0 && data.ts[0] < now - SUSTAINED_WINDOW) {
+        data.ts.shift();
+      }
+      while (data.watchTs.length > 0 && data.watchTs[0] < now - SUSTAINED_WINDOW) {
+        data.watchTs.shift();
+      }
+      if (!data.banned && data.strikes === 0 && data.ts.length === 0) {
+        ipData.delete(ip);
+      }
+    }
+  }, CLEANUP_INTERVAL).unref();
+
+  // the main middleware
+  app.use(function PokeStopSkids(req, res, next) {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const ua = req.headers["user-agent"] || "";
+    const now = Date.now();
+    const isWatch = req.path === "/watch" || req.path.startsWith("/watch?");
+
+    globalRequestsThisSecond++;
+
+    // cloudflare handles itself
+    const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
+    if (isCloudflareIP(rawIP)) return next();
+
+    // let good bots through
+    if (isKnownBot(ua)) return next();
+
+    // siege mode: if the whole server is under attack,
+    // only let through requests that arent from already-tracked IPs
+    // with high activity. basically: if we're drowning, be stricter.
+    if (siegeMode) {
+      const existing = ipData.get(ip);
+      if (existing && existing.ts.length > 20) {
+        // this ip is already being noisy during a siege. nope.
+        if (!existing.banned) {
+          banIP(existing, ip, ["active during siege mode"]);
+          existing.wasSkid = true;
+        }
+        res.set("Retry-After", "60");
+        return res.status(503).send(getSkidMessage());
+      }
+
+      // during siege, tighten limits for everyone: new connections
+      // get half the normal thresholds
+      if (existing && existing.ts.length > BURST_LIMIT / 2) {
+        if (!existing.banned) {
+          banIP(existing, ip, ["exceeded siege limits"]);
+        }
+        res.set("Retry-After", "60");
+        return res.status(503).send(getSkidMessage());
+      }
+    }
+
+    const data = getIPData(ip);
+
+    // already banned?
+    if (isBanned(data)) {
+      const retryAfter = Math.ceil((data.banExpires - now) / 1000);
+      res.set("Retry-After", String(retryAfter));
+      // skids get roasted. normal rate limit hits get a polite message.
+      if (data.wasSkid || data.strikes >= 3) {
+        return res.status(429).send(getSkidMessage());
+      }
+      return res.status(429).send(
+        "Too many requests. Try again in " + retryAfter + " seconds."
       );
     }
 
-    function checkAbuse(data, now) {
-      const ts = data.timestamps;
-      ts.push(now);
-
-      // Trim timestamps older than the sustained window
-      while (ts.length > 0 && ts[0] < now - SUSTAINED_WINDOW) {
-        ts.shift();
+    // check for abuse
+    const reasons = checkAbuse(data, now, isWatch);
+    if (reasons) {
+      banIP(data, ip, reasons);
+      const retryAfter = Math.ceil((data.banExpires - now) / 1000);
+      res.set("Retry-After", String(retryAfter));
+      if (data.wasSkid || data.strikes >= 2) {
+        return res.status(429).send(getSkidMessage());
       }
-
-      // Check 1: Burst — count requests in the last 1 second
-      const oneSecAgo = now - 1000;
-      let burstCount = 0;
-      for (let i = ts.length - 1; i >= 0; i--) {
-        if (ts[i] >= oneSecAgo) burstCount++;
-        else break;
-      }
-      if (burstCount >= BURST_LIMIT) return "burst (" + burstCount + " req/1s)";
-
-      // Check 2: Sustained flood — total requests in the 10-second window
-      if (ts.length >= SUSTAINED_LIMIT) return "sustained (" + ts.length + " req/10s)";
-
-      return null;
+      return res.status(429).send(
+        "Too many requests. Try again in " + retryAfter + " seconds."
+      );
     }
 
-    // ─── Periodic cleanup ──────────────────────────────────────────
-    setInterval(() => {
-      const now = Date.now();
-      for (const [ip, data] of ipData) {
-        // Decay strikes
-        if (data.strikes > 0 && now - data.lastStrike > STRIKE_DECAY_MS) {
-          data.strikes = Math.max(0, data.strikes - 1);
-        }
-        // Trim old timestamps
-        while (data.timestamps.length > 0 && data.timestamps[0] < now - SUSTAINED_WINDOW) {
-          data.timestamps.shift();
-        }
-        // Evict clean, idle entries
-        if (!data.banned && data.strikes === 0 && data.timestamps.length === 0) {
-          ipData.delete(ip);
-        }
-      }
-    }, CLEANUP_INTERVAL).unref();
+    next();
+  });
 
-    // ─── The middleware ─────────────────────────────────────────────
-    app.use(function antiDDoS(req, res, next) {
-      const ip = req.ip || req.socket.remoteAddress || "unknown";
+  // softer rate limiter underneath
+  const limiter = rateLimit({
+    windowMs: 15 * 1000,
+    max: 150,
+    validate: { xForwardedForHeader: false },
+    skip: (req) => {
       const ua = req.headers["user-agent"] || "";
-      const now = Date.now();
+      const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
+      return isKnownBot(ua) || isCloudflareIP(rawIP);
+    },
+    handler: (req, res) => {
+      return res.status(429).send("Slow down a bit! Too many requests.");
+    },
+  });
+  app.use(limiter);
 
-       const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
-      if (isCloudflareIP(rawIP)) return next();
-
- 
-      if (isKnownBot(ua)) return next();
- 
-
-      // ── Check ban status
-      const data = getIPData(ip);
-
+  // json stats api
+  app.get("/_pokestopskids/stats", (req, res) => {
+    const now = Date.now();
+    let bannedCount = 0;
+    let skidBans = 0;
+    let trackedWithActivity = 0;
+    for (const [, data] of ipData) {
       if (isBanned(data)) {
-        const retryAfter = Math.ceil((data.banExpires - now) / 1000);
-        res.set("Retry-After", String(retryAfter));
-        return res.status(429).send(
-          "You're sending way too many requests. Try again in " + retryAfter + " seconds."
-        );
+        bannedCount++;
+        if (data.wasSkid) skidBans++;
       }
-
-      // ── Check for DDoS patterns
-      const abuse = checkAbuse(data, now);
-      if (abuse) {
-        banIP(data, ip, abuse);
-        const retryAfter = Math.ceil((data.banExpires - now) / 1000);
-        res.set("Retry-After", String(retryAfter));
-        return res.status(429).send(
-          "You're sending way too many requests. Try again in " + retryAfter + " seconds."
-        );
-      }
-
-      next();
-    });
-
-    // ─── Standard rate limiter (softer, catches moderate abuse) ────
-    // This is the express-rate-limit that handles "normal" rate limiting
-    // for regular users — much softer than the DDoS detector.
-    const limiter = rateLimit({
-      windowMs: 15 * 1000,
-      max: 150,
-      // Don't throw on X-Forwarded-For mismatch — our trust proxy engine handles it
-      validate: { xForwardedForHeader: false },
-      // Skip bots and Cloudflare so they don't eat the limit
-      skip: (req) => {
-        const ua = req.headers["user-agent"] || "";
-        const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
-        return isKnownBot(ua) || isCloudflareIP(rawIP);
-      },
-      handler: (req, res) => {
-        return res.status(429).send("Slow down! Too many requests. Please wait a moment.");
+      if (data.ts.length > 0) trackedWithActivity++;
+    }
+    res.json({
+      tracked_ips: ipData.size,
+      active_ips: trackedWithActivity,
+      currently_banned: bannedCount,
+      skids_caught: skidBans,
+      siege_mode: siegeMode,
+      global_rps: globalRequestsLastSecond,
+      thresholds: {
+        burst: BURST_LIMIT + " req/1s",
+        sustained: SUSTAINED_LIMIT + " req/10s",
+        watch_burst: WATCH_BURST_LIMIT + " req/1s",
+        watch_sustained: WATCH_SUSTAINED_LIMIT + " req/10s",
+        siege_trigger: SIEGE_THRESHOLD + " global req/s",
+        rate_limit: "150 req/15s",
       },
     });
-    app.use(limiter);
+  });
 
-     app.get("/_antiddos/stats", (req, res) => {
-      const now = Date.now();
-      let bannedCount = 0;
-      let trackedWithActivity = 0;
-      for (const [, data] of ipData) {
-        if (isBanned(data)) bannedCount++;
-        if (data.timestamps.length > 0) trackedWithActivity++;
+  // the about page, served inline
+  app.get("/_antiddos*", (req, res) => {
+    const now = Date.now();
+    let bannedCount = 0;
+    let skidBans = 0;
+    let trackedWithActivity = 0;
+    for (const [, data] of ipData) {
+      if (isBanned(data)) {
+        bannedCount++;
+        if (data.wasSkid) skidBans++;
       }
-      res.json({
-        tracked_ips: ipData.size,
-        active_ips: trackedWithActivity,
-        currently_banned: bannedCount,
-        thresholds: {
-          burst: BURST_LIMIT + " req/1s",
-          sustained: SUSTAINED_LIMIT + " req/10s",
-          rate_limit: "150 req/15s",
-        },
-      });
-    });
+      if (data.ts.length > 0) trackedWithActivity++;
+    }
 
-    initlog(
-      "[OK] Smart anti-DDoS engine loaded — " +
-      "burst: " + BURST_LIMIT + " req/s, " +
-      "sustained: " + SUSTAINED_LIMIT + " req/10s, " +
-      "bots whitelisted: " + KNOWN_BOT_PATTERNS.length + " patterns"
-    );
-  })();
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PokeStopSkids - Poke Anti-DDoS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico">
+<style>
+@font-face {
+  font-family: "PokeTube Flex";
+  src: url("/static/robotoflex.ttf");
+  font-style: normal;
+  font-stretch: 1% 800%;
+  font-display: swap;
+}
+:root{color-scheme:dark}
+body{color:#fff}
+body{
+  background:#1c1b22;
+  margin:0;
+}
+img{
+  float:right;
+  margin:.3em 0 1em 2em;
+}
+:visited{color:#00c0ff}
+a{color:#0ab7f0}
+.app{
+  max-width:1000px;
+  margin:0 auto;
+  padding:24px;
+}
+p{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  line-height:1.6;
+}
+ul{
+  font-family:"poketube flex";
+  font-weight:500;
+  font-stretch:extra-expanded;
+  padding-left:1.2rem;
+}
+ul li{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  line-height:1.8;
+}
+h2{
+  font-family:"poketube flex",sans-serif;
+  font-weight:700;
+  font-stretch:extra-expanded;
+  margin-top:1.5rem;
+  margin-bottom:.3rem;
+}
+h1{
+  font-family:"poketube flex",sans-serif;
+  font-weight:1000;
+  font-stretch:ultra-expanded;
+  margin-top:0;
+  margin-bottom:.3rem;
+}
+hr{
+  border:0;
+  border-top:1px solid #222;
+  margin:28px 0;
+}
+.note{color:#bbb;font-size:.95rem;}
+.muted{opacity:.8;font-size:.95rem;}
+.stat-box{
+  display:inline-block;
+  background:#2a2930;
+  border-radius:8px;
+  padding:12px 20px;
+  margin:6px 8px 6px 0;
+  font-family:"poketube flex",sans-serif;
+  font-weight:600;
+  font-stretch:expanded;
+}
+.stat-num{
+  font-size:1.6rem;
+  color:#0ab7f0;
+}
+.stat-label{
+  font-size:.85rem;
+  color:#aaa;
+  display:block;
+}
+code{
+  background:#2a2930;
+  padding:2px 6px;
+  border-radius:4px;
+  font-size:.9rem;
+}
+.green{color:#4caf50}
+.red{color:#f44336}
+.orange{color:#ff9800}
+.siege-banner{
+  background:#f44336;
+  color:#fff;
+  padding:12px 20px;
+  border-radius:8px;
+  margin-bottom:16px;
+  font-family:"poketube flex",sans-serif;
+  font-weight:700;
+  font-stretch:expanded;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<img src="/css/logo-poke.svg" alt="Poke logo">
+
+<h1>PokeStopSkids</h1>
+<p class="muted">poke's anti-ddos and anti-botnet protection</p>
+
+${siegeMode ? '<div class="siege-banner">SIEGE MODE ACTIVE - we are currently under attack. some requests may be slower or blocked. hang tight!</div>' : ''}
+
+<h2>what this does</h2>
+<p>
+  PokeStopSkids protects poke from DDoS attacks and botnets. it
+  watches for request patterns that no real person would make and
+  temporarily bans IPs that cross the line. if you're just browsing
+  around watching videos, you will never trigger any of this.
+</p>
+<p>
+  there are a few things it checks, all based purely on IP request
+  volume and timing:
+</p>
+<ul>
+  <li><b>burst flood</b> - ${BURST_LIMIT}+ requests in 1 second from the same IP</li>
+  <li><b>sustained flood</b> - ${SUSTAINED_LIMIT}+ requests in 10 seconds</li>
+  <li><b>/watch abuse</b> - the video page has tighter limits (${WATCH_BURST_LIMIT} req/s, ${WATCH_SUSTAINED_LIMIT} req/10s) since it's the heaviest endpoint</li>
+  <li><b>robotic timing</b> - if the time between your requests has almost zero variance, that's a script, not a person. humans are messy clickers</li>
+  <li><b>siege mode</b> - if the server is getting ${SIEGE_THRESHOLD}+ req/sec globally, we go into lockdown and get way stricter with everyone</li>
+</ul>
+<p>
+  first offense is a 30 second ban. repeat offenders get doubled each
+  time up to 10 minutes. strikes go away after 5 minutes of not being
+  weird. bots that get caught by pattern detection get roasted with
+  funny messages because we think thats funny.
+</p>
+
+<hr>
+
+<h2>what we don't look at</h2>
+<p>
+  we don't check your user agent, your cookies, whether javascript is
+  on, what language your browser sends, your screen size, or anything
+  like that. we don't fingerprint you. at all. poke is a privacy
+  project and we would rather get ddosed than start tracking users.
+</p>
+<p>
+  so tor browser, vpns, brave, librewolf, curl, wget, lynx, a
+  terminal browser from 1997: all totally fine. empty or missing user
+  agents are fine. we only look at "how many requests is this IP
+  making and does the timing look like a script?" and that's it.
+</p>
+
+<hr>
+
+<h2>whitelisted bots</h2>
+<p>
+  these crawlers and bots skip all checks so we don't break search
+  results, link previews, or fediverse federation:
+</p>
+<ul>
+  <li><b>search engines</b> - google, bing, duckduckgo, yandex, baidu, apple, qwant, mojeek, etc</li>
+  <li><b>social/link previews</b> - discord, telegram, twitter, whatsapp, slack, linkedin</li>
+  <li><b>fediverse</b> - mastodon, pleroma, misskey, akkoma, lemmy, kbin, pixelfed, gotosocial</li>
+  <li><b>feed readers</b> - feedly, newsblur, tiny tiny rss, miniflux</li>
+  <li><b>uptime monitors</b> - uptimerobot, pingdom, statuscake, hetrixtools</li>
+  <li><b>cdn/infra</b> - cloudflare, cloudfront, fastly</li>
+  <li><b>archive</b> - internet archive, archive.org bot</li>
+</ul>
+<p>
+  cloudflare IPs are also fully exempt since cf handles its own
+  L7 filtering before traffic even gets to us.
+</p>
+
+<hr>
+
+<h2>live stats</h2>
+
+<div>
+  <div class="stat-box">
+    <span class="stat-num">${ipData.size}</span>
+    <span class="stat-label">tracked IPs</span>
+  </div>
+  <div class="stat-box">
+    <span class="stat-num">${trackedWithActivity}</span>
+    <span class="stat-label">active right now</span>
+  </div>
+  <div class="stat-box">
+    <span class="stat-num ${bannedCount > 0 ? "red" : "green"}">${bannedCount}</span>
+    <span class="stat-label">currently banned</span>
+  </div>
+  <div class="stat-box">
+    <span class="stat-num ${skidBans > 0 ? "orange" : "green"}">${skidBans}</span>
+    <span class="stat-label">skids caught</span>
+  </div>
+  <div class="stat-box">
+    <span class="stat-num">${globalRequestsLastSecond}</span>
+    <span class="stat-label">global req/sec</span>
+  </div>
+  <div class="stat-box">
+    <span class="stat-num ${siegeMode ? "red" : "green"}">${siegeMode ? "ACTIVE" : "off"}</span>
+    <span class="stat-label">siege mode</span>
+  </div>
+</div>
+
+<h2>thresholds</h2>
+<p class="note">
+  burst limit: <code>${BURST_LIMIT} req/sec</code> per IP<br>
+  sustained limit: <code>${SUSTAINED_LIMIT} req/10sec</code> per IP<br>
+  /watch burst: <code>${WATCH_BURST_LIMIT} req/sec</code> per IP<br>
+  /watch sustained: <code>${WATCH_SUSTAINED_LIMIT} req/10sec</code> per IP<br>
+  siege mode trigger: <code>${SIEGE_THRESHOLD} req/sec</code> globally<br>
+  rate limiter: <code>150 req/15sec</code> per IP<br>
+  first ban: <code>30 seconds</code><br>
+  max ban: <code>10 minutes</code><br>
+  strike decay: <code>5 minutes</code><br>
+  max tracked IPs: <code>${MAX_TRACKED_IPS}</code>
+</p>
+
+<hr>
+
+<h2>api</h2>
+<p class="note">
+  json stats: <code><a href="/_pokestopskids/stats">/_pokestopskids/stats</a></code><br>
+  this page: <code><a href="/_antiddos">/_antiddos</a></code>
+</p>
+
+<hr>
+
+<h2>source code</h2>
+<p>
+  this is all open source. you can read exactly what PokeStopSkids does
+  in <a href="https://codeberg.org/ashleyirispuppy/poketube">poke's repo on codeberg</a>.
+  if you got banned and you think it was wrong,
+  <a href="https://codeberg.org/ashleyirispuppy/poketube/issues">open an issue</a>
+  and we'll look into it.
+</p>
+
+<p class="muted" style="margin-top:2rem">
+  powered by poke. <a href="/">go back to watching videos</a>
+</p>
+
+</div>
+</body>
+</html>`);
+  });
+
+  initlog(
+    "[PokeStopSkids] loaded - " +
+    "burst: " + BURST_LIMIT + "/s, " +
+    "sustained: " + SUSTAINED_LIMIT + "/10s, " +
+    "/watch: " + WATCH_BURST_LIMIT + "/s, " +
+    "siege at " + SIEGE_THRESHOLD + " global/s, " +
+    KNOWN_BOT_PATTERNS.length + " bot patterns whitelisted"
+  );
+})();
 
   app.use(ieBlockMiddleware);
   initlog("Loaded express.js");
 
-// ── Global Response Safety Guard ──────────────────────────────────
-// Patches res.send/res.json/res.redirect/res.render to prevent
-// ERR_HTTP_HEADERS_SENT crashes anywhere in the app
-(function installResponseGuard() {
-  app.use(function responseGuard(req, res, next) {
+/*
+ * poke response guard
+ *
+ * catches accidental double-sends before they crash the server with
+ * ERR_HTTP_HEADERS_SENT. wraps res.send/json/redirect/render so the
+ * second attempt just gets swallowed and logged instead of exploding.
+ *
+ * /api/ routes are skipped - they handle their own lifecycle and
+ * some of them (stats, etc) do stuff that trips the guard unnecessarily.
+ */
+(function PokeResponseGuard() {
+  app.use(function pokeResponseGuard(req, res, next) {
+    // api routes are on their own, dont mess with them
+    if (req.path.startsWith("/api/")) return next();
+
     const originalSend = res.send.bind(res);
     const originalJson = res.json.bind(res);
     const originalRedirect = res.redirect.bind(res);
     const originalRender = res.render.bind(res);
 
-    let responseSent = false;
-    const sentFrom = {}; // track where the first send came from
+    let alreadySent = false;
 
-    function markSent(method) {
-      if (responseSent) {
-        // Log the double-send attempt with stack trace for debugging
-        const err = new Error(`[response-guard] ⚠ Double-send blocked (${method}) for ${req.method} ${req.originalUrl}`);
-        console.error(err.message);
-        // Uncomment the next line for full stack traces during debugging:
-        // console.error("  First send:", sentFrom.stack, "\n  Second send:", err.stack);
-        return true; // blocked
+    function blockDoubleSend(method) {
+      if (alreadySent) {
+        console.error(`[POKE-response-guard] caught double-send (${method}) on ${req.method} ${req.originalUrl}`);
+        return true;
       }
-      responseSent = true;
-      sentFrom.stack = new Error().stack;
-      return false; // allowed
+      alreadySent = true;
+      return false;
     }
 
-    res.send = function guardedSend(...args) {
-      if (res.headersSent || markSent("send")) return res;
+    res.send = function (...args) {
+      if (res.headersSent || blockDoubleSend("send")) return res;
       return originalSend(...args);
     };
 
-    res.json = function guardedJson(...args) {
-      if (res.headersSent || markSent("json")) return res;
+    res.json = function (...args) {
+      if (res.headersSent || blockDoubleSend("json")) return res;
       return originalJson(...args);
     };
 
-    res.redirect = function guardedRedirect(...args) {
-      if (res.headersSent || markSent("redirect")) return res;
+    res.redirect = function (...args) {
+      if (res.headersSent || blockDoubleSend("redirect")) return res;
       return originalRedirect(...args);
     };
 
-    res.render = function guardedRender(view, data, callback) {
-      if (res.headersSent || markSent("render")) return;
-      // If no callback provided, wrap with error handling
+    res.render = function (view, data, callback) {
+      if (res.headersSent || blockDoubleSend("render")) return;
       if (typeof callback !== "function") {
         return originalRender(view, data, function (err, html) {
           if (err) {
-            console.error("[response-guard] Render error for", view, ":", err.message);
+            console.error("[POKE-response-guard] render broke for", view, ":", err.message);
             if (!res.headersSent) {
               res.status(500).send("Internal server error");
             }
@@ -734,8 +1186,9 @@
     next();
   });
 
-  initlog("[OK] Response safety guard installed");
+  initlog("[POKE-response-guard] loaded");
 })();
+
   app.engine("html", require("ejs").renderFile);
   initlog("Loaded EJS");
   app.use(modules.express.urlencoded({ extended: true }));
@@ -745,9 +1198,8 @@
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
-    // Guard: don't render if response is already sent
     if (res.headersSent) {
-      console.error("[renderTemplate] ⚠ Headers already sent, skipping render for:", template);
+      console.error("[POKE-render] headers already sent, skipping:", template);
       return;
     }
     try {
@@ -756,17 +1208,14 @@
         Object.assign(data)
       );
     } catch (err) {
-      console.error("[renderTemplate] ⚠ Render error for", template, ":", err.message);
+      console.error("[POKE-render] error on", template, ":", err.message);
       if (!res.headersSent) {
         res.status(500).send("Internal server error");
       }
     }
   };
 
-  // Set check interval to a faster value. This will catch more latency spikes
-  // but may cause the check to be too sensitive.
   toobusy.interval(110);
-
   toobusy.maxLag(3500);
 
   app.use(function (req, res, next) {
@@ -777,15 +1226,14 @@
   });
 
   toobusy.onLag(function (currentLag) {
-    console.error("[toobusy] Event loop lag detected! Latency: " + currentLag + "ms");
-    // Only exit on extreme lag — let the anti-ddos handle most cases
+    console.error("[POKE-toobusy] event loop lag: " + currentLag + "ms");
     if (currentLag > 5000) {
-      console.error("[toobusy] Critical lag (" + currentLag + "ms), shutting down for restart");
+      console.error("[POKE-toobusy] lag is insane (" + currentLag + "ms), restarting");
       process.exit(1);
     }
   });
   
-    initlog("inited anti ddos");
+  initlog("inited anti ddos");
 
 
   const initPokeTube = function () {
@@ -878,18 +1326,12 @@
     initlog("[FAILED] load robots.txt");
   }
 
-  // ── Global error handler (must be last middleware) ────────────────
-  app.use(function globalErrorHandler(err, req, res, next) {
-    // Log the error with context
-    console.error(
-      "[error-handler] Unhandled error on",
-      req.method, req.originalUrl,
-      ":", err.message
-    );
+  // last-resort error catcher. has to be registered last.
+  app.use(function pokeErrorHandler(err, req, res, next) {
+    console.error("[POKE-error]", req.method, req.originalUrl, ":", err.message);
     if (process.env.NODE_ENV !== "production") {
       console.error(err.stack);
     }
-    // Only send a response if headers haven't been sent
     if (!res.headersSent) {
       res.status(500).send("Something went wrong. Please try again.");
     }
