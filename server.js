@@ -75,7 +75,10 @@
 
   var app = modules.express();
 
- (function configureTrustProxy() {
+// ── Ultra-Smart Trust Proxy Engine ────────────────────────────────
+// IMPORTANT: This MUST run before rate limiter and all other middleware
+// so that trust proxy is configured before anything checks req.ip
+(function configureTrustProxy() {
   const os = require("os");
   const net = require("net");
   const path = require("path");
@@ -380,6 +383,71 @@
   app.use(limiter);
   app.use(ieBlockMiddleware);
   initlog("Loaded express.js");
+ 
+(function installResponseGuard() {
+  app.use(function responseGuard(req, res, next) {
+    const originalSend = res.send.bind(res);
+    const originalJson = res.json.bind(res);
+    const originalRedirect = res.redirect.bind(res);
+    const originalRender = res.render.bind(res);
+
+    let responseSent = false;
+    const sentFrom = {}; // track where the first send came from
+
+    function markSent(method) {
+      if (responseSent) {
+        // Log the double-send attempt with stack trace for debugging
+        const err = new Error(`[response-guard] ⚠ Double-send blocked (${method}) for ${req.method} ${req.originalUrl}`);
+        console.error(err.message);
+        // Uncomment the next line for full stack traces during debugging:
+        // console.error("  First send:", sentFrom.stack, "\n  Second send:", err.stack);
+        return true; // blocked
+      }
+      responseSent = true;
+      sentFrom.stack = new Error().stack;
+      return false; // allowed
+    }
+
+    res.send = function guardedSend(...args) {
+      if (res.headersSent || markSent("send")) return res;
+      return originalSend(...args);
+    };
+
+    res.json = function guardedJson(...args) {
+      if (res.headersSent || markSent("json")) return res;
+      return originalJson(...args);
+    };
+
+    res.redirect = function guardedRedirect(...args) {
+      if (res.headersSent || markSent("redirect")) return res;
+      return originalRedirect(...args);
+    };
+
+    res.render = function guardedRender(view, data, callback) {
+      if (res.headersSent || markSent("render")) return;
+      // If no callback provided, wrap with error handling
+      if (typeof callback !== "function") {
+        return originalRender(view, data, function (err, html) {
+          if (err) {
+            console.error("[response-guard] Render error for", view, ":", err.message);
+            if (!res.headersSent) {
+              res.status(500).send("Internal server error");
+            }
+            return;
+          }
+          if (!res.headersSent) {
+            originalSend(html);
+          }
+        });
+      }
+      return originalRender(view, data, callback);
+    };
+
+    next();
+  });
+
+  initlog("[OK] Response safety guard installed");
+})();
   app.engine("html", require("ejs").renderFile);
   initlog("Loaded EJS");
   app.use(modules.express.urlencoded({ extended: true }));
@@ -389,10 +457,21 @@
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
-    res.render(
-      modules.path.resolve(`${templateDir}${modules.path.sep}${template}`),
-      Object.assign(data)
-    );
+     if (res.headersSent) {
+      console.error("[renderTemplate] ⚠ Headers already sent, skipping render for:", template);
+      return;
+    }
+    try {
+      res.render(
+        modules.path.resolve(`${templateDir}${modules.path.sep}${template}`),
+        Object.assign(data)
+      );
+    } catch (err) {
+      console.error("[renderTemplate] ⚠ Render error for", template, ":", err.message);
+      if (!res.headersSent) {
+        res.status(500).send("Internal server error");
+      }
+    }
   };
 
   // Set check interval to a faster value. This will catch more latency spikes
@@ -403,10 +482,9 @@
 
   app.use(function (req, res, next) {
     if (toobusy()) {
-      res.send(503, "I'm busy right now, sorry.");
-    } else {
-      next();
+      return res.status(503).send("I'm busy right now, sorry.");
     }
+    next();
   });
 
   toobusy.onLag(function (currentLag) {
@@ -506,6 +584,21 @@
   } catch {
     initlog("[FAILED] load robots.txt");
   }
+
+   app.use(function globalErrorHandler(err, req, res, next) {
+     console.error(
+      "[error-handler] Unhandled error on",
+      req.method, req.originalUrl,
+      ":", err.message
+    );
+    if (process.env.NODE_ENV !== "production") {
+      console.error(err.stack);
+    }
+    // Only send a response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).send("Something went wrong. Please try again.");
+    }
+  });
 
   initPokeTube();
 })();
