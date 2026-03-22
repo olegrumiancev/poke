@@ -1609,6 +1609,19 @@ _seekPostTimers: []
         state.userMutedVideo = false;
       }
 
+      // Rule 8: Video muted while playing but user didn't mute — force unmute
+      if (!vPaused && state.intendedPlaying && getVideoMutedState() && !state.userMutedVideo) {
+        try { setVideoMutedState(false); } catch {}
+      }
+
+      // Rule 9: Audio volume at 0 while video has volume — restore
+      if (!aPaused && !vPaused && state.intendedPlaying && !state.audioFading) {
+        const _tgt = clamp01(targetVolFromVideo());
+        if (_tgt > 0.01 && audio.volume < 0.01 && !state.userMutedAudio) {
+          try { audio.volume = _tgt; } catch {}
+        }
+      }
+
       _lastAudioPos = at;
       _lastCheckAt = t;
       _schedule();
@@ -9227,9 +9240,12 @@ _seekPostTimers: []
   video.on("volumechange", () => {
     if (state.audioFading) cancelActiveFade();
     updateAudioGainImmediate(true);
-    // Only track user-initiated mute — NOT programmatic mute during pause/transitions
-    if (!state.isProgrammaticVideoPause && !state.isProgrammaticAudioPause &&
-        !state.seeking && !state.seekBuffering && !state.restarting) {
+    // Only track user-initiated mute: recent user action + no programmatic flags
+    const _isUserAction = (now() - state.lastUserActionTime) < 1000;
+    const _isProgrammatic = state.isProgrammaticVideoPause || state.isProgrammaticVideoPlay ||
+      state.isProgrammaticAudioPause || state.seeking || state.seekBuffering ||
+      state.restarting || state.startupPhase || !state.firstPlayCommitted;
+    if (_isUserAction && !_isProgrammatic) {
       state.userMutedVideo = !!video.muted();
     }
     saveVolume();
@@ -9237,9 +9253,13 @@ _seekPostTimers: []
   if (coupledMode) {
     try {
       audio.addEventListener("volumechange", () => {
-        // Only track user-initiated mute — NOT programmatic mute during pause/fade/stall
-        if (!state.isProgrammaticAudioPause && !state.audioFading && !state.videoStallAudioPaused &&
-            !state.seeking && !state.seekBuffering) {
+        // Only track user-initiated mute: recent user action + no programmatic flags
+        const _isUser = (now() - state.lastUserActionTime) < 1000;
+        const _isProg = state.isProgrammaticAudioPause || state.audioFading ||
+          state.videoStallAudioPaused || state.seeking || state.seekBuffering ||
+          state.restarting || state.startupPhase || !state.firstPlayCommitted ||
+          state.isProgrammaticVideoPause;
+        if (_isUser && !_isProg) {
           state.userMutedAudio = !!audio.muted;
         }
         saveVolume();
