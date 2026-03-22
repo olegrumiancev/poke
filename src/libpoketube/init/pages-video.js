@@ -441,7 +441,7 @@ module.exports = function (app, config, renderTemplate) {
               inv: inv_comments,
               convert,
               universe,
-              wiki: data.wiki,
+              wiki: data?.wiki,
               escapeHtml,
               f,
               t: config.t_url,
