@@ -4179,11 +4179,17 @@ _seekPostTimers: []
       const timeDiff = Math.abs((audio.currentTime || 0) - t);
       if (timeDiff <= 0.05) return;
 
-      const wasPlaying = !audio.paused && audio.volume > 0.01 && !state.audioFading;
+      const wasPlaying = !audio.paused;
 
       // Fast path: target already buffered → seek without pausing
       const targetBuffered = bufferedAhead(audio, t) > 0.1;
       if (wasPlaying && targetBuffered) { safeSetAudioTime(t); return; }
+      // Also fast-path if audio is paused but target is buffered — just seek + play
+      if (!wasPlaying && targetBuffered && state.intendedPlaying) {
+        safeSetAudioTime(t);
+        execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
+        return;
+      }
 
       if (wasPlaying) {
         await doVolumeFade(0, 60);
@@ -4222,7 +4228,7 @@ _seekPostTimers: []
             state.audioEventsSquelchedUntil = 0;
             state.audioPauseUntil = 0;
             const _vt = Number(video.currentTime()) || 0;
-            safeSetAudioTime(_vt);
+            if (_vt > 0.5 || !state.firstPlayCommitted) safeSetAudioTime(_vt);
             execProgrammaticAudioPlay({ squelchMs: 200, force: true, minGapMs: 0 }).catch(() => {});
             softUnmuteAudio(100).catch(() => {});
           }, _qsDelay);
@@ -5854,10 +5860,10 @@ _seekPostTimers: []
         if (_audioAlreadySynced) {
           // Audio kept playing through seek (buffered fast path). Just kick video.
           if (getVideoPaused()) execProgrammaticVideoPlay();
-          // Restore audio volume if it was zeroed
+          // Restore audio volume smoothly if needed
           const _tv = targetVolFromVideo();
-          if (audio.volume < _tv * 0.5 && _tv > 0) {
-            try { audio.volume = _tv; } catch {}
+          if (audio.volume < _tv - 0.05 && _tv > 0) {
+            softUnmuteAudio(100).catch(() => {});
           }
         } else if (state.seekId === currentSeekId || !state.seeking) {
           await playTogether().catch(() => {});
@@ -5870,20 +5876,26 @@ _seekPostTimers: []
         state._seekPostTimers = [];
       }
       const _seekGuaranteeSession = state.playSessionId;
-      [100, 250, 500, 900, 1500, 2500].forEach(delay => {
+      [200, 500, 1000, 2000].forEach(delay => {
         const tid = setTimeout(() => {
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
           if (!coupledMode || !audio) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           const vt = Number(video.currentTime()) || 0;
-          // Fix drift even when both are playing
+          // Fix drift only when both are playing and drift is significant
           if (!audio.paused && !getVideoPaused() && isFinite(vt)) {
             const drift = Math.abs((Number(audio.currentTime) || 0) - vt);
-            if (drift > 0.15) {
-              state._allowAudioTimeWrite = true;
-              try { audio.currentTime = vt; } catch {}
-              state._allowAudioTimeWrite = false;
+            // Only correct drift > 0.4s — smaller drift self-corrects via runSync
+            if (drift > 0.4) {
+              // Use fast path if target buffered (no glitch)
+              const _bufAhead = bufferedAhead(audio, vt);
+              if (_bufAhead > 0.1) {
+                state._allowAudioTimeWrite = true;
+                try { audio.currentTime = vt; } catch {}
+                state._allowAudioTimeWrite = false;
+              }
+              // If not buffered, let runSync handle it via quietSeekAudio
             }
             return;
           }
@@ -6265,9 +6277,9 @@ _seekPostTimers: []
       }
     }
 
-    if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing && !skipDrift) {
+    if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing && !skipDrift && !state.seekResumeInFlight && !state.seekBuffering) {
       if (state.audioEverStarted && !audio.paused && !inBgDrift) {
-        if (Math.abs(at - vt) > 0.25) {
+        if (Math.abs(at - vt) > 0.35) {
           await quietSeekAudio(vt);
           at = vt;
         }
@@ -8290,7 +8302,7 @@ _seekPostTimers: []
         state.pendingSeekTarget = seekTime;
         state.lastKnownGoodVT = seekTime;
         state.lastKnownGoodVTts = now();
-        state.seekCooldownUntil = now() + 800;
+        state.seekCooldownUntil = now() + 1500;
 
         state.videoWaiting = false;
         state.audioWaiting = false;
@@ -8311,32 +8323,36 @@ _seekPostTimers: []
           }
         }, SEEK_WATCHDOG_MS);
 
-        // Sync audio to seek target. If target is buffered, seek without pausing
-        // (no audible gap). Only pause+mute for unbuffered seeks.
+        // Sync audio to seek target. If target is buffered, just move position
+        // without pausing — no audible gap. Only pause+mute for unbuffered seeks.
         if (coupledMode && audio) {
-          const _seekTargetBuffered = (() => {
-            try {
-              const buf = audio.buffered;
-              for (let i = 0; i < buf.length; i++) {
-                if (buf.start(i) <= seekTime + 0.3 && buf.end(i) > seekTime) return true;
-              }
-            } catch {}
-            return false;
-          })();
-          if (_seekTargetBuffered && !audio.paused) {
-            // Fast path: target buffered → just move audio position, keep playing
+          let _seekTargetBuffered = false;
+          try {
+            const buf = audio.buffered;
+            for (let i = 0; i < buf.length; i++) {
+              if (buf.start(i) <= seekTime + 0.3 && buf.end(i) > seekTime) { _seekTargetBuffered = true; break; }
+            }
+          } catch {}
+          if (_seekTargetBuffered) {
+            // Fast path: target buffered → just move audio position
             state._allowAudioTimeWrite = true;
             try { audio.currentTime = seekTime; } catch {}
             state._allowAudioTimeWrite = false;
-          } else {
-            // Slow path: target unbuffered → pause+mute to avoid stale decode replay
+            // If audio was paused (from previous seek), restart it
+            if (audio.paused && state.seekWantedPlaying) {
+              execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
+            }
+          } else if (!audio.paused) {
+            // Slow path: target unbuffered and audio is playing → pause+mute
             squelchAudioEvents(600);
             try {
               cancelActiveFade();
               audio.volume = 0;
-              if (!audio.paused) audio.pause();
+              audio.pause();
             } catch {}
           }
+          // If audio was already paused and target is unbuffered, leave it paused —
+          // finalizeSeekSync will handle restart after buffer loads
         }
 
         if (!state.intendedPlaying) {
@@ -8366,7 +8382,7 @@ _seekPostTimers: []
         if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
           // Only seek audio if it's actually drifted from the target
           const _curAudioTime = Number(audio.currentTime) || 0;
-          if (Math.abs(_curAudioTime - newTime) > 0.1) {
+          if (Math.abs(_curAudioTime - newTime) > 0.2) {
             state._allowAudioTimeWrite = true;
             try { audio.currentTime = newTime; } catch {}
             state._allowAudioTimeWrite = false;
