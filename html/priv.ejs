@@ -235,13 +235,13 @@
       <div class="hype-text">LIBERATE THE WEB</div>
     </div>
     <div class="hero-content">
-      <h1 class="doc-title">we don’t track <em>you</em>!</h1>
+      <h1 class="doc-title">we don't track <em>you</em>!</h1>
       <p class="doc-lede">
-        <strong>We don’t collect personal data.</strong> No trackers, no third-party analytics. Because Poke is <strong>free software</strong>, you can read the code and self-host. For transparency: this instance keeps <strong>anonymous, local-only usage counts</strong> no IPs, no cookies, no fingerprinting.
+        <strong>We don't collect personal data.</strong> No trackers, no third-party analytics. Because Poke is <strong>free software</strong>, you can read the code and self-host. For transparency: this instance keeps <strong>anonymous, local-only usage counts</strong> no IPs, no cookies, no fingerprinting.
       </p>
       <div class="meta-row" aria-label="Document metadata">
         <span class="badge">Instance: <span class="mono">poketube.fun</span></span>
-        <span class="badge">Version date: <time datetime="2026-02-20">Feburary 20, 2026</time></span>
+        <span class="badge">Version date: <time datetime="2026-03-23">March 23, 2026</time></span>
       </div>
     </div>
   </section>
@@ -256,8 +256,9 @@
           <li><a href="#summary">TL;DR</a></li>
           <li><a href="#ownership">Ownership</a></li>
           <li><a href="#initiative-privacy">Initiative Site Privacy</a></li>
-          <li><a href="#what-we-collect">What We Do/Don’t Collect</a></li>
+          <li><a href="#what-we-collect">What We Do/Don't Collect</a></li>
           <li><a href="#stats">How we improve Poke</a></li>
+          <li><a href="#antiddos">Anti-DDoS (PokeStopSkids)</a></li>
           <li><a href="#cookies">Cookies &amp; Storage</a></li>
           <li><a href="#openstreetmap">OpenStreetMap</a></li>
           <li><a href="#weather">Weather Pages &amp; Services</a></li>
@@ -281,13 +282,14 @@
 
       <section id="whats-new" class="update-box" aria-labelledby="whats-new-heading" role="region">
         <h3 id="whats-new-heading">
-          What’s New -Policy Update
-          <span class="when">Feburary 20, 2026</span>
+          What's New -Policy Update
+          <span class="when">March 23, 2026</span>
         </h3>
         <p style="margin-top:6px; color: #eaeaea;">Highlights:</p>
         <ul>
-          <li><strong>UI Update:</strong> Redesigned page to match the new Poke branding.</li>
-         </ul>
+          <li><strong>New section: Anti-DDoS (PokeStopSkids).</strong> We added a section explaining how Poke's DDoS protection works and what data it does and does not use. Short version: no IPs are stored, no fingerprinting, no browser detection. It only counts requests per connection in memory and forgets everything after a few seconds.</li>
+          <li><strong>Improved:</strong> Expanded the <code>/api/stats</code> section with clearer language about what the anonymous viewer ID actually is and why we think this approach is better than doing nothing at all.</li>
+        </ul>
         <div class="update-actions" aria-label="Update actions">
           <button type="button" id="dismissUpdate" aria-label="Dismiss this update notice">Dismiss</button>
         </div>
@@ -296,7 +298,7 @@
       <section id="overview" aria-labelledby="preamble-heading">
         <h2 id="preamble-heading" class="section">Preamble</h2>
         <p>
-          Welcome to Poke’s Privacy Policy. We don’t collect personal data and we don’t use trackers. Poke is <strong>free software</strong> you can read, remix, and run yourself.
+          Welcome to Poke's Privacy Policy. We don't collect personal data and we don't use trackers. Poke is <strong>free software</strong> you can read, remix, and run yourself.
         </p>
         <p class="callout">Not legal advice lol</p>
       </section>
@@ -308,7 +310,8 @@
             <li><strong>No personal data collected.</strong></li>
             <li><strong>Anonymous local-only stats enabled by default.</strong> No IPs, no cookies, no fingerprinting, no third parties.</li>
             <li><strong>No third-party trackers.</strong> Yippe!!</li>
-            <li><strong>YouTube can’t see what you watch here.</strong> It’s all done on the backend.</li>
+            <li><strong>YouTube can't see what you watch here.</strong> It's all done on the backend.</li>
+            <li><strong>Anti-DDoS protection does not store IP addresses.</strong> It works entirely in memory using temporary request counts that are forgotten within seconds.</li>
           </ul>
           <br>
           <ul>
@@ -337,132 +340,136 @@
       </section>
 
       <section id="what-we-collect" aria-labelledby="collect-heading">
-        <h2 id="collect-heading" class="section">What We Do/Don’t Collect</h2>
+        <h2 id="collect-heading" class="section">What We Do/Don't Collect</h2>
         <details class="block" open>
           <summary>We collect <em>no personal data</em> about you</summary>
           <p>
-            We don’t store IP addresses, fingerprinting data, emails, names—none of it. There’s no third-party analytics or ads.
+            We don't store IP addresses, fingerprinting data, emails, names-none of it. There's no third-party analytics or ads.
           </p>
         </details>
         <details class="block">
           <summary>What exists briefly so the internet works</summary>
           <p>
-            Every time you open a page, your browser and Poke’s server exchange a small amount of technical data -this is simply how the web works.
-            Without this back-and-forth, pages couldn’t load, images wouldn’t display, and requests wouldn’t reach the right place.
+            Every time you open a page, your browser and Poke's server exchange a small amount of technical data -this is simply how the web works.
+            Without this back-and-forth, pages couldn't load, images wouldn't display, and requests wouldn't reach the right place.
           </p>
           <p>
             When your browser requests a page, the server which uses <strong>Nginx</strong> momentarily processes information such as the requested URL,
             the response code, and the time it took to deliver the page. These details may appear in access logs briefly for operational health and security.
-            On Poke’s primary instance, these logs are kept for the shortest technically feasible duration and are not linked to any personal data.
+            On Poke's primary instance, these logs are kept for the shortest technically feasible duration and are not linked to any personal data.
           </p>
         </details>
         <details class="block">
           <summary>Poke Account</summary>
           <p>
-            If you make a Poke account, we don’t require an email or personal details.
+            If you make a Poke account, we don't require an email or personal details.
           </p>
         </details>
       </section>
+
 <section id="stats" aria-labelledby="stats-heading">
   <h2 id="stats-heading" class="section">How we improve Poke <code>/api/stats</code></h2>
 
   <p>
-    We improve Poke using a small <strong>anonymous statistics system</strong> built directly into the server.
-    We use it so we can understand how Poke is being used in general without relying on invasive analytics,
-    personal profiles, ad-tech, or third-party tracking platforms.
+    Poke has a small anonymous statistics system built into the server.
+    It's there so we can get a rough sense of how the software is being used
+    without relying on third-party analytics, ad networks, or anything that
+    would require us to know who you are.
   </p>
 
   <p>
     When someone watches a video through Poke, we may record a single anonymous event.
-    These events stay on the instance running Poke and help us answer practical questions like:
-    which videos are viewed the most, which browsers are most common, and which operating systems
-    we should prioritize when testing and fixing bugs.
+    That event stays on this server and never leaves. It helps us answer basic questions
+    like: which browsers should we test more, which operating systems are most common,
+    and which parts of the software are actually getting used in practice.
   </p>
 
   <p>
-    We intentionally keep this system minimal. We do not want to identify people or reconstruct anyone’s private browsing history.
-    We only want a small amount of high-level technical information that helps us maintain, improve, and support Poke responsibly.
+    We keep this intentionally minimal. We're not building profiles. We're not
+    reconstructing anyone's viewing history. We just want enough high-level technical
+    information to maintain the software responsibly and fix the right bugs first.
   </p>
 
-  <h3>Why we need this</h3>
+  <h3>Why we bother doing this at all</h3>
 
   <p>
-    Running a video front-end means making real technical decisions all the time.
-    We need to decide what bugs to fix first, what platforms to test most carefully, what features matter most,
-    and where performance improvements will help the most people.
-    Anonymous usage counts give us a way to make those decisions based on reality instead of guesswork.
-  </p>
-
-  <p>
-    For example, if we can see that a certain browser family is very common, we know that browser deserves more testing attention.
-    If we can see that a large share of usage is coming from Android, then mobile issues become a higher priority.
-    If we can see which video IDs are requested most often, we get a better sense of what parts of the software are being used heavily.
-    This helps us improve Poke in a practical way while still respecting privacy.
+    Running a video frontend means making real technical decisions constantly.
+    What bugs should we fix first? What platforms need more testing? What features
+    actually matter to the people using this? Without any feedback at all, those
+    decisions are just guesses. Anonymous usage counts turn guesses into
+    informed decisions.
   </p>
 
   <p>
-    We believe this is a much better approach than using invasive analytics.
-    Instead of trying to learn who a person is, we only look at broad technical patterns that help us maintain the software.
+    For example: if we can see that Firefox is the most common browser family on this
+    instance, we know Firefox bugs are higher priority. If a lot of usage is coming
+    from Android, mobile issues get bumped up. If a specific video path is getting
+    hit way more than others, we know which parts of the code need to be the most
+    reliable. This is practical maintenance information, not surveillance.
+  </p>
+
+  <p>
+    We think this is way better than using something like Google Analytics or Plausible
+    or any third-party service. Those tools collect more than we'd ever want,
+    they send data off to someone else's servers, and they cost money or attention
+    that could go toward making Poke better. Our system stays local, stays anonymous,
+    and stays tiny.
   </p>
 
   <details class="block">
     <summary><strong>Why this is not user tracking</strong></summary>
 
     <p>
-      We do not use this system to follow people across the web, build behavioral profiles, or monitor individual habits over time.
-      That is what tracking systems are usually designed to do. Their purpose is often to learn as much as possible about a person:
-      what they watch, what they click, what device they use, how often they return, and sometimes how to target them later.
-      That is not what we are doing here.
+      Tracking systems are designed to follow people around. They build profiles,
+      correlate behavior across sites, remember what you clicked last week, and
+      sometimes sell that information. That's not what this is.
     </p>
 
     <p>
-      Our goal is much narrower. We only want to understand what is happening on this Poke instance in the aggregate.
-      We are asking questions like: “What browser families are most common here?” or “What operating systems should we test more?”
-      We are not asking: “Who is this person?” or “What is this individual person’s full viewing history?”
+      Our system asks: "what browser families are common here?" and "what operating
+      systems should we test more?" It does not ask: "who is this person?" or
+      "what is this individual's full viewing history?" Those are fundamentally
+      different questions.
     </p>
 
     <p>
-      We also do not send this data to outside analytics companies. The counts stay local to the instance.
-      That matters, because one of the worst parts of modern tracking is that data is often exported, shared, combined,
-      and reused across many services. We avoid that by keeping the telemetry local and limited.
+      We also don't send this data anywhere. The counts live on this server and
+      that's it. One of the worst things about modern tracking is that data gets
+      exported, combined, and resold across dozens of services. We avoid all of
+      that by keeping everything local and limited in scope.
     </p>
 
     <p>
-      The anonymous viewer ID used by this system is not a personal profile and is not exposed publicly.
-      Its purpose is only to avoid obviously overcounting the same browser as though it were a brand new person every time.
-      In other words, it is an anti-overcounting tool, not a surveillance tool.
-    </p>
-
-    <p>
-      We think this is telemetry done carefully and respectfully.
-      It helps us improve free software using broad technical patterns without turning users into products or building invasive analytics systems.
+      The anonymous viewer ID used by this system is not a personal profile.
+      It exists to avoid obviously overcounting the same browser as if it
+      were a brand new person every time. It's an anti-overcounting tool,
+      not a surveillance tool.
     </p>
   </details>
 
   <p>
-    Here is the short version of what this system does.
-    These are the basic facts, without the longer explanation.
+    Here's the short version of what the stats system does:
   </p>
 
   <ul>
-    <li><strong>Enabled by default.</strong> Instance operators may disable the stats system entirely in server configuration.</li>
+    <li><strong>Enabled by default.</strong> Instance operators can disable it entirely in the server config.</li>
 
-    <li><strong>What we record for each anonymous view:</strong>
+    <li><strong>What we record per anonymous view:</strong>
       <ul>
-        <li>The video ID that was watched (for example <code>?v=...</code>)</li>
-        <li>An anonymous random viewer ID stored locally in your browser using <strong>localStorage</strong> (not a cookie)</li>
-        <li>The browser family (for example Firefox, Chromium, Safari)</li>
-        <li>The operating system family (for example GNU/Linux, Android, Windows)</li>
+        <li>The video ID that was watched (e.g. <code>?v=...</code>)</li>
+        <li>An anonymous random viewer ID stored locally in your browser via <strong>localStorage</strong> (not a cookie)</li>
+        <li>The browser family (e.g. Firefox, Chromium, Safari)</li>
+        <li>The operating system family (e.g. GNU/Linux, Android, Windows)</li>
       </ul>
     </li>
 
-    <li><strong>What we derive from these counts:</strong>
+    <li><strong>What we figure out from those counts:</strong>
       <ul>
         <li>Total number of anonymous viewer IDs seen by this instance</li>
-        <li>Aggregate browser and operating system usage statistics</li>
+        <li>Aggregate browser and operating system usage</li>
         <li>Top video IDs viewed on this instance</li>
         <li>A short rolling list of recently viewed video IDs</li>
-        <li>An approximate <em>estimated total user count</em> based on anonymous usage patterns</li>
+        <li>An approximate estimated total user count based on anonymous usage patterns</li>
       </ul>
     </li>
 
@@ -471,8 +478,8 @@
         <li>No IP addresses</li>
         <li>No cookies</li>
         <li>No login or account data</li>
-        <li>No personal information</li>
-        <li>No full user-agent string used for fingerprinting</li>
+        <li>No personal information of any kind</li>
+        <li>No full user-agent strings</li>
         <li>No cross-site tracking</li>
         <li>No advertising identifiers</li>
         <li>No third-party analytics services</li>
@@ -482,110 +489,86 @@
     <li><strong>Where the data lives:</strong>
       <ul>
         <li>All counts are stored locally on the Poke server in a small statistics file</li>
-        <li>The data never leaves the server and is never sent to outside analytics providers</li>
+        <li>The data never leaves the server</li>
         <li>Only aggregated totals are exposed through the public API</li>
       </ul>
     </li>
 
-    <li><strong>Public API behavior:</strong>
+    <li><strong>Public API:</strong>
       <ul>
-        <li><code>/api/stats</code> returns only aggregate numbers such as browser totals, OS totals, and popular video IDs</li>
+        <li><code>/api/stats</code> returns aggregate numbers only (browser totals, OS totals, popular video IDs)</li>
         <li>Individual anonymous viewer IDs are never exposed</li>
-        <li>The stats page <code>/api/stats?view=human</code> simply visualizes these aggregates</li>
+        <li>The stats page <code>/api/stats?view=human</code> just visualizes the same aggregates</li>
       </ul>
     </li>
   </ul>
 
   <p>
-    If you want the reasoning behind each recorded field, the sections below explain that in more detail.
+    If you want the reasoning behind each recorded field, the sections below go into more detail.
   </p>
 
   <details class="block">
     <summary><strong>Why we record the video ID</strong></summary>
 
     <p>
-      We record the video ID because without it, we would have no way to understand what content is actually being used on the instance.
-      This is one of the most basic signals we can collect if we want to know whether the software is serving people well.
+      We record the video ID because without it, we'd have no way to understand
+      what content is actually being used on the instance. It's one of the most
+      basic signals we can collect if we want to know whether the software is
+      serving people well.
     </p>
 
     <p>
-      For us, the value of the video ID is not in creating a personal watch history.
-      Instead, it helps us understand aggregate demand. It tells us what the instance is serving most often overall.
-      That helps with prioritization, testing, and general maintenance.
+      The value for us isn't in creating a personal watch history. It's in
+      understanding aggregate demand: what does this instance serve most often?
+      That helps with prioritization, testing, and figuring out which parts of
+      the codebase need to be the most reliable.
     </p>
 
     <p>
-      For example, if some videos or content paths are requested much more often than others,
-      that can tell us where reliability and performance matter the most.
-      It also helps us understand which features of Poke are being used in practice rather than just in theory.
-    </p>
-
-    <p>
-      So when we record the video ID, we are not trying to answer “what did this particular person watch over time?”
-      We are trying to answer “what content does this instance serve most often overall?”
-      That is a much narrower and much less invasive purpose.
+      So when we record the video ID, we're not trying to answer "what did this
+      particular person watch over time?" We're trying to answer "what content
+      does this instance serve most often overall?" Those are very different questions.
     </p>
   </details>
-
-  <p>
-    The next part explains the anonymous browser-side identifier.
-    This is usually the part people worry about most, so we want to explain it clearly.
-  </p>
 
   <details class="block">
     <summary><strong>Why we store an anonymous random viewer ID in localStorage</strong></summary>
 
     <p>
-      We store an anonymous random viewer ID so we can avoid badly overcounting users.
-      Without it, the same browser could look like a brand new person every time it sends a stats event.
-      That would make the aggregate numbers much less accurate and much less useful.
+      We store a random anonymous viewer ID so we can avoid badly overcounting users.
+      Without it, the same browser could look like a brand new person every time
+      it sends a stats event. That would make the aggregate numbers way less accurate.
     </p>
 
     <p>
-      This ID is random and anonymous. It is not a login, not an email address, not an account, not an advertising ID,
-      and not something designed to identify you personally. Its purpose is limited:
-      it helps us treat repeated activity from the same browser as one anonymous viewer instead of many separate ones.
+      This ID is random and anonymous. It's not a login, not an email, not an account,
+      not an advertising ID, and not something designed to identify you personally.
+      It just helps us treat repeated activity from the same browser as one anonymous
+      viewer instead of fifty separate ones.
     </p>
 
     <p>
-      We use <code>localStorage</code> for this rather than a cookie-based tracking system.
-      That makes the mechanism simpler and more transparent. It is just a local browser value used by Poke itself.
-      It is not part of a third-party tracking network.
-    </p>
-
-    <p>
-      We think this is a good privacy-preserving tradeoff. It gives us less-wrong aggregate counts
-      without requiring accounts, invasive identifiers, or cross-site surveillance.
+      We use <code>localStorage</code> for this instead of cookies. It's simpler and
+      more transparent. It's just a local browser value used by Poke itself, not part
+      of any third-party tracking network.
     </p>
   </details>
-
-  <p>
-    We also record broad technical platform information.
-    We keep it intentionally coarse so it stays useful for maintenance without becoming invasive.
-  </p>
 
   <details class="block">
     <summary><strong>Why we record the browser family</strong></summary>
 
     <p>
-      We record the browser family because browser compatibility matters a lot for a video front-end.
-      Bugs, playback issues, layout problems, or performance regressions can affect one browser family more than another.
-      If we do not know what browsers are most common, it becomes much harder to decide where testing and debugging effort should go.
+      Browser compatibility matters a lot for a video frontend. Bugs, playback issues,
+      layout problems, or performance regressions can hit one browser family harder than
+      another. If we don't know what browsers are most common, it's hard to know where
+      to focus testing and debugging effort.
     </p>
 
     <p>
-      We only record the broad browser family, such as Firefox, Chromium, or Safari.
-      We do not record the full user-agent string for fingerprinting.
-      That is important because a broad browser-family label gives us enough technical information to improve compatibility,
-      while avoiding the much more detailed data that can become invasive.
-    </p>
-
-    <p>
-      In practice, this helps us answer simple maintenance questions:
-      should we spend more time testing Firefox?
-      Are most people using Chromium-based browsers?
-      Is Safari support especially important on this instance?
-      Those are legitimate software questions, and collecting the browser family is a limited, privacy-respecting way to answer them.
+      We only record the broad browser family (Firefox, Chromium, Safari, etc).
+      We don't record the full user-agent string. A broad label gives us enough
+      to improve compatibility without collecting the kind of detailed data that
+      can become invasive.
     </p>
   </details>
 
@@ -593,68 +576,58 @@
     <summary><strong>Why we record the operating system family</strong></summary>
 
     <p>
-      We record the operating system family for similar reasons. Different platforms can behave differently.
-      Android, GNU/Linux, Windows, macOS, and iOS can all have different browser behavior, media handling quirks,
-      performance limits, and interface needs.
+      Different platforms behave differently. Android, GNU/Linux, Windows, macOS,
+      and iOS all have their own quirks with media handling, browser behavior, and
+      performance. Knowing the broad OS family helps us understand where support
+      matters most and where to focus testing.
     </p>
 
     <p>
-      Knowing the broad operating system family helps us understand where support matters most.
-      For example, if a large share of usage is on Android, then mobile UI and playback issues deserve more attention.
-      If many people are using GNU/Linux, then desktop browser compatibility and media support on GNU/Linux matter more.
-    </p>
-
-    <p>
-      Again, we keep this broad on purpose. We are not trying to fingerprint a machine.
+      Again, we keep this broad on purpose. We're not fingerprinting your machine.
       We just want a high-level picture of what platforms the software should work well on.
-      That is useful technical information, not personal information.
     </p>
   </details>
-
-  <p>
-    Finally, this is why we believe this approach is worth doing at all.
-  </p>
 
   <details class="block">
-    <summary><strong>Why we believe this is a good thing</strong></summary>
+    <summary><strong>Why we think this is a good thing</strong></summary>
 
     <p>
-      We do not believe privacy always means software must learn absolutely nothing at all.
-      In practice, healthy software projects often need a very small amount of anonymous operational feedback
-      to stay reliable, compatible, and useful.
-      The real privacy question is not only “is anything collected?”
-      It is also “what is collected, why, how much, where does it go, and can it be abused?”
+      We don't think privacy always means software has to learn absolutely nothing.
+      Healthy software projects often need a very small amount of anonymous operational
+      feedback to stay reliable and useful. The real privacy question isn't just
+      "is anything collected?" It's also "what is collected, why, how much, where
+      does it go, and can it be abused?"
     </p>
 
     <p>
-      In our case, we designed this telemetry to be local-only, aggregate-focused, transparent, and limited in scope.
-      It is meant to support maintenance, not surveillance. It helps us improve Poke without depending on opaque,
-      third-party analytics systems that collect far more than is necessary.
+      In our case, we designed this to be local-only, aggregate-focused, transparent,
+      and limited in scope. It's meant to support maintenance, not surveillance.
+      It helps us improve Poke without depending on opaque third-party analytics
+      systems that collect way more than necessary.
     </p>
 
     <p>
-      We think that is a good thing. A small amount of well-scoped anonymous telemetry can be a privacy-respecting tool
-      for improving free software. It is far better than invasive tracking, and far more practical than trying to maintain
-      a complex platform with no operational feedback at all.
+      A small amount of well-scoped anonymous telemetry is a privacy-respecting tool
+      for improving free software. It's far better than invasive tracking, and far
+      more practical than maintaining a complex platform with zero feedback.
     </p>
   </details>
 
   <p>
-    Because this system relies only on anonymous counts, it cannot reconstruct an individual person’s viewing history.
-    The random viewer ID stored in your browser is used only to avoid counting the same browser repeatedly as a new user,
-    and it is never shared publicly.
+    Because this system only works with anonymous counts, it can't reconstruct an
+    individual person's viewing history. The random viewer ID in your browser is only
+    used to avoid counting the same browser multiple times, and it's never shared publicly.
   </p>
 
   <p>
-    If you prefer not to contribute even these anonymous counts, you can opt out at any time at
+    If you'd rather not contribute even these anonymous counts, you can opt out any time at
     <a href="/api/stats/optout">/api/stats/optout</a>.
-    That page stores a simple opt-out flag in your browser’s <code>localStorage</code>, and Poke will stop sending stats
-    from that browser entirely.
+    That stores a simple opt-out flag in your browser's <code>localStorage</code>, and
+    Poke will stop sending stats from that browser entirely.
   </p>
 
   <p>
-    Poke is free software and fully transparent. The implementation of the telemetry system is available in the source code.
-    You can inspect exactly how the statistics system works here:
+    Poke is free software and fully transparent. The telemetry implementation is in the source:
     <br>
     <code>
       <a href="https://codeberg.org/ashleyirispuppy/poke/src/branch/main/src/libpoketube/init/telemetry.js">
@@ -665,10 +638,135 @@
 
   <p>
     Anyone can audit this code, verify what data is collected, fork the project,
-    or disable the stats system when running their own Poke instance.
+    or disable the stats system when running their own instance.
   </p>
 </section>
 
+<section id="antiddos" aria-labelledby="antiddos-heading">
+  <h2 id="antiddos-heading" class="section">Anti-DDoS Protection <code>PokeStopSkids</code></h2>
+
+  <p>
+    Poke has a built-in DDoS and botnet protection system called <strong>PokeStopSkids</strong>.
+    It protects the server from getting flooded with requests by script kiddies, botnets,
+    or anyone else trying to take the service down. If you're a person browsing Poke normally,
+    this system is completely invisible to you and you'll never trigger it.
+  </p>
+
+  <p>
+    We want to be upfront about how this works because we're a privacy project and
+    we think you should know exactly what happens when you visit Poke.
+  </p>
+
+  <h3>What PokeStopSkids does</h3>
+
+  <p>
+    The system counts how many requests are coming from each connection in a short
+    time window. If a single source sends 50+ requests in one second, or 200+ requests
+    in 10 seconds, it gets temporarily blocked. The <code>/watch</code> endpoint (the
+    video page) has tighter limits because it's the heaviest part of the server.
+  </p>
+
+  <p>
+    It also checks request timing patterns. Humans click at random, messy intervals.
+    Scripts fire at very consistent, robotic intervals. If the time gaps between your
+    requests have almost zero variance and you're going fast, the system flags that
+    as automated traffic. This catches smarter bots that try to stay just under
+    the volume limits.
+  </p>
+
+  <p>
+    If the entire server is getting hammered (2000+ requests per second globally),
+    the system enters "siege mode" and gets stricter with everyone temporarily until
+    the attack passes.
+  </p>
+
+  <h3>What PokeStopSkids does NOT do</h3>
+
+  <p>
+    This is the important part:
+  </p>
+
+  <ul>
+    <li><strong>No IP addresses are stored.</strong> The system works with temporary counters
+    in server memory that are tied to the current connection. These counters are automatically
+    deleted after a few seconds of inactivity. Nothing is written to disk. Nothing is logged
+    to a file. When the counters expire or the server restarts, everything is gone.</li>
+
+    <li><strong>No fingerprinting.</strong> The system does not look at your user agent,
+    your cookies, your screen size, your language headers, whether you have JavaScript
+    enabled, or any other browser characteristic. It literally cannot tell the difference
+    between Firefox and Chrome and it doesn't try to.</li>
+
+    <li><strong>No browser detection.</strong> Empty user agents are fine. Weird user agents
+    are fine. Tor Browser is fine. VPNs are fine. Brave, LibreWolf, curl, wget, lynx,
+    whatever you want to use. The system doesn't care what browser you're running.</li>
+
+    <li><strong>No persistent records.</strong> There is no database of "who got blocked" or
+    "which IPs visited." The temporary counters exist only in RAM and only for as long as
+    there's active traffic from that connection. Once traffic stops, the entry is cleaned
+    up within 60 seconds at most.</li>
+
+    <li><strong>No cross-request tracking.</strong> The system doesn't try to correlate your
+    visit today with your visit yesterday. Each time you show up, you're a fresh counter
+    that starts at zero.</li>
+  </ul>
+
+  <h3>What about shared IPs and NAT?</h3>
+
+  <p>
+    If you're behind a shared IP (like a university, a corporate network, or a VPN exit node),
+    the rate limits are high enough that normal usage from many people sharing one IP won't
+    trigger anything. 50 requests per second from one IP is genuinely a lot. That's more
+    than a classroom full of people all clicking at the same time. Normal browsing generates
+    maybe 2-5 requests per page load, and people don't load pages every second.
+  </p>
+
+  <h3>What about crawlers and bots?</h3>
+
+  <p>
+    Search engines, social media link preview bots, fediverse servers, feed readers, and
+    uptime monitors are all whitelisted. We match these by user agent purely to <em>exempt</em>
+    them from rate limiting, never to penalize based on user agent. The full list includes:
+  </p>
+  <ul>
+    <li>Search engines (Google, Bing, DuckDuckGo, Yandex, Baidu, Apple, Qwant, Mojeek, and others)</li>
+    <li>Social/link previews (Discord, Telegram, Twitter, WhatsApp, Slack, LinkedIn)</li>
+    <li>Fediverse (Mastodon, Pleroma, Misskey, Akkoma, Lemmy, Kbin, Pixelfed, GoToSocial)</li>
+    <li>Feed readers (Feedly, NewsBlur, Tiny Tiny RSS, Miniflux)</li>
+    <li>Uptime monitors (UptimeRobot, Pingdom, StatusCake, HetrixTools)</li>
+    <li>CDN/infrastructure (Cloudflare, CloudFront, Fastly)</li>
+    <li>Archive (Internet Archive, archive.org bot)</li>
+  </ul>
+
+  <p>
+    Requests arriving directly from Cloudflare's IP ranges are also exempt since Cloudflare
+    already does its own DDoS filtering before traffic reaches us.
+  </p>
+
+  <h3>Live stats and source code</h3>
+
+  <p>
+    You can see the current state of the anti-DDoS system at
+    <a href="/_antiddos">/_antiddos</a>, including how many IPs are being tracked,
+    how many are currently blocked, and whether siege mode is active.
+    The JSON API is at <a href="/_pokestopskids/stats">/_pokestopskids/stats</a>.
+  </p>
+
+  <p>
+    The full implementation of PokeStopSkids is in the source code:
+    <br>
+    <code>
+      <a href="https://codeberg.org/ashleyirispuppy/poke">
+        codeberg.org/ashleyirispuppy/poke
+      </a>
+    </code>
+  </p>
+
+  <p>
+    Anyone can read exactly how it works, verify that no IPs are stored, and
+    run their own instance with the same protection.
+  </p>
+</section>
 
 <section id="cookies" aria-labelledby="cookies-heading">
   <h2 id="cookies-heading" class="section">Cookies &amp; Local Storage</h2>
@@ -684,7 +782,7 @@
     </li>
   </ul>
   <p class="small">
-    To remove data stored in your browser, use your browser’s cookie/site-data controls: <br>
+    To remove data stored in your browser, use your browser's cookie/site-data controls: <br>
     <a href="https://support.google.com/chrome/answer/2392709" rel="noopener" target="_blank">· Chrome</a> <br>
     <a href="https://support.mozilla.org/kb/clear-cookies-and-site-data-firefox" rel="noopener" target="_blank">· Firefox</a> <br>
     <a href="https://support.apple.com/HT201265" rel="noopener" target="_blank">· Safari iOS</a> <br>
@@ -701,7 +799,7 @@
         </p>
         <p>
           When you visit <a href="/map">/map</a>, Poke displays OpenStreetMap through a simple <strong>&lt;iframe&gt;</strong> element embedded directly into the site.
-          This means the map interface and tiles are loaded from OpenStreetMap’s tile servers rather than from Poke’s infrastructure.
+          This means the map interface and tiles are loaded from OpenStreetMap's tile servers rather than from Poke's infrastructure.
         </p>
         <p>
           Poke does not proxy or modify these map requests -your browser connects directly to <strong>openstreetmap.org</strong> and its associated tile servers.
@@ -713,7 +811,7 @@
       <section id="weather" aria-labelledby="weather-heading">
         <h2 id="weather-heading" class="section">Weather Pages &amp; Services</h2>
         <p>
-          Poke’s weather pages use privacy-respecting services to resolve places and fetch forecasts.
+          Poke's weather pages use privacy-respecting services to resolve places and fetch forecasts.
         </p>
         <details class="block">
           <summary>Geocoding / Place Lookup</summary>
@@ -723,7 +821,7 @@
           </p>
           <p><strong>How it works:</strong></p>
           <ul>
-            <li>The request is proxied through Poke’s backend -never directly from your browser.</li>
+            <li>The request is proxied through Poke's backend -never directly from your browser.</li>
           </ul>
         </details>
         <details class="block">
@@ -734,7 +832,7 @@
           </p>
           <p><strong>How it works:</strong></p>
           <ul>
-            <li>All forecast queries are proxied through Poke’s backend. Your browser never connects to Open-Meteo directly.</li>
+            <li>All forecast queries are proxied through Poke's backend. Your browser never connects to Open-Meteo directly.</li>
             <li>Only essential parameters latitude, longitude, units, etc. are forwarded.</li>
           </ul>
         </details>
@@ -775,7 +873,7 @@
             <li>how long it took to complete the request</li>
           </ul>
           <p>
-            <strong>No identifying information is logged</strong> in API logs, such as the visitor’s cookie or IP address.
+            <strong>No identifying information is logged</strong> in API logs, such as the visitor's cookie or IP address.
             The <code>/api/stats</code> feature is separate and only stores anonymous aggregates listed above.
           </p>
         </details>
@@ -799,23 +897,23 @@
         </p>
         <ul>
           <li><strong>Legitimate interest:</strong> Operating the Poke service safely and efficiently while collecting no personal data.</li>
-          <li><strong>Consent:</strong> If one day we add an optional feature that needs personal information, you’ll be clearly asked before it’s processed.</li>
-          <li><strong>Legal obligation:</strong> Even if an authority asks for user data, there’s no personal data to hand over.
-          We don’t store IPs, cookies, or identities.</li>
+          <li><strong>Consent:</strong> If one day we add an optional feature that needs personal information, you'll be clearly asked before it's processed.</li>
+          <li><strong>Legal obligation:</strong> Even if an authority asks for user data, there's no personal data to hand over.
+          We don't store IPs, cookies, or identities.</li>
         </ul>
         <p>
-          This section is here for compliance transparency only -Poke simply doesn’t process or retain personal data in the first place.
+          This section is here for compliance transparency only -Poke simply doesn't process or retain personal data in the first place.
         </p>
       </section>
 
       <section id="your-rights" aria-labelledby="rights-heading">
         <h2 id="rights-heading" class="section">Your Privacy Rights</h2>
         <p>
-          Because Poke doesn’t collect or store personal info, there’s really nothing about you that we can give, sell, or lose.
-          You won’t need to ask for “export my data” or “delete my profile” -we just don’t have any of it.
+          Because Poke doesn't collect or store personal info, there's really nothing about you that we can give, sell, or lose.
+          You won't need to ask for "export my data" or "delete my profile" -we just don't have any of it.
         </p>
         <p>
-          Poke accounts don’t require your name, email, or any identifying detail -you literally can’t add them even if you tried.
+          Poke accounts don't require your name, email, or any identifying detail -you literally can't add them even if you tried.
         </p>
         <p>
           But outside Poke, you <em>do</em> have rights and tools to protect your privacy. Here are a few ideas:
@@ -824,7 +922,7 @@
           <li>Use a privacy-respecting search engine -e.g. <a href="https://duckduckgo.com/" target="_blank" rel="noopener">DuckDuckGo</a>.</li>
           <li>Run browser extensions that block trackers, fingerprinting, and sketchy scripts.</li>
           <li>Use HTTPS whenever possible, avoid sketchy public Wi-Fi, and keep your OS/browser updated.</li>
-          <li>Check device permissions camera, mic, location and revoke ones you don’t use.</li>
+          <li>Check device permissions camera, mic, location and revoke ones you don't use.</li>
           <li>Use a VPN on public or untrusted networks -try <a href="https://mullvad.net/" target="_blank" rel="noopener"><strong>Mullvad VPN</strong></a>.</li>
           <li>Use a content blocker like <a href="https://ublockorigin.com/" target="_blank" rel="noopener"><strong>uBlock Origin</strong></a>.</li>
           <li>Try <a href="https://privacybadger.org/" target="_blank" rel="noopener"><strong>Privacy Badger</strong></a> EFF.</li>
@@ -839,13 +937,14 @@
         <ul>
           <li><strong>Server logs:</strong> minimal operational logs no personal data kept for the shortest technically feasible duration.</li>
           <li><strong>Anonymous usage stats:</strong> counts are stored locally on this server; admins may reset or disable at any time.</li>
+          <li><strong>Anti-DDoS (PokeStopSkids):</strong> temporary request counters exist only in server memory (RAM). They are automatically cleaned up within 60 seconds of inactivity and are completely gone on server restart. Nothing is saved to disk.</li>
         </ul>
       </section>
 
       <section id="javascript" aria-labelledby="javascript-heading">
         <h2 id="javascript-heading" class="section">JavaScript &amp; No-JS</h2>
         <p>
-          JavaScript is <strong>optional</strong> on Poke’s websites. Core features -including search -work without JavaScript.
+          JavaScript is <strong>optional</strong> on Poke's websites. Core features -including search -work without JavaScript.
         </p>
       </section>
 
@@ -860,7 +959,7 @@
       <section id="changes" aria-labelledby="changes-heading">
         <h2 id="changes-heading" class="section">Changes to this Policy</h2>
         <p>
-          If we ever change how privacy works here, we’ll update the date at the top and announce major changes. Spoiler: changes would not include adding two bananas. this isn’t minions LOL :3
+          If we ever change how privacy works here, we'll update the date at the top and announce major changes. Spoiler: changes would not include adding two bananas. this isn't minions LOL :3
         </p>
       </section>
 
@@ -891,8 +990,8 @@
       <section id="license" aria-labelledby="license-heading">
         <h2 id="license-heading" class="section">Policy License</h2>
         <p class="small">
-          © 2021–2026 Poke Poke Project. This policy is licensed under the
-          <strong>Creative Commons Attribution–ShareAlike 4.0 International</strong> CC BY-SA 4.0.
+          &copy; 2021-2026 Poke Poke Project. This policy is licensed under the
+          <strong>Creative Commons Attribution-ShareAlike 4.0 International</strong> CC BY-SA 4.0.
         </p>
       </section>
 
@@ -907,7 +1006,7 @@
     !function(){
       const updateBox = document.getElementById('whats-new');
       const dismissBtn = document.getElementById('dismissUpdate');
-      const KEY = 'poke_privacy_update_2026_02_20_dismissed';
+      const KEY = 'poke_privacy_update_2026_03_23_dismissed';
       try{
         if(localStorage.getItem(KEY)==='1'){ updateBox && (updateBox.hidden = true); }
       }catch{}
