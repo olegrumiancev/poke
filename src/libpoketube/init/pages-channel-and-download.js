@@ -56,6 +56,14 @@ const ChannelTabs = {
   playlist: "cGxheWxpc3Rz",
 };
 
+/**
+ * Cache for failed fetchChannelPublishedJSON requests.
+ * Stores channel IDs that failed, so we don't retry for 1 hour.
+ * Key: channel ID, Value: timestamp of when the failure was recorded.
+ */
+const fetchFailureCache = {};
+const FETCH_FAILURE_TTL = 60 * 60 * 1000; // 1 hour in ms
+
 module.exports = function (app, config, renderTemplate) {
   app.get("/download", async (req, res) => {
     try {
@@ -240,38 +248,64 @@ app.get("/channel/", async (req, res) => {
   const cache = {};
 
   async function fetchChannelPublishedJSON(id) {
-    const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`;
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/atom+xml"
-      }
-    });
-
-    if (res.status === 404) return null;
-    if (!res.ok) console.log(`HTTP ${res.status} for ${url}`);
-
-    const xml = await res.text();
-    const match = xml.match(/<feed[\s\S]*?<published>([^<]+)<\/published>/i);
-    if (!match) throw new Error("feed <published> not found");
-
-    const iso = match[1].trim();
-    const date = new Date(iso);
-
-    if (Number.isNaN(date.getTime())) {
-      throw new Error(`invalid date: ${iso}`);
+    // Check if this channel ID has a recent failure cached
+    if (fetchFailureCache[id] && (Date.now() - fetchFailureCache[id]) < FETCH_FAILURE_TTL) {
+      return { ID: id, published: " " };
     }
 
-    const published = new Intl.DateTimeFormat("en-GB", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC"
-    }).format(date);
+    try {
+      const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/atom+xml"
+        }
+      });
 
-    return {
-      ID: id,
-      published
-    };
+      if (res.status === 404) {
+        fetchFailureCache[id] = Date.now();
+        return { ID: id, published: " " };
+      }
+
+      if (!res.ok) {
+        console.log(`HTTP ${res.status} for ${url}`);
+        fetchFailureCache[id] = Date.now();
+        return { ID: id, published: " " };
+      }
+
+      const xml = await res.text();
+      const match = xml.match(/<feed[\s\S]*?<published>([^<]+)<\/published>/i);
+      if (!match) {
+        fetchFailureCache[id] = Date.now();
+        return { ID: id, published: " " };
+      }
+
+      const iso = match[1].trim();
+      const date = new Date(iso);
+
+      if (Number.isNaN(date.getTime())) {
+        fetchFailureCache[id] = Date.now();
+        return { ID: id, published: " " };
+      }
+
+      const published = new Intl.DateTimeFormat("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC"
+      }).format(date);
+
+      // Success - remove from failure cache if it was there before
+      delete fetchFailureCache[id];
+
+      return {
+        ID: id,
+        published
+      };
+    } catch (error) {
+      console.log(`fetchChannelPublishedJSON failed for ${id}:`, error.message);
+      fetchFailureCache[id] = Date.now();
+      return { ID: id, published: " " };
+    }
   }
 
   const createdAccountGetDate = await fetchChannelPublishedJSON(ID);
