@@ -1,4 +1,3 @@
- 
 const {
   fetcher,
   core,
@@ -59,10 +58,7 @@ module.exports = function (app, config, renderTemplate) {
     tab = `/?type=${capitalizeFirstLetter(req.query.tab)}`;
   }
  
-  const invtrend = await fetch(`${config.invapi}/trending${tab}`, {
-    headers: { "User-Agent": config.useragent },
-  });
-  const t = getJson(await invtrend.text());
+  const t = [];
 
    
   const p = "";
@@ -314,12 +310,12 @@ if (req.hostname !== officialHost && apiHostname === officialApiHost) {
           
           <p>
             Please edit your <code>config.json</code> to match your own setup — using
-            Poke’s shared API is kinda lame 😅 since it also rate-limits <b>poketube.fun</b>
+            Poke's shared API is kinda lame 😅 since it also rate-limits <b>poketube.fun</b>
             itself when too many people use it.
           </p>
           
           <p>
-            Set up your own Invidious instance instead — it’s easy! <br>
+            Set up your own Invidious instance instead — it's easy! <br>
             See the official setup guide: 
             <a href="https://docs.invidious.io" target="_blank">docs.invidious.io</a>
           </p>
