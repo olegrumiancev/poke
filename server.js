@@ -74,7 +74,6 @@
 
   
   var app = modules.express();
-  app.use(limiter);
   app.use(ieBlockMiddleware);
   initlog("Loaded express.js");
   app.engine("html", require("ejs").renderFile);
@@ -395,7 +394,10 @@ const limiter = rateLimit({
     windowMs: 15 * 1000, // 25 second window
     max: 150, // limit each IP to 200 requests per 30 seconds
 });
+    app.use(limiter);
+
   initlog("Loaded limitter");
+  
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
