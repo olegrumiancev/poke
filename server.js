@@ -384,28 +384,10 @@
 })();
 
 /*
- * PokeStopSkids v2
+ * PokeStopSkids
  *
- * poke's anti-ddos and anti-botnet system. zero fingerprinting,
- * zero browser detection, zero cookie/js checks. we're a privacy
+ * poke's anti-ddos and anti-botnet system. we're a privacy
  * frontend, we're not about to start spying on users to stop skids.
- *
- * what we actually look at (all per-IP, nothing else):
- * - raw request volume (burst + sustained)
- * - request timing patterns (are hits perfectly spaced? thats a bot)
- * - path abuse (hammering /watch with random video ids)
- * - coordinated flood detection (lots of new IPs all doing the same thing)
- * - siege mode: if the whole server is getting slammed, lock it down
- *
- * what we will never look at:
- * - user agent (empty is fine, weird is fine, tor browser is fine)
- * - cookies, js, headers, accept-language, screen size, any of that
- * - we dont even look at referer. privacy means privacy.
- *
- * crawlers are whitelisted so we dont nuke seo or link previews.
- * cloudflare ips are exempt because cf already filters for us.
- *
- * skids get roasted. regular users never even know this exists.
  */
 (function PokeStopSkids() {
   const net = require("net");
