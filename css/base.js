@@ -3746,11 +3746,10 @@ _seekPostTimers: []
   function incrementRapidPlayPause() {
     if (state.seeking || state.seekBuffering) return;
     if (state.tabReturnImmuneUntil > now()) return;
-    // Don't count play/pause events when unfocused (alt-tab) or hidden —
-    // these are browser-driven, not user-driven, and shouldn't trigger
-    // loop detection.
     if (inBgReturnGrace() || document.visibilityState === "hidden" || !isWindowFocused()) return;
     if (!state.firstPlayCommitted) return;
+    // Don't count during startup settle — internal play-pause is normal during init
+    if (startupSettleActive()) return;
     const nowTs = now();
     if ((nowTs - state.rapidPlayPauseResetAt) > RAPID_PLAY_PAUSE_WINDOW_MS) {
       state.rapidPlayPauseCount = 0;
@@ -4157,10 +4156,10 @@ _seekPostTimers: []
     if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSeek()) && state.firstPlayCommitted) return;
     try {
       if (isFinite(t) && t >= 0) {
-        // Never seek audio to 0 after first play unless explicitly restarting/looping
+        // Never seek audio backward to near 0 when it's already playing
         if (t < 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired()) {
           const currentAt = Number(audio.currentTime) || 0;
-          if (currentAt > 2) return; // audio is well into playback, don't reset to 0
+          if (currentAt > 0.5) return;
         }
         const timeDiff = Math.abs((audio.currentTime || 0) - t);
         if (timeDiff > 0.05) {
@@ -5618,8 +5617,10 @@ _seekPostTimers: []
       // Final audio sync before resume — skip during tab-return immunity to avoid replay
       if (coupledMode && audio && !isTabReturnImmune() && !NotMakePlayBackFixingNoticable.shouldBlockSeek()) {
         const _vt = Number(video.currentTime()) || 0;
-        // Never seek audio near 0 when it's playing well into the track — prevents restart bug
-        if (isFinite(_vt) && !(_vt < 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && (Number(audio.currentTime) || 0) > 2)) {
+        const _at = Number(audio.currentTime) || 0;
+        // Never seek audio backward to near 0 when it's playing into the track
+        const _wouldRestart = _vt < 0.5 && _at > 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+        if (isFinite(_vt) && !_wouldRestart) {
           try { audio.currentTime = _vt; } catch {}
         }
       }
@@ -7711,21 +7712,15 @@ _seekPostTimers: []
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
         // Clear any stale blocks
-        state.isProgrammaticAudioPause = false;
-        state.videoStallAudioPaused = false;
-        state.stallAudioResumeHoldUntil = 0;
-        state.audioPauseUntil = 0;
-        state.audioEventsSquelchedUntil = 0;
+        clearAudioPauseLocks();
         DONTMAKEITDOUBLEPLAY.resetAll();
-        // Sync position and play
         const _vtNow = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
         if (isFinite(_vtNow) && Math.abs((Number(audio.currentTime) || 0) - _vtNow) > 0.15) {
           try { audio.currentTime = _vtNow; } catch {}
         }
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-        const _targetVol = targetVolFromVideo();
-        try { if (audio.volume < _targetVol * 0.5) audio.volume = _targetVol; } catch {}
-        try { audio.play().catch(() => {}); } catch {}
+        // Use programmatic play so onAudioPlay handler doesn't re-pause
+        execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
         state.audioEverStarted = true;
       }
 
@@ -7818,19 +7813,14 @@ _seekPostTimers: []
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (NotMakePlayBackFixingNoticable.isActive()) return;
           // Audio is still paused 1.5s after video started playing — force it
-          state.isProgrammaticAudioPause = false;
-          state.videoStallAudioPaused = false;
-          state.stallAudioResumeHoldUntil = 0;
-          state.audioPauseUntil = 0;
-          state.audioEventsSquelchedUntil = 0;
+          clearAudioPauseLocks();
           DONTMAKEITDOUBLEPLAY.resetAll();
           const _vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
           if (isFinite(_vt) && Math.abs((Number(audio.currentTime) || 0) - _vt) > 0.15) {
             try { audio.currentTime = _vt; } catch {}
           }
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-          try { audio.volume = targetVolFromVideo(); } catch {}
-          try { audio.play().catch(() => {}); } catch {}
+          execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
           state.audioEverStarted = true;
         }, 1500);
       }
@@ -7933,8 +7923,8 @@ _seekPostTimers: []
 
       if (audioEventsSquelched() || state.restarting || state.isProgrammaticAudioPlay || state.isProgrammaticVideoPlay) return;
       if (now() < state.audioPlayUntil || now() < state.audioPauseUntil) return;
-      // During startup kick, let audio play — the kick is orchestrating both tracks
-      const _inStartupKick = state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted);
+      // During startup or settle window, let audio play — don't re-pause it
+      const _inStartupKick = state.startupKickInFlight || (state.startupPhase && !state.firstPlayCommitted) || startupSettleActive();
       if ((!state.intendedPlaying || userPauseLockActive() || mediaSessionForcedPauseActive() || shouldBlockNewAudioStart()) && !userPlayIntentActive() && !_inStartupKick) {
         try { squelchAudioEvents(400); } catch {}
         try { audio.pause(); } catch {}
@@ -9035,13 +9025,21 @@ _seekPostTimers: []
   }
 
   setupUserPauseIntentDetection();
+  // Load saved volume BEFORE binding events — prevents autoplay at default volume
+  loadSavedVolume();
+  // Sync audio element volume to match video immediately
+  if (coupledMode && audio) {
+    try {
+      const _initTarget = targetVolFromVideo();
+      audio.volume = clamp01(_initTarget);
+      if (state.userMutedAudio) audio.muted = true;
+    } catch {}
+  }
   setupMediaSession();
   bindCommonMediaEvents();
   setupVisibilityLifecycle();
   setupMediaErrorHandlers();
   setupHeartbeat();
-
-  loadSavedVolume();
 
   if (coupledMode) {
     try {
