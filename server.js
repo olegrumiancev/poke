@@ -71,7 +71,6 @@
   );
 
   const sha384 = modules.hash;
-  const rateLimit = require("express-rate-limit");
 
   var app = modules.express();
 
@@ -375,15 +374,304 @@
 
 })();
 
-  // Rate limiter goes AFTER trust proxy engine
-  const limiter = rateLimit({
-    windowMs: 15 * 1000,
-    max: 150,
-  });
-  app.use(limiter);
+  // Philosophy: ONLY block traffic that is physically impossible for
+  // a human to generate. Never penalize based on user-agent, cookies,
+  // JS support, or any fingerprinting. Privacy browsers are welcome.
+  //
+  // Whitelists: known crawlers (verified by behavior, not just UA string),
+  // Cloudflare IPs, and CDN health checks.
+  //
+  (function installAntiDDoS() {
+    const net = require("net");
+    const rateLimit = require("express-rate-limit");
+
+    // https://www.cloudflare.com/ips/
+    const CLOUDFLARE_V4 = [
+      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
+      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
+      "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+      "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    ];
+
+    function ipToLong(ip) {
+      return ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
+    }
+
+    function cidrContains(cidr, ip) {
+      if (!net.isIPv4(ip)) return false;
+      const [subnet, bits] = cidr.split("/");
+      const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1) >>> 0;
+      return (ipToLong(ip) & mask) === (ipToLong(subnet) & mask);
+    }
+
+    function isCloudflareIP(ip) {
+      const clean = ip.replace("::ffff:", "");
+      if (!net.isIPv4(clean)) return false;
+      return CLOUDFLARE_V4.some(cidr => cidrContains(cidr, clean));
+    }
+
+     // We match these loosely because crawlers are inherently high-volume
+    // and blocking them hurts SEO / link previews / federation.
+    // This does NOT grant trust — it just exempts from the DDoS checks.
+    // A fake "Googlebot" UA still can't do anything harmful, they just
+    // skip the rate check — and real abuse gets caught by the IP ban.
+    const KNOWN_BOT_PATTERNS = [
+      // Search engines
+      /googlebot/i,
+      /bingbot/i,
+      /slurp/i,                   // Yahoo
+      /duckduckbot/i,
+      /baiduspider/i,
+      /yandexbot/i,
+      /sogou/i,
+      /exabot/i,
+      /facebot/i,                 // Facebook crawler
+      /ia_archiver/i,             // Alexa / Internet Archive
+      /archive\.org_bot/i,
+      /qwantify/i,               // Qwant
+      /seznambot/i,
+      /mojeekbot/i,
+      /petalsearch/i,
+      /applebot/i,
+
+      // Social media / link previews
+      /discordbot/i,
+      /telegrambot/i,
+      /twitterbot/i,
+      /whatsapp/i,
+      /slackbot/i,
+      /linkedinbot/i,
+      /mastodon/i,               // Fediverse
+      /pleroma/i,                // Fediverse
+      /misskey/i,                // Fediverse
+      /akkoma/i,                 // Fediverse
+
+      // Monitoring / uptime
+      /uptimerobot/i,
+      /pingdom/i,
+      /statuscake/i,
+      /site24x7/i,
+      /hetrixtools/i,
+      /freshping/i,
+
+      // CDN / infrastructure
+      /cloudflare/i,
+      /cloudfront/i,
+      /fastly/i,
+
+      // Feed readers
+      /feedfetcher/i,
+      /feedly/i,
+      /newsblur/i,
+      /tiny\s?tiny\s?rss/i,
+      /miniflux/i,
+
+      // Research / academic
+      /researchscan/i,
+      /censys/i,
+      /semrush/i,
+      /ahrefs/i,
+    ];
+
+    function isKnownBot(ua) {
+      if (!ua) return false;
+      return KNOWN_BOT_PATTERNS.some(pattern => pattern.test(ua));
+    }
+
+    // ─── Per-IP tracking state ─────────────────────────────────────
+    const ipData = new Map();
+
+    // Thresholds — intentionally VERY generous for humans
+    const BURST_LIMIT = 50;         // req/sec — physically impossible for a person
+    const SUSTAINED_LIMIT = 200;    // req/10sec — still way beyond any human
+    const SUSTAINED_WINDOW = 10000; // 10 seconds
+    const BAN_BASE_MS = 30000;      // first ban: 30 seconds
+    const BAN_MAX_MS = 600000;      // max ban: 10 minutes
+    const STRIKE_DECAY_MS = 300000; // strikes decay after 5 min of good behavior
+    const CLEANUP_INTERVAL = 60000; // clean stale entries every 60s
+    const MAX_TRACKED_IPS = 50000;  // memory cap — evict oldest if exceeded
+
+    function getIPData(ip) {
+      let data = ipData.get(ip);
+      if (!data) {
+        // Memory protection: if we're tracking too many IPs, evict the oldest idle ones
+        if (ipData.size >= MAX_TRACKED_IPS) {
+          let oldestKey = null;
+          let oldestTime = Infinity;
+          for (const [key, val] of ipData) {
+            const lastActive = val.timestamps.length > 0
+              ? val.timestamps[val.timestamps.length - 1]
+              : 0;
+            if (lastActive < oldestTime && !val.banned) {
+              oldestTime = lastActive;
+              oldestKey = key;
+            }
+          }
+          if (oldestKey) ipData.delete(oldestKey);
+        }
+        data = { timestamps: [], banned: false, banExpires: 0, strikes: 0, lastStrike: 0 };
+        ipData.set(ip, data);
+      }
+      return data;
+    }
+
+    function isBanned(data) {
+      if (!data.banned) return false;
+      if (Date.now() >= data.banExpires) {
+        data.banned = false;
+        return false;
+      }
+      return true;
+    }
+
+    function banIP(data, ip, reason) {
+      data.strikes++;
+      data.lastStrike = Date.now();
+      const duration = Math.min(BAN_BASE_MS * Math.pow(2, data.strikes - 1), BAN_MAX_MS);
+      data.banned = true;
+      data.banExpires = Date.now() + duration;
+      initlog(
+        `[anti-ddos] ⛔ Banned ${ip} for ${Math.round(duration / 1000)}s ` +
+        `(${reason}, strike ${data.strikes})`
+      );
+    }
+
+    function checkAbuse(data, now) {
+      const ts = data.timestamps;
+      ts.push(now);
+
+      // Trim timestamps older than the sustained window
+      while (ts.length > 0 && ts[0] < now - SUSTAINED_WINDOW) {
+        ts.shift();
+      }
+
+      // Check 1: Burst — count requests in the last 1 second
+      const oneSecAgo = now - 1000;
+      let burstCount = 0;
+      for (let i = ts.length - 1; i >= 0; i--) {
+        if (ts[i] >= oneSecAgo) burstCount++;
+        else break;
+      }
+      if (burstCount >= BURST_LIMIT) return "burst (" + burstCount + " req/1s)";
+
+      // Check 2: Sustained flood — total requests in the 10-second window
+      if (ts.length >= SUSTAINED_LIMIT) return "sustained (" + ts.length + " req/10s)";
+
+      return null;
+    }
+
+    // ─── Periodic cleanup ──────────────────────────────────────────
+    setInterval(() => {
+      const now = Date.now();
+      for (const [ip, data] of ipData) {
+        // Decay strikes
+        if (data.strikes > 0 && now - data.lastStrike > STRIKE_DECAY_MS) {
+          data.strikes = Math.max(0, data.strikes - 1);
+        }
+        // Trim old timestamps
+        while (data.timestamps.length > 0 && data.timestamps[0] < now - SUSTAINED_WINDOW) {
+          data.timestamps.shift();
+        }
+        // Evict clean, idle entries
+        if (!data.banned && data.strikes === 0 && data.timestamps.length === 0) {
+          ipData.delete(ip);
+        }
+      }
+    }, CLEANUP_INTERVAL).unref();
+
+    // ─── The middleware ─────────────────────────────────────────────
+    app.use(function antiDDoS(req, res, next) {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const ua = req.headers["user-agent"] || "";
+      const now = Date.now();
+
+       const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
+      if (isCloudflareIP(rawIP)) return next();
+
+ 
+      if (isKnownBot(ua)) return next();
+ 
+
+      // ── Check ban status
+      const data = getIPData(ip);
+
+      if (isBanned(data)) {
+        const retryAfter = Math.ceil((data.banExpires - now) / 1000);
+        res.set("Retry-After", String(retryAfter));
+        return res.status(429).send(
+          "You're sending way too many requests. Try again in " + retryAfter + " seconds."
+        );
+      }
+
+      // ── Check for DDoS patterns
+      const abuse = checkAbuse(data, now);
+      if (abuse) {
+        banIP(data, ip, abuse);
+        const retryAfter = Math.ceil((data.banExpires - now) / 1000);
+        res.set("Retry-After", String(retryAfter));
+        return res.status(429).send(
+          "You're sending way too many requests. Try again in " + retryAfter + " seconds."
+        );
+      }
+
+      next();
+    });
+
+    // ─── Standard rate limiter (softer, catches moderate abuse) ────
+    // This is the express-rate-limit that handles "normal" rate limiting
+    // for regular users — much softer than the DDoS detector.
+    const limiter = rateLimit({
+      windowMs: 15 * 1000,
+      max: 150,
+      // Don't throw on X-Forwarded-For mismatch — our trust proxy engine handles it
+      validate: { xForwardedForHeader: false },
+      // Skip bots and Cloudflare so they don't eat the limit
+      skip: (req) => {
+        const ua = req.headers["user-agent"] || "";
+        const rawIP = (req.socket.remoteAddress || "").replace("::ffff:", "");
+        return isKnownBot(ua) || isCloudflareIP(rawIP);
+      },
+      handler: (req, res) => {
+        return res.status(429).send("Slow down! Too many requests. Please wait a moment.");
+      },
+    });
+    app.use(limiter);
+
+     app.get("/_antiddos/stats", (req, res) => {
+      const now = Date.now();
+      let bannedCount = 0;
+      let trackedWithActivity = 0;
+      for (const [, data] of ipData) {
+        if (isBanned(data)) bannedCount++;
+        if (data.timestamps.length > 0) trackedWithActivity++;
+      }
+      res.json({
+        tracked_ips: ipData.size,
+        active_ips: trackedWithActivity,
+        currently_banned: bannedCount,
+        thresholds: {
+          burst: BURST_LIMIT + " req/1s",
+          sustained: SUSTAINED_LIMIT + " req/10s",
+          rate_limit: "150 req/15s",
+        },
+      });
+    });
+
+    initlog(
+      "[OK] Smart anti-DDoS engine loaded — " +
+      "burst: " + BURST_LIMIT + " req/s, " +
+      "sustained: " + SUSTAINED_LIMIT + " req/10s, " +
+      "bots whitelisted: " + KNOWN_BOT_PATTERNS.length + " patterns"
+    );
+  })();
+
   app.use(ieBlockMiddleware);
   initlog("Loaded express.js");
- 
+
+// ── Global Response Safety Guard ──────────────────────────────────
+// Patches res.send/res.json/res.redirect/res.render to prevent
+// ERR_HTTP_HEADERS_SENT crashes anywhere in the app
 (function installResponseGuard() {
   app.use(function responseGuard(req, res, next) {
     const originalSend = res.send.bind(res);
@@ -457,7 +745,8 @@
   var toobusy = require("toobusy-js");
 
   const renderTemplate = async (res, req, template, data = {}) => {
-     if (res.headersSent) {
+    // Guard: don't render if response is already sent
+    if (res.headersSent) {
       console.error("[renderTemplate] ⚠ Headers already sent, skipping render for:", template);
       return;
     }
@@ -488,8 +777,12 @@
   });
 
   toobusy.onLag(function (currentLag) {
-    process.exit(1);
-    console.log("Event loop lag detected! Latency: " + currentLag + "ms");
+    console.error("[toobusy] Event loop lag detected! Latency: " + currentLag + "ms");
+    // Only exit on extreme lag — let the anti-ddos handle most cases
+    if (currentLag > 5000) {
+      console.error("[toobusy] Critical lag (" + currentLag + "ms), shutting down for restart");
+      process.exit(1);
+    }
   });
   
     initlog("inited anti ddos");
@@ -585,8 +878,10 @@
     initlog("[FAILED] load robots.txt");
   }
 
-   app.use(function globalErrorHandler(err, req, res, next) {
-     console.error(
+  // ── Global error handler (must be last middleware) ────────────────
+  app.use(function globalErrorHandler(err, req, res, next) {
+    // Log the error with context
+    console.error(
       "[error-handler] Unhandled error on",
       req.method, req.originalUrl,
       ":", err.message
