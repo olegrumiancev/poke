@@ -1598,12 +1598,15 @@ _seekPostTimers: []
         try { audio.muted = false; } catch {}
       }
 
-      // Rule 6: Detect stale userMutedAudio flag — if video is unmuted and playing,
-      // user probably didn't intend to mute audio separately
+      // Rule 6: Detect stale mute flags — if playing, user didn't intend mute
       if (state.userMutedAudio && !vPaused && state.intendedPlaying &&
           !state.userMutedVideo && !getVideoMutedState()) {
         state.userMutedAudio = false;
         try { if (audio.muted) audio.muted = false; } catch {}
+      }
+      // Rule 7: Stale userMutedVideo — video playing but flagged as user-muted
+      if (state.userMutedVideo && !vPaused && state.intendedPlaying && !getVideoMutedState()) {
+        state.userMutedVideo = false;
       }
 
       _lastAudioPos = at;
@@ -3736,8 +3739,9 @@ _seekPostTimers: []
     state.loopPreventionCooldownUntil = 0;
     DONTMAKEITDOUBLEPLAY.resetAll();
     clearAudioPauseLocks();
-    // User clicked play — clear any stale mute flag from programmatic pause
+    // User clicked play — clear any stale mute flags from programmatic pause
     if (state.userMutedAudio && audio && !audio.muted) state.userMutedAudio = false;
+    if (state.userMutedVideo && !getVideoMutedState()) state.userMutedVideo = false;
     MediumQualityManager.markUserPlayed();
     PlaybackStabilityManager.onUserAction();
     try { UltraStabilizer.onUserAction(); } catch {}
@@ -4138,6 +4142,9 @@ _seekPostTimers: []
 
   function forceUnmuteForPlaybackIfAllowed() {
     if (!state.intendedPlaying) return;
+    // Clear stale programmatic mute flags before checking
+    if (state.userMutedVideo && !getVideoMutedState()) state.userMutedVideo = false;
+    if (state.userMutedAudio && audio && !audio.muted) state.userMutedAudio = false;
     try { if (!state.userMutedVideo && getVideoMutedState()) setVideoMutedState(false); } catch {}
     try { if (audio && !state.userMutedAudio && audio.muted) audio.muted = false; } catch {}
   }
@@ -9218,10 +9225,13 @@ _seekPostTimers: []
     bindStartupOnce(videoEl, "canplay");
   }
   video.on("volumechange", () => {
-    // User volume change always takes priority — cancel any fade and force snap
     if (state.audioFading) cancelActiveFade();
     updateAudioGainImmediate(true);
-    state.userMutedVideo = !!video.muted();
+    // Only track user-initiated mute — NOT programmatic mute during pause/transitions
+    if (!state.isProgrammaticVideoPause && !state.isProgrammaticAudioPause &&
+        !state.seeking && !state.seekBuffering && !state.restarting) {
+      state.userMutedVideo = !!video.muted();
+    }
     saveVolume();
   });
   if (coupledMode) {
