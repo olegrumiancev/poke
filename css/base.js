@@ -5934,13 +5934,12 @@ _seekPostTimers: []
   function bothReadyForStartupKick() {
     if (!coupledMode) return true;
     if (document.visibilityState === "hidden" || !isWindowFocused()) return true;
-    const t0 = Number(video.currentTime()) || 0;
     const vNode = getVideoNode();
     const vRS = Number(vNode.readyState || 0);
-    const aRS = Number(audio ? audio.readyState : 0);
-
-    if (vRS >= HAVE_FUTURE_DATA && aRS >= HAVE_FUTURE_DATA) return true;
-    if (vRS >= 2 && aRS >= 2 && canPlayAt(vNode, t0) && canStartAudioAt(t0)) return true;
+    // Only require VIDEO to be ready. Audio can start with play() even at
+    // readyState 0 — the browser queues the play and starts when data arrives.
+    // Waiting for audio readyState >= 2 delays startup by seconds on slow connections.
+    if (vRS >= 2) return true;
     return false;
   }
 
@@ -5950,7 +5949,6 @@ _seekPostTimers: []
     if (!state.startupPrimed) return;
     if (!wantsStartupAutoplay() && !state.intendedPlaying) return;
     if (mediaSessionForcedPauseActive()) return;
-    if (!pageLoadedForAutoplay()) return;
     if (state.bgResumeInFlight) return;
 
     state.startupKickInFlight = true;
@@ -6088,14 +6086,16 @@ _seekPostTimers: []
   function maybePrimeStartup() {
     if (!coupledMode) return;
     if (state.restarting || state.startupPrimed) return;
-    if (!pageLoadedForAutoplay()) return;
     const t0 = Number(video.currentTime()) || 0;
     const primeWait = now() - state.startupPrimeStartedAt;
     const inBg = document.visibilityState === "hidden" || !isWindowFocused();
-    if (!bothStartupBufferedAt(t0)) {
-      const bgReady = inBg;
-      const looseReady = canPlayAt(getVideoNode(), t0) && canStartAudioAt(t0);
-      if (!bgReady && !(looseReady && primeWait > 1800)) {
+    // Only require VIDEO to be buffered for priming. Audio can start via play()
+    // even without buffer — browser queues it and plays when data arrives.
+    // Waiting for both delays audio startup by seconds on slow connections.
+    const vNode = getVideoNode();
+    if (!canPlayAt(vNode, t0) && !inBg) {
+      const primeWaitLong = primeWait > 2500;
+      if (!primeWaitLong) {
         state.strictBufferHold = true;
         if (!state.bufferHoldSince) state.bufferHoldSince = now();
         state.strictBufferReason = "startup-buffer";
@@ -8912,7 +8912,6 @@ _seekPostTimers: []
     if (!coupledMode || !audio || state.audioStartupPlayAttempted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
     if (state.startupPrimed && state.firstPlayCommitted) return;
-    if (!pageLoadedForAutoplay()) return;
     state.audioStartupPlayAttempted = true;
     const tryPlay = () => {
       if (state.audioStartupPlayRetries >= MAX_AUDIO_STARTUP_RETRIES) return;
@@ -8931,13 +8930,9 @@ _seekPostTimers: []
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 4);
         return;
       }
-      const rs = Number(audio.readyState || 0);
-      if (rs < 2) {
-        state.audioStartupPlayRetries++;
-        state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
-        return;
-      }
-      // Video ready check — need at least readyState 2 (has current data)
+      // Don't gate on audio readyState — call play() immediately and let
+      // the browser queue it. It starts as soon as data arrives. Waiting for
+      // readyState >= 2 delays audio by seconds on slow connections.
       const vrs = getVideoReadyState();
       if (vrs < 2) {
         state.audioStartupPlayRetries++;
@@ -9141,18 +9136,14 @@ _seekPostTimers: []
   state.bgPlaybackAllowed = true;
   state.backgroundAutoplayTriggered = true;
   setTimeout(() => {
-    if (coupledMode && state.startupPhase && !state.startupPrimed && pageLoadedForAutoplay()) {
+    if (coupledMode && state.startupPhase && !state.startupPrimed) {
       maybePrimeStartup();
       scheduleStartupAutoplayKick();
       forceAudioStartupPlay();
     }
   }, 100);
-  // Only schedule the initial sync tick if the page is already fully loaded.
-  if (pageLoadedForAutoplay()) {
-    scheduleSync(0);
-  }
-  // else: window.load handler triggers maybePrimeStartup + scheduleSync via
-  // the coupledMode branch, or scheduleSync(0) directly for non-coupled.
+  // Always schedule initial sync — don't gate on page load.
+  scheduleSync(0);
 });
 
 
