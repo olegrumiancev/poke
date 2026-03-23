@@ -1517,16 +1517,18 @@ _seekPostTimers: []
     let _lastAudioPos = 0;
     let _lastCheckAt = 0;
     let _frozenCount = 0;
-    const TICK_MS = 400;
+    const TICK_MS = 500;
     const MAX_DRIFT = 0.5;
-    const FROZEN_THRESHOLD = 3; // ticks of no progress = frozen
+    const FROZEN_THRESHOLD = 5; // ticks of no progress = frozen (2.5s)
 
     function _shouldRun() {
       if (!coupledMode || !audio || !state.intendedPlaying) return false;
       if (state.seeking || state.seekBuffering || state.restarting) return false;
-      if (state.strictBufferHold || state.videoWaiting) return false;
+      if (state.strictBufferHold || state.videoWaiting || state.audioWaiting) return false;
+      if (state.startupPhase && !state.firstPlayCommitted) return false;
       if (NotMakePlayBackFixingNoticable.isRecovering()) return false;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return false;
+      if (isTabReturnImmune()) return false;
       return true;
     }
 
@@ -4908,6 +4910,7 @@ _seekPostTimers: []
   async function kickVideo() {
     if (state.videoRepairing) return;
     if (now() < state.videoRepairCooldownUntil) return;
+    if (!state.intendedPlaying) return;
     state.videoRepairing = true;
     state.videoRepairCooldownUntil = now() + 4000;
     try {
@@ -6424,8 +6427,8 @@ _seekPostTimers: []
     }
 
     if (state.intendedPlaying && !state.restarting && !state.seeking && !state.syncing && !skipDrift && !state.seekResumeInFlight && !state.seekBuffering) {
-      if (state.audioEverStarted && !audio.paused && !inBgDrift) {
-        if (Math.abs(at - vt) > 0.35) {
+      if (state.audioEverStarted && !audio.paused && !inBgDrift && !state.startupPhase) {
+        if (Math.abs(at - vt) > 0.5) {
           await quietSeekAudio(vt);
           at = vt;
         }
@@ -6982,9 +6985,12 @@ _seekPostTimers: []
         if (now() < state.seekCooldownUntil) return;
         if (state.tabReturnImmuneUntil > now() || NotMakePlayBackFixingNoticable.isActive()) return;
         if (getVideoPaused()) return;
+        if (state.startupPhase || !state.firstPlayCommitted) return;
+        // Only pause video if audio is genuinely stalled (readyState < 2)
+        if ((Number(audio.readyState) || 0) >= 2) return;
         state.audioStallVideoPaused = true;
         execProgrammaticVideoPause();
-      }, 150);
+      }, 300);
       scheduleSync(200);
     };
     try { videoEl.addEventListener("stalled", onVideoStalled, { passive: true }); } catch {}
@@ -7353,8 +7359,12 @@ _seekPostTimers: []
           updateMediaSessionPlaybackState();
           return;
         }
-        // Anything else: unexpected play while user intended pause → reject
-        execProgrammaticVideoPause();
+        // Unexpected play while user intended pause → reject
+        // But don't reject during startup or tab-return immunity
+        if (!state.startupPhase && !isTabReturnImmune() && !NotMakePlayBackFixingNoticable.isActive() &&
+            !(wantsStartupAutoplay() && !state.firstPlayCommitted)) {
+          execProgrammaticVideoPause();
+        }
         return;
       }
       // --- coupled mode: user play intent (checked first)
