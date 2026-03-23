@@ -234,6 +234,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   let _userExplicitLoop = false;
   function isLoopDesired() {
+    // Explicit no-loop override via query param or global
+    if (qs.get("loop") === "0" || qs.get("loop") === "false" || window.forceNoLoop === true) return false;
     return _userExplicitLoop ||
     qs.get("loop") === "1" ||
     qs.get("loop") === "true" ||
@@ -261,18 +263,19 @@ document.addEventListener("DOMContentLoaded", () => {
         Object.defineProperty(el, "loop", {
           get() { return isLoopDesired(); },
           set(v) {
-            if (v) {
-              // User or code is requesting loop — track it
-              _userExplicitLoop = true;
-              if (desc.set) desc.set.call(el, true);
-            } else {
-              // Setting loop=false — only honour if NOT desired
-              if (!isLoopDesired()) {
-                _userExplicitLoop = false;
-                if (desc.set) desc.set.call(el, false);
-                try { el.removeAttribute("loop"); } catch {}
-              }
+            // Block ALL runtime loop changes — only initial HTML attribute matters.
+            // This prevents browser extensions, ad scripts, or Video.js internals
+            // from accidentally enabling loop during normal playback.
+            if (!v && !isLoopDesired()) {
+              _userExplicitLoop = false;
+              if (desc.set) desc.set.call(el, false);
+              try { el.removeAttribute("loop"); } catch {}
             }
+            // If code wants to enable loop, only allow if it was already desired
+            if (v && isLoopDesired()) {
+              if (desc.set) desc.set.call(el, true);
+            }
+            // Otherwise: silently ignore the set (don't change _userExplicitLoop)
           },
           configurable: true
         });
@@ -299,8 +302,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const origLoop = video.loop.bind(video);
       video.loop = function(val) {
         if (arguments.length === 0) return isLoopDesired();
-        if (val) { _userExplicitLoop = true; return origLoop(true); }
-        if (!isLoopDesired()) { _userExplicitLoop = false; return origLoop(false); }
+        // Block runtime loop changes — only allow if already desired
+        if (val && isLoopDesired()) return origLoop(true);
+        if (!val && !isLoopDesired()) { _userExplicitLoop = false; return origLoop(false); }
         return origLoop(isLoopDesired());
       };
     }
@@ -887,7 +891,8 @@ _seekPostTimers: []
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    // Counter-play during immunity. Per-element 200ms dedup prevents cycling.
+    // Don't counter-play during buffering or user pause
+    if (state.strictBufferHold || state.videoWaiting || state.seekBuffering) return;
     if (state.userGesturePauseIntent || userPauseLockActive()) return;
     const el = e.target;
     const t = now();
@@ -1553,7 +1558,7 @@ _seekPostTimers: []
       _timer = null;
       if (!_shouldRun()) { _schedule(); return; }
       const t = now();
-      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+      const vt = safeGetVideoTime();
       const at = Number(audio.currentTime) || 0;
       const vPaused = getVideoPaused();
       const aPaused = !!audio.paused;
@@ -1596,7 +1601,7 @@ _seekPostTimers: []
             setTimeout(() => {
               state.isProgrammaticAudioPause = false;
               if (!state.intendedPlaying || state.seeking) return;
-              safeSetAudioTime((() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })());
+              safeSetAudioTime(safeGetVideoTime());
               execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
             }, 50);
             _schedule(); return;
@@ -2034,7 +2039,7 @@ _seekPostTimers: []
     // hidden branch AND from the blur handler for maximum coverage.
     function snapshotState() {
       try {
-        const vPos = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+        const vPos = safeGetVideoTime();
         const aPos = (coupledMode && audio) ? (Number(audio.currentTime) || vPos) : null;
         _snapshot = {
           ts:         performance.now(),
@@ -2083,7 +2088,7 @@ _seekPostTimers: []
     function assessContinuity() {
       if (!_snapshot) return;
       try {
-        const vNow    = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
+        const vNow    = safeGetVideoTime(NaN);
         const elapsed = (performance.now() - _snapshot.ts) / 1000;
         // If video is significantly ahead of where it was when we went BG,
         // background playback was running (rare but possible on some platforms).
@@ -3684,6 +3689,22 @@ _seekPostTimers: []
     scheduleSync(0);
   }
   function fastSyncActive() { return now() < state.fastSyncUntil; }
+  // Shared helpers to reduce repeated inline code
+  function safeGetVideoTime(fallback = 0) { try { return Number(video.currentTime()) || fallback; } catch { return fallback; } }
+  function safeGetAudioTime(fallback = 0) { try { return Number(audio?.currentTime) || fallback; } catch { return fallback; } }
+  function hardStop() {
+    state.intendedPlaying = false;
+    state.bufferHoldIntendedPlaying = false;
+    state.resumeOnVisible = false;
+    state.bgHiddenWasPlaying = false;
+    state.tabReturnImmuneUntil = 0;
+    disengagePauseIntercept();
+    clearBufferHold();
+    clearAudioPauseLocks();
+    state.playSessionId++;
+    updateMediaSessionPlaybackState();
+    pauseHard();
+  }
   function clearBufferHold() {
     state.strictBufferHold = false;
     state.bufferHoldSince = 0;
@@ -3821,7 +3842,7 @@ _seekPostTimers: []
     // at the same time as video. playTogether() will see audio already playing and
     // skip the audio section (no double-play).
     if (coupledMode && audio && audio.paused) {
-      const vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+      const vt = safeGetVideoTime();
       // Sync audio position to video before playing
       if (isFinite(vt) && Math.abs((Number(audio.currentTime) || 0) - vt) > 0.15) {
         try { audio.currentTime = vt; } catch {}
@@ -4672,7 +4693,9 @@ _seekPostTimers: []
   }
 
   function execProgrammaticVideoPlay() {
-    VisibilityGuard.onPlayCalled(); // VG: suppress spurious pause after our play()
+    // Don't play video during strict buffer hold — wait for buffer to fill
+    if (state.strictBufferHold && !state.seekResumeInFlight && !state.startupKickInFlight) return;
+    VisibilityGuard.onPlayCalled();
     state.isProgrammaticVideoPlay = true;
     try {
       let p = null;
@@ -4736,9 +4759,9 @@ _seekPostTimers: []
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // Never start audio during seeking or seek-buffering.
-    // Only finalizeSeekSync/playTogether may restart audio after seek completes.
+    // Never start audio during seeking, seek-buffering, or strict buffer hold
     if (state.seeking || state.seekBuffering) return false;
+    if (state.strictBufferHold && !force) return false;
 
     // Don't start audio if video is paused — unless force is set (user play,
     // tab return, etc.) or we're in a recent user action window where video
@@ -5434,7 +5457,6 @@ _seekPostTimers: []
     state.lastKnownGoodVTts = now();
   }
 
-  function ensureStartupZeroed() { forceZeroBeforeFirstPlay(); }
 
   async function playTogether() {
     state.userPlayIntentPresetAt = 0;
@@ -6051,6 +6073,7 @@ _seekPostTimers: []
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
           if (!coupledMode || !audio) return;
+          if (state.strictBufferHold || state.videoWaiting) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           const vt = Number(video.currentTime()) || 0;
           // Fix drift only when both are playing and drift is significant
@@ -7244,7 +7267,7 @@ _seekPostTimers: []
         state.audioPlayUntil = 0;
         state.startupAudioHoldUntil = 0;
         const resumePos = getBestResumePosition();
-        const currentVT = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+        const currentVT = safeGetVideoTime();
         const currentAT = coupledMode ? (() => { try { return Number(audio.currentTime); } catch { return 0; } })() : resumePos;
         const needsSeek = resumePos > 0.5 && (currentVT < 0.5 || currentAT < 0.5 || Math.abs(resumePos - currentVT) > 1.0);
         if (needsSeek) {
@@ -7915,7 +7938,7 @@ _seekPostTimers: []
           !state.strictBufferHold) {
         clearAudioPauseLocks();
         clearAudioForcePlayTimer(); // Stop forceAudioStartupPlay retries — we handle it
-        const _vtNow = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
+        const _vtNow = safeGetVideoTime();
         safeSetAudioTime(_vtNow);
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
         execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
@@ -7994,7 +8017,7 @@ _seekPostTimers: []
           if (NotMakePlayBackFixingNoticable.isActive()) return;
           if (state.strictBufferHold || state.videoWaiting || state.seeking) return;
           clearAudioPauseLocks();
-          safeSetAudioTime((() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })());
+          safeSetAudioTime(safeGetVideoTime());
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
           execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
           state.audioEverStarted = true;
@@ -8356,16 +8379,7 @@ _seekPostTimers: []
         if (dur > 5 && ct < 1) return;
       } catch {}
       if (isLoopDesired()) { restartLoop().catch(() => {}); return; }
-      // Hard stop — bypass pauseTogether's startupSettle guard
-      state.intendedPlaying = false;
-      state.bufferHoldIntendedPlaying = false;
-      state.resumeOnVisible = false;
-      state.bgHiddenWasPlaying = false;
-      state.tabReturnImmuneUntil = 0;
-      disengagePauseIntercept();
-      state.playSessionId++;
-      updateMediaSessionPlaybackState();
-      pauseHard();
+      hardStop();
     }, { passive: true });
       audio.addEventListener("canplay", onReadyish, { passive: true });
       audio.addEventListener("canplaythrough", onReadyish, { passive: true });
@@ -8576,16 +8590,7 @@ _seekPostTimers: []
           if (dur > 5 && ct < 1) return;
         } catch {}
         if (isLoopDesired()) { restartLoop().catch(() => {}); return; }
-        // Hard stop — bypass pauseTogether's startupSettle guard
-        state.intendedPlaying = false;
-        state.bufferHoldIntendedPlaying = false;
-        state.resumeOnVisible = false;
-        state.bgHiddenWasPlaying = false;
-        state.tabReturnImmuneUntil = 0;
-        disengagePauseIntercept();
-        state.playSessionId++;
-        updateMediaSessionPlaybackState();
-        pauseHard();
+        hardStop();
       });
   }
 
@@ -8650,7 +8655,7 @@ _seekPostTimers: []
       const vn = getVideoNode();
       if (vn && typeof vn.play === 'function') vn.play().catch(() => {});
       if (coupledMode && audio) {
-        const vtNow = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+        const vtNow = safeGetVideoTime();
         if (isFinite(vtNow)) safeSetAudioTime(vtNow);
         if (audio.paused) {
           cancelActiveFade();
@@ -8667,7 +8672,7 @@ _seekPostTimers: []
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
         if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused && !state.isProgrammaticAudioPause) {
-          const vtEarly = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+          const vtEarly = safeGetVideoTime();
           safeSetAudioTime(vtEarly);
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
@@ -8686,7 +8691,7 @@ _seekPostTimers: []
       if (!getVideoPaused()) {
         BringBackToTabManager.onVideoConfirmedPlaying();
         if (coupledMode && audio && !state.tabReturnAudioMuted && audio.paused && !state.isProgrammaticAudioPause) {
-          const vtMid = (() => { try { return Number(video.currentTime()); } catch { return 0; } })();
+          const vtMid = safeGetVideoTime();
           safeSetAudioTime(vtMid);
           execProgrammaticAudioPlay({ squelchMs: 0, force: true, minGapMs: 0 }).catch(() => {});
         }
@@ -8711,7 +8716,7 @@ _seekPostTimers: []
         BringBackToTabManager.onVideoConfirmedPlaying();
         try { QuantumReturnOrchestrator.assessContinuity(); } catch {}
         if (coupledMode && audio && !state.tabReturnAudioMuted) {
-          const vt = (() => { try { return Number(video.currentTime()); } catch { return NaN; } })();
+          const vt = safeGetVideoTime(NaN);
           const at = Number(audio.currentTime) || 0;
           if (isFinite(vt) && isFinite(at) && Math.abs(at - vt) > 0.5 && !isTabReturnImmune() &&
               !NotMakePlayBackFixingNoticable.shouldBlockSeek() &&
@@ -9129,6 +9134,11 @@ _seekPostTimers: []
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 4);
         return;
       }
+      if (state.strictBufferHold || state.videoWaiting) {
+        state.audioStartupPlayRetries++;
+        state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 2);
+        return;
+      }
       const vrs = getVideoReadyState();
       if (vrs < 2) {
         state.audioStartupPlayRetries++;
@@ -9249,7 +9259,11 @@ _seekPostTimers: []
   }
   video.on("volumechange", () => {
     if (state.audioFading) cancelActiveFade();
-    updateAudioGainImmediate(true);
+    // During NMPBFN recovery, only apply volume change if it's a genuine user action
+    // (recent pointer/keyboard interaction). Browser-triggered volumechange on tab
+    // return would bypass NMPBFN's warm fade and cause a volume spike.
+    const _isUserVolChange = (now() - state.lastUserActionTime) < 1500;
+    updateAudioGainImmediate(_isUserVolChange || !NotMakePlayBackFixingNoticable.isActive());
     // Only track user-initiated mute: recent user action + no programmatic flags
     const _isUserAction = (now() - state.lastUserActionTime) < 1000;
     const _isProgrammatic = state.isProgrammaticVideoPause || state.isProgrammaticVideoPlay ||
