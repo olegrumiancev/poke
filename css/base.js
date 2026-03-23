@@ -836,13 +836,15 @@ _seekPostTimers: []
     const t = now();
     if (isVisible && t - _lastKeepalivePlayAt < 500) return;
     _lastKeepalivePlayAt = t;
-    if (coupledMode && audio && audio.paused) {
+    if (coupledMode && audio && audio.paused && state.intendedPlaying) {
       try { audio.play().catch(() => {}); } catch {}
     }
-    try {
-      const vn = getVideoNode();
-      if (vn && vn.paused) vn.play().catch(() => {});
-    } catch {}
+    if (state.intendedPlaying) {
+      try {
+        const vn = getVideoNode();
+        if (vn && vn.paused) vn.play().catch(() => {});
+      } catch {}
+    }
   }
   function startBgAudioKeepalive() {
     if (_bgWorker || _bgFallbackId) return;
@@ -885,12 +887,12 @@ _seekPostTimers: []
     if (state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) return; // user pause
     if (!state.intendedPlaying) return;
     e.stopImmediatePropagation();
-    // Always counter-play during immunity — even during NMPBFN recovery.
-    // The DONTMAKEITDOUBLEPLAY wrapper deduplicates at 300ms anyway.
+    // Counter-play during immunity. Per-element 200ms dedup prevents cycling.
+    if (state.userGesturePauseIntent || userPauseLockActive()) return;
     const el = e.target;
     const t = now();
     const lastPlay = _guardPlayTimes.get(el) || 0;
-    if (t - lastPlay < 150) return;
+    if (t - lastPlay < 200) return;
     _guardPlayTimes.set(el, t);
     try { el.play().catch(() => {}); } catch {}
   }
@@ -1464,6 +1466,7 @@ _seekPostTimers: []
     // Emergency restart — clear everything and force play from scratch
     function _emergencyRestart(gen) {
       if (_recoveryGen !== gen) return;
+      if (!state.intendedPlaying) return;
 
       clearAudioPauseLocks();
       state.isProgrammaticVideoPause = false;
@@ -3644,6 +3647,7 @@ _seekPostTimers: []
     // that sounds like "play pause play". Just resume from wherever the
     // decoder left off. The sync loop handles drift after immunity expires.
     instantPlay() {
+      if (!state.intendedPlaying && !state.resumeOnVisible) return;
       try {
         const _vn = getVideoNode();
         if (_vn && _vn.paused) _vn.play().catch(() => {});
@@ -9175,7 +9179,8 @@ _seekPostTimers: []
     // Continuously enforce t=0 while loading in background — browsers can buffer/seek
     // to non-zero keyframes before we start playing. Remove once first play committed.
     const enforceStartAtZero = () => {
-      if (state.firstPlayCommitted || state.audioEverStarted || state.intendedPlaying) {
+      if (state.firstPlayCommitted || state.audioEverStarted || state.intendedPlaying ||
+          state.startupKickInFlight || state.startupKickDone) {
         try { videoEl.removeEventListener("timeupdate", enforceStartAtZero); } catch {}
         return;
       }
