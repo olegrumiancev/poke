@@ -541,7 +541,7 @@
 
         <div class="rule">
           <strong>Misogyny, transmisogyny, or sexism</strong>
-          <span class="subtext">Includes incel rhetoric, "men's rights" talking points used to attack women or trans people, and the whole "females" thing. If you call women "females" unironically in 2026, we have questions about you.</span>
+          <span class="subtext">Includes incel rhetoric and the whole "females" thing. To be clear: men do face real gender-based issues (custody bias, mental health stigma, workplace safety, etc.) and talking about those things is fine and welcome. What's not fine is using "men's rights" as a cover to attack women, feminists, or trans people. If you're advocating for men, great. If you're using it as a weapon against other people, that's misogyny with a rebrand. Also if you call women "females" unironically in 2026, we have questions about you.</span>
         </div>
 
         <div class="rule">
@@ -1008,5 +1008,304 @@
 
     </main>
   </div>
+
+<!-- TTS Reader -->
+<div id="tts-reader" style="
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  background: #1a1a1a; border-top: 1px solid #333;
+  padding: 0; font-family: system-ui, sans-serif;
+  transform: translateY(calc(100% - 44px)); transition: transform 0.3s ease;
+" aria-label="Text-to-speech reader">
+
+  <!-- Toggle bar (always visible) -->
+  <button id="tts-toggle" aria-label="Toggle text-to-speech panel" style="
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; height: 44px; background: #1a1a1a; border: none;
+    border-top: 1px solid #333; color: #ffabcc; font-size: 0.9rem;
+    font-weight: 600; cursor: pointer; font-family: 'PokeTube Flex', sans-serif;
+    font-stretch: expanded;
+  ">
+    <span id="tts-toggle-icon">&#9654;</span> Listen to this page
+  </button>
+
+  <!-- Controls panel -->
+  <div id="tts-panel" style="padding: 14px 20px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
+
+    <!-- Play / Pause / Stop -->
+    <div style="display: flex; gap: 6px;">
+      <button id="tts-play" title="Play" style="
+        width: 40px; height: 40px; border-radius: 50%; border: 1px solid #ffabcc;
+        background: rgba(255,171,204,0.1); color: #ffabcc; font-size: 1.1rem;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+      ">&#9654;</button>
+      <button id="tts-pause" title="Pause" style="
+        width: 40px; height: 40px; border-radius: 50%; border: 1px solid #555;
+        background: rgba(255,255,255,0.05); color: #ccc; font-size: 1.1rem;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+      ">&#10074;&#10074;</button>
+      <button id="tts-stop" title="Stop" style="
+        width: 40px; height: 40px; border-radius: 50%; border: 1px solid #555;
+        background: rgba(255,255,255,0.05); color: #ccc; font-size: 1rem;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+      ">&#9632;</button>
+    </div>
+
+    <!-- Speed -->
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <label for="tts-speed" style="color: #aaa; font-size: 0.85rem; white-space: nowrap;">Speed</label>
+      <input id="tts-speed" type="range" min="0.5" max="2.5" step="0.1" value="1.0" style="
+        width: 100px; accent-color: #ffabcc;
+      ">
+      <span id="tts-speed-label" style="color: #ffabcc; font-size: 0.85rem; min-width: 35px;">1.0x</span>
+    </div>
+
+    <!-- Voice picker -->
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <label for="tts-voice" style="color: #aaa; font-size: 0.85rem;">Voice</label>
+      <select id="tts-voice" style="
+        background: #222; color: #eee; border: 1px solid #444; border-radius: 6px;
+        padding: 4px 8px; font-size: 0.85rem; max-width: 180px;
+      "></select>
+    </div>
+
+    <!-- Now reading -->
+    <div id="tts-status" style="
+      color: #888; font-size: 0.82rem; margin-left: auto; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 250px;
+    ">Ready</div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="tts-progress-bar" style="height: 3px; background: #333; width: 100%;">
+    <div id="tts-progress" style="height: 100%; background: #ffabcc; width: 0%; transition: width 0.3s;"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  if (!('speechSynthesis' in window)) {
+    document.getElementById('tts-reader').style.display = 'none';
+    return;
+  }
+
+  const synth = window.speechSynthesis;
+  const panel = document.getElementById('tts-reader');
+  const toggleBtn = document.getElementById('tts-toggle');
+  const toggleIcon = document.getElementById('tts-toggle-icon');
+  const playBtn = document.getElementById('tts-play');
+  const pauseBtn = document.getElementById('tts-pause');
+  const stopBtn = document.getElementById('tts-stop');
+  const speedSlider = document.getElementById('tts-speed');
+  const speedLabel = document.getElementById('tts-speed-label');
+  const voiceSelect = document.getElementById('tts-voice');
+  const statusEl = document.getElementById('tts-status');
+  const progressEl = document.getElementById('tts-progress');
+
+  let isOpen = false;
+  let sections = [];
+  let currentSectionIdx = 0;
+  let isPlaying = false;
+  let isPaused = false;
+
+  // toggle panel open/closed
+  toggleBtn.addEventListener('click', function () {
+    isOpen = !isOpen;
+    panel.style.transform = isOpen ? 'translateY(0)' : 'translateY(calc(100% - 44px))';
+    toggleIcon.textContent = isOpen ? '\u25BC' : '\u25B6';
+  });
+
+  // gather all readable sections from the page
+  function gatherSections() {
+    sections = [];
+    var sectionEls = document.querySelectorAll('main.content section[id]');
+    for (var i = 0; i < sectionEls.length; i++) {
+      var sec = sectionEls[i];
+      var heading = sec.querySelector('h2, h3');
+      var title = heading ? heading.textContent.trim() : sec.id;
+
+      // get readable text: heading + all p, li, summary, span.subtext
+      var textParts = [];
+      var els = sec.querySelectorAll('h2, h3, p, li, summary, .subtext');
+      for (var j = 0; j < els.length; j++) {
+        var t = els[j].textContent.trim();
+        if (t) textParts.push(t);
+      }
+      var fullText = textParts.join('. ').replace(/\s+/g, ' ');
+      if (fullText.length > 0) {
+        sections.push({ id: sec.id, title: title, text: fullText, el: sec });
+      }
+    }
+  }
+
+  // populate voice dropdown
+  function loadVoices() {
+    var voices = synth.getVoices();
+    voiceSelect.innerHTML = '';
+    // prefer english voices, put them first
+    var english = [];
+    var others = [];
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].lang.startsWith('en')) {
+        english.push(voices[i]);
+      } else {
+        others.push(voices[i]);
+      }
+    }
+    var sorted = english.concat(others);
+    for (var i = 0; i < sorted.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = i < english.length ? english.indexOf(sorted[i]) : english.length + others.indexOf(sorted[i]);
+      opt.textContent = sorted[i].name.substring(0, 30) + ' (' + sorted[i].lang + ')';
+      opt.setAttribute('data-voice-index', voices.indexOf(sorted[i]));
+      voiceSelect.appendChild(opt);
+    }
+  }
+
+  synth.onvoiceschanged = loadVoices;
+  loadVoices();
+
+  speedSlider.addEventListener('input', function () {
+    speedLabel.textContent = parseFloat(speedSlider.value).toFixed(1) + 'x';
+  });
+
+  function getSelectedVoice() {
+    var voices = synth.getVoices();
+    var selected = voiceSelect.selectedOptions[0];
+    if (!selected) return null;
+    var idx = parseInt(selected.getAttribute('data-voice-index'));
+    return voices[idx] || null;
+  }
+
+  function scrollToSection(sec) {
+    var el = sec.el;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // brief highlight
+    el.style.transition = 'background 0.3s';
+    el.style.background = 'rgba(255,171,204,0.06)';
+    el.style.borderRadius = '8px';
+    setTimeout(function () {
+      el.style.background = '';
+    }, 2000);
+  }
+
+  function updateProgress() {
+    if (sections.length === 0) return;
+    var pct = ((currentSectionIdx + 1) / sections.length) * 100;
+    progressEl.style.width = pct + '%';
+  }
+
+  function speakSection(idx) {
+    if (idx >= sections.length) {
+      // done
+      isPlaying = false;
+      statusEl.textContent = 'Finished';
+      playBtn.innerHTML = '&#9654;';
+      progressEl.style.width = '100%';
+      return;
+    }
+
+    currentSectionIdx = idx;
+    var sec = sections[idx];
+
+    statusEl.textContent = 'Reading: ' + sec.title;
+    scrollToSection(sec);
+    updateProgress();
+
+    var utter = new SpeechSynthesisUtterance(sec.text);
+    utter.rate = parseFloat(speedSlider.value);
+    utter.voice = getSelectedVoice();
+
+    utter.onend = function () {
+      if (isPlaying && !isPaused) {
+        speakSection(idx + 1);
+      }
+    };
+
+    utter.onerror = function () {
+      if (isPlaying) {
+        speakSection(idx + 1);
+      }
+    };
+
+    synth.speak(utter);
+  }
+
+  playBtn.addEventListener('click', function () {
+    if (isPaused) {
+      // resume
+      synth.resume();
+      isPaused = false;
+      isPlaying = true;
+      playBtn.innerHTML = '&#9654;';
+      statusEl.textContent = 'Reading: ' + sections[currentSectionIdx].title;
+      return;
+    }
+
+    if (isPlaying) return;
+
+    // start fresh
+    synth.cancel();
+    gatherSections();
+    if (sections.length === 0) {
+      statusEl.textContent = 'Nothing to read';
+      return;
+    }
+
+    // open panel if not open
+    if (!isOpen) {
+      isOpen = true;
+      panel.style.transform = 'translateY(0)';
+      toggleIcon.textContent = '\u25BC';
+    }
+
+    isPlaying = true;
+    isPaused = false;
+    playBtn.innerHTML = '&#9654;';
+    speakSection(0);
+  });
+
+  pauseBtn.addEventListener('click', function () {
+    if (isPlaying && !isPaused) {
+      synth.pause();
+      isPaused = true;
+      statusEl.textContent = 'Paused: ' + sections[currentSectionIdx].title;
+    }
+  });
+
+  stopBtn.addEventListener('click', function () {
+    synth.cancel();
+    isPlaying = false;
+    isPaused = false;
+    currentSectionIdx = 0;
+    statusEl.textContent = 'Stopped';
+    playBtn.innerHTML = '&#9654;';
+    progressEl.style.width = '0%';
+  });
+
+  // keyboard shortcuts
+  document.addEventListener('keydown', function (e) {
+    // only when not typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.key === ' ' && e.shiftKey) {
+      e.preventDefault();
+      if (isPlaying && !isPaused) {
+        pauseBtn.click();
+      } else if (isPaused) {
+        playBtn.click();
+      } else {
+        playBtn.click();
+      }
+    }
+  });
+
+  // chrome bug: synth stops after ~15 seconds. workaround: pause/resume periodically
+  setInterval(function () {
+    if (isPlaying && !isPaused && synth.speaking) {
+      synth.pause();
+      synth.resume();
+    }
+  }, 10000);
+})();
+</script>
 </body>
 </html>
