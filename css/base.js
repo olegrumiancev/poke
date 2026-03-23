@@ -7874,22 +7874,18 @@ _seekPostTimers: []
       state.videoStallSince = 0;
 
       // --- STARTUP AUDIO KICK ---
-      // Video is confirmed playing. If audio is paused and should be playing,
-      // start it NOW. Don't wait for playTogether / sync loop / startup kick.
-      // This eliminates the multi-second delay from cascading startup gates.
+      // SINGLE audio kick: video is confirmed playing. Start audio exactly once.
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering() &&
-          !state.strictBufferHold) {
+          !state.strictBufferHold && !state.videoWaiting) {
         clearAudioPauseLocks();
-        DONTMAKEITDOUBLEPLAY.resetAll();
-        state.videoWaiting = false; // playing event = video has data, clear stale waiting flag
+        clearAudioForcePlayTimer(); // Stop forceAudioStartupPlay retries — we handle it
         const _vtNow = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
         safeSetAudioTime(_vtNow);
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
         execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
         state.audioEverStarted = true;
-        // Protect newly-started audio from immediate stall-pause for 800ms
         state.audioStartGraceUntil = now() + 800;
       }
 
@@ -7948,43 +7944,23 @@ _seekPostTimers: []
       // --- FORCE PRIME + AUDIO KICK: video is confirmed playing. If startup
       // hasn't primed yet, force it now — we KNOW video has data. Then start
       // audio immediately. This is the primary path for coupled autoplay.
+      // Prime startup if needed — don't double-kick audio (single kick above handles it)
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
         maybePrimeStartup();
         if (state.startupPrimed) scheduleStartupAutoplayKick();
-        forceAudioStartupPlay();
-      }
-      if (coupledMode && audio && audio.paused && state.intendedPlaying &&
-          !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
-        clearAudioPauseLocks();
-        clearBufferHold();
-        DONTMAKEITDOUBLEPLAY.resetAll();
-        state.videoWaiting = false; // playing event = video has data
-        const _vtKick = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-        safeSetAudioTime(_vtKick);
-        try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
-        const _vol = targetVolFromVideo();
-        try { if (audio.volume < _vol * 0.5) audio.volume = _vol; } catch {}
-        try { audio.play().catch(() => {}); } catch {}
-        state.audioEverStarted = true;
       }
 
-      // --- STARTUP AUDIO FAILSAFE: if audio is still paused 1.5s from now,
-      // force-start it. This catches cases where the startup kick above missed
-      // (e.g., audio wasn't ready yet, or a gate re-paused it).
-      if (coupledMode && audio && audio.paused && state.intendedPlaying && !NotMakePlayBackFixingNoticable.isRecovering()) {
+      // Failsafe: if audio still paused 1.5s from now, one final attempt
+      if (coupledMode && audio && audio.paused && state.intendedPlaying) {
         const _failsafeSession = state.playSessionId;
         setTimeout(() => {
           if (state.playSessionId !== _failsafeSession) return;
-          if (!state.intendedPlaying || !coupledMode || !audio) return;
-          if (!audio.paused) return;
+          if (!state.intendedPlaying || !coupledMode || !audio || !audio.paused) return;
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           if (NotMakePlayBackFixingNoticable.isActive()) return;
-          if (state.strictBufferHold || state.videoWaiting) return;
+          if (state.strictBufferHold || state.videoWaiting || state.seeking) return;
           clearAudioPauseLocks();
-          DONTMAKEITDOUBLEPLAY.resetAll();
-          const _vt = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
-          safeSetAudioTime(_vt);
+          safeSetAudioTime((() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })());
           try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
           execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
           state.audioEverStarted = true;
@@ -9123,9 +9099,6 @@ _seekPostTimers: []
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 4);
         return;
       }
-      // Don't gate on audio readyState — call play() immediately and let
-      // the browser queue it. It starts as soon as data arrives. Waiting for
-      // readyState >= 2 delays audio by seconds on slow connections.
       const vrs = getVideoReadyState();
       if (vrs < 2) {
         state.audioStartupPlayRetries++;
@@ -9133,11 +9106,9 @@ _seekPostTimers: []
         return;
       }
       try {
-        // Don't set volume=0 on first play — no decode buffer means no pop,
-        // and the volume jump from 0→target is audible on Firefox.
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
-        squelchAudioEvents(800);
+        squelchAudioEvents(400);
         const p = audio.play();
         if (p && p.then) {
           p.then(() => {
