@@ -6408,10 +6408,8 @@ _seekPostTimers: []
     // wakeup timer (seamlessBgCatchUp) can handle position sync without racing runSync.
     const skipDrift = now() < state.seekCooldownUntil;
 
-    if (!vPaused && vt > 0 && getVideoReadyState() >= HAVE_FUTURE_DATA) {
-      // Only clear videoWaiting when the browser has decoded enough to sustain playback.
-      // readyState < 3 means the browser is running on fumes — clearing here would let
-      // audio restart before video re-fires "waiting", causing the audio-while-buffering gap.
+    if (!vPaused && vt > 0 && getVideoReadyState() >= HAVE_CURRENT_DATA) {
+      // Video is playing with data — clear stale waiting flag
       state.videoWaiting = false;
     }
 
@@ -7874,21 +7872,25 @@ _seekPostTimers: []
       }
       // --- coupled mode: UltraStabilizer: notify video playing
       try { UltraStabilizer.onVideoPlaying(); } catch {}
-      // Only clear videoWaiting when the browser truly has enough data (readyState >= 3).
-      // playing can fire with readyState=2 during thin-buffer situations; clearing here
-      // would allow audio to restart before the next "waiting" arrives.
-      if (getVideoReadyState() >= HAVE_FUTURE_DATA) {
+      // Clear videoWaiting — video is confirmed playing, it has data
+      if (getVideoReadyState() >= HAVE_CURRENT_DATA) {
         state.videoWaiting = false;
       }
       state.startupAudioHoldUntil = 0;
       state.videoStallSince = 0;
 
-      // --- STARTUP AUDIO KICK ---
+      // If video is playing during autoplay startup but intendedPlaying isn't set yet,
+      // set it now. This prevents the audio kick from being skipped.
+      if (!state.intendedPlaying && (wantsStartupAutoplay() || state.startupPhase)) {
+        state.intendedPlaying = true;
+        state.bufferHoldIntendedPlaying = true;
+      }
+
       // SINGLE audio kick: video is confirmed playing. Start audio exactly once.
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering() &&
-          !state.strictBufferHold && !state.videoWaiting) {
+          !state.strictBufferHold) {
         clearAudioPauseLocks();
         clearAudioForcePlayTimer(); // Stop forceAudioStartupPlay retries — we handle it
         const _vtNow = (() => { try { return Number(video.currentTime()) || 0; } catch { return 0; } })();
@@ -9088,15 +9090,16 @@ _seekPostTimers: []
   }
 
   function forceAudioStartupPlay() {
-    if (!coupledMode || !audio || state.audioStartupPlayAttempted) return;
+    if (!coupledMode || !audio) return;
+    if (state.audioStartupPlayAttempted && state.audioEverStarted) return;
     if (!state.intendedPlaying && !wantsStartupAutoplay()) return;
-    if (state.startupPrimed && state.firstPlayCommitted) return;
+    if (state.startupPrimed && state.firstPlayCommitted && state.audioEverStarted) return;
     state.audioStartupPlayAttempted = true;
     const tryPlay = () => {
       if (state.audioStartupPlayRetries >= MAX_AUDIO_STARTUP_RETRIES) return;
       if (!audio || (!state.intendedPlaying && !wantsStartupAutoplay())) return;
-      // Once the startup kick has committed play (firstPlayCommitted=true), the norma
-      if (state.firstPlayCommitted) return;
+      // Only stop retrying if audio actually started — firstPlayCommitted alone isn't enough
+      if (state.firstPlayCommitted && state.audioEverStarted) return;
       if (!audio.paused) {
         state.audioEverStarted = true;
         return;
