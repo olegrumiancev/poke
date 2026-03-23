@@ -586,16 +586,27 @@ _seekPostTimers: []
       Object.defineProperty(audio, "currentTime", {
         get() { return _origGet.call(this); },
         set(v) {
+          // Gate 1: Block writes during seeking unless explicitly allowed
           if ((state.seeking || state.seekBuffering) && !state._allowAudioTimeWrite) {
-            // Safety: if seeking stuck for >10s, force-clear and allow the write
             if (state._seekStartedAt > 0 && (performance.now() - state._seekStartedAt) > 10000) {
               state.seeking = false;
               state.seekBuffering = false;
               state.seekResumeInFlight = false;
               state.seekCompleted = true; state._seekStartedAt = 0;
-              state._seekStartedAt = 0;
             } else {
               return;
+            }
+          }
+          // Gate 2: NEVER seek audio to near-0 when it's well into playback.
+          // This is the SINGLE definitive guard against the "audio restarts from
+          // beginning" bug. Every audio.currentTime write goes through here, so
+          // no code path can bypass this check.
+          const numV = Number(v);
+          if (numV < 0.5 && state.firstPlayCommitted && !state.restarting) {
+            const curAt = _origGet.call(this) || 0;
+            if (curAt > 1.0) {
+              // Check if this is an intentional restart (loop, explicit restart)
+              if (!isLoopDesired()) return; // silently block the near-0 seek
             }
           }
           _origSet.call(this, v);
@@ -842,7 +853,7 @@ _seekPostTimers: []
       _bgWorker.onmessage = _bgKeepaliveTick;
     } catch {
       // Worker creation failed (CSP, old browser) — fall back to setInterval
-      _bgFallbackId = setInterval(_bgKeepaliveTick, 500);
+      _bgFallbackId = setInterval(_bgKeepaliveTick, 800);
     }
   }
   function stopBgAudioKeepalive() {
@@ -1517,15 +1528,16 @@ _seekPostTimers: []
     let _lastAudioPos = 0;
     let _lastCheckAt = 0;
     let _frozenCount = 0;
-    const TICK_MS = 500;
+    const TICK_MS = 750; // 750ms — reduces CPU on slow devices while still catching issues
     const MAX_DRIFT = 0.5;
-    const FROZEN_THRESHOLD = 5; // ticks of no progress = frozen (2.5s)
+    const FROZEN_THRESHOLD = 4; // ticks of no progress = frozen (3s)
 
     function _shouldRun() {
       if (!coupledMode || !audio || !state.intendedPlaying) return false;
       if (state.seeking || state.seekBuffering || state.restarting) return false;
       if (state.strictBufferHold || state.videoWaiting || state.audioWaiting) return false;
-      if (state.startupPhase && !state.firstPlayCommitted) return false;
+      if (state.startupPhase) return false;
+      if (startupSettleActive()) return false;
       if (NotMakePlayBackFixingNoticable.isRecovering()) return false;
       if (userPauseLockActive() || mediaSessionForcedPauseActive()) return false;
       if (isTabReturnImmune()) return false;
@@ -2336,7 +2348,7 @@ _seekPostTimers: []
       let _criticalCount  = 0;   // consecutive checks where drift > critical threshold
       let _correctionCount = 0;
       let _lastCorrectionAt = 0;
-      const CHECK_INTERVAL_MS    = 300;
+      const CHECK_INTERVAL_MS    = 500;  // was 300 — reduced CPU on slow devices
       const CRITICAL_DRIFT_MS    = 400;  // 400ms A/V drift = critical
       const RUNAWAY_THRESHOLD    = 5;    // 5 consecutive growing-drift checks = runaway
       const CRITICAL_THRESHOLD   = 3;    // 3 consecutive critical checks = correct
@@ -4872,15 +4884,15 @@ _seekPostTimers: []
   function scheduleSync(minDelay = null) {
     let delay;
     if (typeof minDelay === "number") {
-      delay = Math.max(0, minDelay);
+      delay = Math.max(16, minDelay); // floor at 16ms (one frame) to reduce timer churn
     } else if (document.visibilityState === "hidden") {
       delay = platform.useBgControllerRetry ? 1200 : 1500;
     } else if (fastSyncActive() || state.syncing || state.seeking || state.videoWaiting || state.strictBufferHold) {
       delay = 200;
     } else if (state.intendedPlaying) {
-      delay = 500;
+      delay = 800; // was 500 — reduced CPU while still catching drift
     } else {
-      delay = 1000;
+      delay = 1500; // was 1000 — paused state needs even less monitoring
     }
     const targetAt = now() + delay;
     if (state.syncTimer && state.syncScheduledAt <= targetAt) return;
@@ -5866,19 +5878,21 @@ _seekPostTimers: []
     const v = getVideoNode();
     const vtAtFinalize = Number(video.currentTime());
 
-    // Sync audio to exact video position — bypass gate, retry if first attempt fails
+    // Sync audio to exact video position — bypass gate, but guard against near-0 restart
     if (isFinite(vtAtFinalize) && coupledMode && audio) {
-      const atCurrent = Number(audio.currentTime);
-      if (Math.abs(atCurrent - vtAtFinalize) > 0.05) {
+      const atCurrent = Number(audio.currentTime) || 0;
+      // CRITICAL: never seek audio to near-0 when it's well into the track
+      const wouldRestart = vtAtFinalize < 0.5 && atCurrent > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+      if (!wouldRestart && Math.abs(atCurrent - vtAtFinalize) > 0.05) {
         state._allowAudioTimeWrite = true;
         try { audio.currentTime = vtAtFinalize; } catch {}
         state._allowAudioTimeWrite = false;
-        // Verify the seek took — if audio didn't move, retry after a brief delay
         const _fSeekId = state.seekId;
         setTimeout(() => {
           if (state.seekId !== _fSeekId && state.seeking) return;
-          const drift = Math.abs((Number(audio.currentTime) || 0) - vtAtFinalize);
-          if (drift > 0.2) {
+          const _at = Number(audio.currentTime) || 0;
+          const _wouldRestart2 = vtAtFinalize < 0.5 && _at > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+          if (!_wouldRestart2 && Math.abs(_at - vtAtFinalize) > 0.2) {
             state._allowAudioTimeWrite = true;
             try { audio.currentTime = vtAtFinalize; } catch {}
             state._allowAudioTimeWrite = false;
@@ -5961,11 +5975,12 @@ _seekPostTimers: []
 
     clearBufferHold();
 
-    // Final position sync before resuming — direct set, bypass gate
+    // Final position sync before resuming — bypass gate but guard near-0 restart
     const vt2 = Number(video.currentTime());
     if (isFinite(vt2) && coupledMode && audio) {
-      const at2 = Number(audio.currentTime);
-      if (Math.abs(at2 - vt2) > 0.05) {
+      const at2 = Number(audio.currentTime) || 0;
+      const _fsWouldRestart = vt2 < 0.5 && at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+      if (!_fsWouldRestart && Math.abs(at2 - vt2) > 0.05) {
         state._allowAudioTimeWrite = true;
         try { audio.currentTime = vt2; } catch {}
         state._allowAudioTimeWrite = false;
@@ -6036,12 +6051,15 @@ _seekPostTimers: []
             const drift = Math.abs((Number(audio.currentTime) || 0) - vt);
             // Only correct drift > 0.4s — smaller drift self-corrects via runSync
             if (drift > 0.4) {
-              // Use fast path if target buffered (no glitch)
-              const _bufAhead = bufferedAhead(audio, vt);
-              if (_bufAhead > 0.1) {
-                state._allowAudioTimeWrite = true;
-                try { audio.currentTime = vt; } catch {}
-                state._allowAudioTimeWrite = false;
+              const _sgAt = Number(audio.currentTime) || 0;
+              const _sgWouldRestart = vt < 0.5 && _sgAt > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+              if (!_sgWouldRestart) {
+                const _bufAhead = bufferedAhead(audio, vt);
+                if (_bufAhead > 0.1) {
+                  state._allowAudioTimeWrite = true;
+                  try { audio.currentTime = vt; } catch {}
+                  state._allowAudioTimeWrite = false;
+                }
               }
               // If not buffered, let runSync handle it via quietSeekAudio
             }
@@ -7880,8 +7898,11 @@ _seekPostTimers: []
       state.videoStallSince = 0;
 
       // If video is playing during autoplay startup but intendedPlaying isn't set yet,
-      // set it now. This prevents the audio kick from being skipped.
-      if (!state.intendedPlaying && (wantsStartupAutoplay() || state.startupPhase)) {
+      // set it now — UNLESS user explicitly paused.
+      if (!state.intendedPlaying && (wantsStartupAutoplay() || state.startupPhase) &&
+          !userPauseLockActive() && !userPauseIntentActive() &&
+          state.userPauseIntentPresetAt === 0 && !state.userGesturePauseIntent &&
+          !MediumQualityManager.intentPaused) {
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
       }
@@ -8477,10 +8498,14 @@ _seekPostTimers: []
             }
           } catch {}
           if (_seekTargetBuffered) {
-            // Fast path: target buffered → just move audio position
-            state._allowAudioTimeWrite = true;
-            try { audio.currentTime = seekTime; } catch {}
-            state._allowAudioTimeWrite = false;
+            // Fast path: target buffered → just move audio position (guard near-0 restart)
+            const _seekAudioAt = Number(audio.currentTime) || 0;
+            const _seekWouldRestart = seekTime < 0.5 && _seekAudioAt > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+            if (!_seekWouldRestart) {
+              state._allowAudioTimeWrite = true;
+              try { audio.currentTime = seekTime; } catch {}
+              state._allowAudioTimeWrite = false;
+            }
             // If audio was paused (from previous seek), restart it
             if (audio.paused && state.seekWantedPlaying) {
               execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
@@ -8523,9 +8548,10 @@ _seekPostTimers: []
         state.lastKnownGoodVTts = now();
         state.pendingSeekTarget = newTime;
         if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
-          // Only seek audio if it's actually drifted from the target
           const _curAudioTime = Number(audio.currentTime) || 0;
-          if (Math.abs(_curAudioTime - newTime) > 0.2) {
+          // Guard: never seek audio to near-0 when it's well into playback
+          const _wouldRestart = newTime < 0.5 && _curAudioTime > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+          if (!_wouldRestart && Math.abs(_curAudioTime - newTime) > 0.2) {
             state._allowAudioTimeWrite = true;
             try { audio.currentTime = newTime; } catch {}
             state._allowAudioTimeWrite = false;
@@ -8533,10 +8559,12 @@ _seekPostTimers: []
           const _seekedId = state.seekId;
           setTimeout(() => {
             if (state.seekId !== _seekedId) return;
+            const _at2 = Number(audio.currentTime) || 0;
+            const _wr2 = newTime < 0.5 && _at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+            if (_wr2) return;
             state._allowAudioTimeWrite = true;
             try {
-              const drift = Math.abs((audio.currentTime || 0) - newTime);
-              if (drift > 0.15) audio.currentTime = newTime;
+              if (Math.abs(_at2 - newTime) > 0.15) audio.currentTime = newTime;
             } catch {}
             state._allowAudioTimeWrite = false;
           }, 80);
