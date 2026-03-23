@@ -1,7 +1,7 @@
 <!--
   This Source Code Form is subject to the terms of the GNU General Public License:
 
-  Copyright (C) 2021-2025 Poke (https://codeberg.org/ashleyirispuppy/poke)
+  Copyright (C) 2021-2026 Poke (https://codeberg.org/ashleyirispuppy/poke)
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 3 of the License,
@@ -20,264 +20,935 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Poke — Code of Conduct</title>
+  <title>Poke - Code of Conduct</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Poke Project — Code of Conduct">
-  <meta property="twitter:description" content="Community behavior rules and standards for the Poke Project.">
+  <meta property="og:title" content="Poke Project - Code of Conduct">
+  <meta property="twitter:description" content="Community rules for the Poke Project. Be decent or leave.">
   <meta property="og:image" content="/static/poke.webp">
   <meta name="twitter:card" content="summary_large_image">
   <link href="/css/yt-ukraine.svg?v=7" rel="icon">
   <style>
     @font-face {
-   src: url("/static/robotoflex.ttf");
-   font-family: "PokeTube Flex";
+      src: url("/static/robotoflex.ttf");
+      font-family: "PokeTube Flex";
       font-style: normal;
       font-stretch: 1% 800%;
       font-display: swap;
     }
-    *,*::before,*::after{box-sizing:border-box}
-    html,body{margin:0;padding:0}
-    body{
-      font-family:"poketube flex",sans-serif;
-      line-height:1.6;
-      color:#eaeaea;
-      background:
-        radial-gradient(1200px 600px at 0% 0%,#0ea5e9 0%,#0ea5e900 60%),
-        radial-gradient(1000px 700px at 100% 0%,#8b5cf6 0%,#8b5cf600 65%),
-        radial-gradient(1000px 700px at 0% 100%,#14b8a6 0%,#14b8a600 65%),
-        #0b0b0b;
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      scroll-behavior: smooth;
     }
-    a{color:#7dd3fc;text-decoration:none}
-    a:hover{text-decoration:underline}
-    .wrap{max-width:980px;margin:0 auto;padding:20px}
-    header.site{
-      position:sticky;top:0;z-index:10;
-      background:rgba(17,17,18,.8);
-      backdrop-filter:blur(8px);
-      border-bottom:1px solid #232323;
+
+    body {
+      margin: 0; padding: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+      line-height: 1.6;
+      color: #eaeaea;
+      background: #0b0b0b;
     }
-    .nav-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px}
-    .brand{display:inline-flex;align-items:center;gap:10px;color:#fff;font-weight:800;text-decoration:none}
-    .brand img{height:32px}
-    h2.section {
-      margin: 22px 0 8px 0;
-      font-size: clamp(1.24rem, 2.4vw, 1.6rem);
-      padding-bottom: 6px;
-      border-bottom: 1px solid #1f1f22;
+
+    a { color: #ffabcc; text-decoration: none; transition: color 0.2s; }
+    a:hover { color: #ff8cb6; text-decoration: underline; }
+    img { max-width: 100%; height: auto; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: .95em; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace; }
+
+    header.site {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(11, 11, 11, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255, 171, 204, 0.1);
+    }
+    .nav-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; max-width: 1200px; margin: 0 auto; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: #fff; font-weight: 800; text-decoration: none; }
+    .brand img { height: 32px; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5)); }
+
+    .hero-branding {
+      position: relative;
+      background: linear-gradient(135deg, #a83258 0%, #ffabbc 80%);
+      padding: 80px 20px 120px;
+      text-align: center;
+      overflow: hidden;
+      border-bottom: 1px solid rgba(255, 171, 204, 0.2);
+    }
+
+    .hype-container {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-8deg);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 40px;
+      z-index: 0;
+      pointer-events: none;
+      width: 150%;
+      height: 100%;
+    }
+
+    .hype-text {
+      font-size: clamp(35px, 5vw, 75px);
+      font-family: "PokeTube Flex", sans-serif;
+      font-weight: 1000;
+      color: #fff;
+      white-space: nowrap;
+      letter-spacing: 3px;
+      text-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+
+    .hype-text:nth-child(odd) { opacity: 0.12; margin-left: -5%; }
+    .hype-text:nth-child(even) { opacity: 0.08; margin-left: 5%; }
+
+    .hero-content {
+      position: relative;
+      z-index: 2;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px;
+      border-radius: 24px;
+    }
+
+    .doc-title {
+      margin: 0 0 16px 0;
+      font-size: clamp(40px, 6vw, 70px);
+      font-family: "PokeTube Flex", sans-serif;
+      font-weight: 1000;
       font-stretch: extra-expanded;
+      color: #fff;
+      text-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      line-height: 1.1;
     }
-    .doc-title{margin:0 0 6px;text-align:center;font-size:3.4rem;font-weight:900}
-    .doc-lede{margin:8px 0 16px;color:#cfcfcf;text-align:center}
-    p{margin:10px 0;color:#e7e7e7}
-    ul{margin:10px 0 10px 22px}
-    details{background:#0f1012;border:1px solid #1d2024;border-radius:10px;padding:10px 12px;margin:10px 0}
-    details summary{cursor:pointer;font-weight:600}
-    .toc{background:#101112;border:1px solid #1f1f22;border-radius:12px;padding:12px;margin:14px 0 20px}
-    .toc h2{margin:0 0 8px;font-size:1rem;color:#e8f6ff}
-    .toc ul{margin:0;padding-left:18px}
-    .toc li{margin:6px 0}
-    footer.site{text-align:center;color:#bdbdbd;margin:40px 0 60px}
+
+    .doc-lede { font-size: 1.1rem; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.5); margin: 0 0 24px 0; }
+
+    .meta-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+    .badge { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,171,204,0.3); color: #fff; border-radius: 8px; padding: 8px 16px; font-size: 0.9rem; font-weight: 500; }
+
+    .layout-wrapper {
+      display: flex;
+      gap: 32px;
+      max-width: 1200px;
+      margin: -60px auto 60px;
+      position: relative;
+      z-index: 10;
+      padding: 0 20px;
+      align-items: flex-start;
+    }
+
+    .sidebar {
+      flex: 0 0 280px;
+      position: sticky;
+      top: 90px;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+    }
+
+    .sidebar h2 { font-family: "PokeTube Flex", sans-serif; margin: 0 0 16px 0; font-size: 1.2rem; color: #ffabcc; font-stretch: expanded; border-bottom: 1px solid #2a2a2a; padding-bottom: 8px; }
+    .sidebar ul { margin: 0; padding-left: 0; list-style: none; }
+    .sidebar li { margin: 8px 0; }
+    .sidebar a { color: #cfcfcf; font-size: 0.95rem; transition: color 0.2s; display: block; }
+    .sidebar a:hover { color: #ffabcc; text-decoration: none; transform: translateX(4px); }
+
+    .content {
+      flex: 1;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+      min-width: 0;
+    }
+
+    h2.section {
+      font-family: "PokeTube Flex", sans-serif;
+      margin: 40px 0 16px 0;
+      font-size: clamp(1.4rem, 3vw, 1.8rem);
+      padding-bottom: 8px;
+      border-bottom: 1px solid #2a2a2a;
+      font-stretch: expanded;
+      color: #fff;
+    }
+    h2.section:first-child { margin-top: 0; }
+
+    h3 { font-family: "PokeTube Flex", sans-serif; font-stretch: expanded; color: #e0e0e0; margin: 24px 0 8px 0; font-size: 1.1rem; }
+
+    p { margin: 16px 0; color: #d1d1d1; }
+    ul { margin: 16px 0 16px 24px; color: #d1d1d1; }
+    li { margin-bottom: 6px; }
+
+    .callout {
+      background: rgba(255, 171, 204, 0.05); border-left: 4px solid #ffabcc; color: #eaeaea;
+      padding: 16px 20px; border-radius: 0 12px 12px 0; margin: 24px 0; font-weight: 500;
+    }
+
+    .callout-warn {
+      background: rgba(251, 191, 36, 0.05); border-left: 4px solid #fbbf24; color: #eaeaea;
+      padding: 16px 20px; border-radius: 0 12px 12px 0; margin: 24px 0; font-weight: 500;
+    }
+
+    .callout-red {
+      background: rgba(239, 68, 68, 0.05); border-left: 4px solid #ef4444; color: #eaeaea;
+      padding: 16px 20px; border-radius: 0 12px 12px 0; margin: 24px 0; font-weight: 500;
+    }
+
+    details.block {
+      background: #0f0f0f; border: 1px solid #222; border-radius: 12px; padding: 16px; margin: 16px 0;
+      transition: border-color 0.2s;
+    }
+    details.block:hover { border-color: #333; }
+    details.block summary { cursor: pointer; font-weight: bold; color: #fff; font-size: 1.05rem; outline: none; }
+    details.block p:last-child, details.block ul:last-child { margin-bottom: 0; }
+    details.block p:first-of-type { margin-top: 16px; }
+
+    .rule { margin: 18px 0; }
+    .rule strong { color: #fff; }
+    .rule .subtext { display: block; color: #aaa; font-size: 0.92rem; margin-top: 4px; line-height: 1.5; }
+
+    .small { font-size: .9rem; color: #a1a1a1; }
+
+    footer.site { text-align: center; color: #666; margin: 40px 0 60px; font-weight: 500; }
+    footer.site a { color: #888; }
+    footer.site a:hover { color: #ffabcc; }
+
+    @media (max-width: 900px) {
+      .layout-wrapper { flex-direction: column; margin-top: -30px; gap: 20px; }
+      .sidebar { position: static; width: 100%; flex: auto; padding: 20px; }
+      .content { padding: 24px 20px; }
+      .hero-content { padding: 30px 20px; }
+    }
   </style>
 </head>
 <body>
-<header class="site">
-  <div class="nav-row wrap">
-    <a class="brand" href="/" aria-label="Poke home">
-      <img src="/css/logo-poke.svg?v=5" alt="Poke logo">
-    </a>
+
+  <header class="site" role="banner" aria-label="Site header">
+    <div class="nav-row">
+      <a class="brand" href="/" aria-label="Poke home">
+        <img src="/css/logo-poke.svg?v=5" alt="Poke logo">
+      </a>
+    </div>
+  </header>
+
+  <section class="hero-branding" aria-label="Intro">
+    <div class="hype-container">
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+      <div class="hype-text">LIBERATE THE WEB</div>
+    </div>
+    <div class="hero-content">
+      <h1 class="doc-title">Code of Conduct</h1>
+      <p class="doc-lede">
+        <strong>Be decent to each other.</strong> Poke is a free software project built by
+        and for people who want a better internet. These are the ground rules.
+        Don't be a bigot, don't harass people, don't be a jerk. That's basically it.
+      </p>
+      <div class="meta-row" aria-label="Document metadata">
+        <span class="badge">Poke Project</span>
+        <span class="badge">Last updated: <time datetime="2026-03-23">March 23, 2026</time></span>
+      </div>
+    </div>
+  </section>
+
+  <div class="layout-wrapper">
+
+    <aside class="sidebar">
+      <nav class="toc" aria-label="Table of contents">
+        <h2>Contents</h2>
+        <ul>
+          <li><a href="#why">Why this exists</a></li>
+          <li><a href="#tldr">TL;DR</a></li>
+          <li><a href="#values">Our values</a></li>
+          <li><a href="#terminology">Terminology</a></li>
+          <li><a href="#scope">Where this applies</a></li>
+          <li><a href="#definitions">Definitions</a></li>
+          <li><a href="#prohibited">Prohibited conduct</a></li>
+          <li><a href="#speech">Political speech</a></li>
+          <li><a href="#identity">Identity &amp; pronouns</a></li>
+          <li><a href="#minors">Protecting minors</a></li>
+          <li><a href="#misinfo">Misinformation</a></li>
+          <li><a href="#contributions">Code &amp; contributions</a></li>
+          <li><a href="#ai">AI content policy</a></li>
+          <li><a href="#disagreements">Disagreements</a></li>
+          <li><a href="#enforcement">Enforcement</a></li>
+          <li><a href="#reporting">Reporting</a></li>
+          <li><a href="#naming">Naming &amp; modification</a></li>
+          <li><a href="#contact">Contact</a></li>
+          <li><a href="#license">License</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="content" role="main">
+
+      <section id="why">
+        <h2 class="section">Why this exists</h2>
+        <p>
+          Poke is a free software project with an open community. Most people who
+          show up are great. Some aren't. This document exists so when someone
+          comes in and starts being awful, there are clear rules and clear
+          consequences already written down.
+        </p>
+        <p>
+          This isn't about controlling what people think. But if you bring hate,
+          harassment, or fascist garbage into this community, you're getting removed.
+          Poke is a queer-friendly, anti-fascist project. That's not changing.
+          If that upsets you, there are plenty of other places on the internet
+          where you can go cry about it.
+        </p>
+      </section>
+
+      <section id="tldr">
+        <h2 class="section">TL;DR</h2>
+        <div class="callout">
+          Be nice. Respect people's identities. Don't harass anyone. Don't post hate.
+          Don't be a fascist. Don't spread misinformation. If you can manage that, welcome.
+          If you can't, leave.
+        </div>
+      </section>
+
+      <section id="values">
+        <h2 class="section">Our values</h2>
+        <ul>
+          <li><strong>Freedom</strong> - the <a href="https://www.gnu.org/philosophy/free-sw.html" target="_blank" rel="noopener">GNU kind</a>. the right to use, study, share, and modify software. also the freedom to exist as who you are.</li>
+          <li><strong>Kindness</strong> - treat people like people. it costs nothing.</li>
+          <li><strong>Inclusivity</strong> - this community is queer-friendly, trans-friendly, disability-friendly, neurodivergent-friendly, and furry-friendly by default. if that bothers you, this is not your project.</li>
+          <li><strong>Safety</strong> - people should be able to participate without worrying about being harassed, doxxed, or targeted.</li>
+          <li><strong>Transparency</strong> - the code is free, the rules are public, enforcement is documented.</li>
+          <li><strong>Honesty</strong> - we don't spread misinformation about software, people, or anything else. even if we don't like something, we tell the truth about it.</li>
+        </ul>
+      </section>
+
+      <section id="terminology">
+        <h2 class="section">Terminology</h2>
+        <p>
+          A quick note on language we use in this project:
+        </p>
+        <ul>
+          <li>
+            <strong>We say "free software," not "open source."</strong>
+            This is a deliberate choice. The free software movement is about
+            user freedom. "Open source" waters that down to a development
+            methodology and strips out the ethical part. We care about the
+            ethical part. For more on why this distinction matters, see
+            <a href="https://www.gnu.org/philosophy/open-source-misses-the-point.html" target="_blank" rel="noopener">gnu.org/philosophy/open-source-misses-the-point</a>.
+          </li>
+          <li>
+            When we refer to software licenses, we mean free software licenses
+            as defined by the <a href="https://www.gnu.org/licenses/license-list.html" target="_blank" rel="noopener">Free Software Foundation</a>.
+          </li>
+        </ul>
+      </section>
+
+      <section id="scope">
+        <h2 class="section">Where this applies</h2>
+        <p>
+          This code of conduct applies everywhere Poke has a presence:
+        </p>
+        <ul>
+          <li>The Codeberg repository (issues, pull requests, comments, wiki)</li>
+          <li>The Poke Discord server</li>
+          <li>Any other official Poke chat, forum, or social media account</li>
+          <li>Pull requests, code, and documentation contributions</li>
+          <li>Commit messages</li>
+          <li>Official Poke instances and their public-facing content</li>
+        </ul>
+        <p>
+          It also applies to behavior outside these spaces if that behavior targets
+          Poke community members because of their participation in Poke.
+          If you're harassing a contributor on their personal social media over
+          something they did in this project, that counts.
+        </p>
+      </section>
+
+      <section id="definitions">
+        <h2 class="section">Definitions</h2>
+        <p>
+          So there's no room for "well technically" arguments:
+        </p>
+
+        <details class="block">
+          <summary>Hate speech</summary>
+          <p>
+            Language, imagery, or behavior that attacks, dehumanizes, or calls for
+            violence against people based on their race, ethnicity, nationality, caste,
+            religion, gender, gender identity, sexual orientation, disability,
+            neurodivergence, age, or species identity.
+          </p>
+          <p>
+            This includes dogwhistles (yes, we know what those are) and "just joking"
+            bigotry. If the punchline is that a group of people is lesser, it's hate speech.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Slurs - the nuance</summary>
+          <p>
+            Using slurs <em>against</em> someone is always banned. Calling someone a
+            slur to hurt them, dehumanize them, or put them down is hate speech,
+            period.
+          </p>
+          <p>
+            However, we recognize that <strong>reclaimed slurs</strong> are a real thing.
+            If you're part of a group and you use a reclaimed term to refer to yourself
+            or within your own community (like queer people using "queer," or Black
+            people using the n-word among themselves), that's your right and we're not
+            going to police that.
+          </p>
+          <p>
+            The line is: are you using it about yourself / your own community in a
+            way that community is okay with? Fine. Are you using it to attack someone
+            or using a word that isn't yours to reclaim? Not fine. Moderators will
+            use their judgment on context.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Harassment</summary>
+          <p>
+            Any pattern of behavior directed at a specific person that makes them
+            feel unsafe, unwelcome, or targeted. Including but not limited to:
+          </p>
+          <ul>
+            <li>Repeated unwanted contact after being asked to stop</li>
+            <li>Following someone across platforms to continue an argument</li>
+            <li>Publishing or threatening to publish someone's private information (doxxing)</li>
+            <li>Sexually explicit or romantic messages directed at someone who hasn't asked for them</li>
+            <li>Deliberately and repeatedly misgendering someone</li>
+            <li>Mocking someone's appearance, voice, typing style, or communication style</li>
+            <li>Pile-ons: encouraging others to gang up on someone</li>
+            <li>Screenshot-dunking: taking someone's messages out of context to mock them elsewhere</li>
+          </ul>
+          <p>
+            A single message can be harassment if it's bad enough. You don't get
+            a free first offense.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Far-right / fascist content</summary>
+          <p>
+            Ideology, propaganda, or rhetoric that promotes or defends:
+          </p>
+          <ul>
+            <li>White supremacy, white nationalism, or ethnonationalism of any kind</li>
+            <li>Fascism, neo-nazism, or authoritarian ultranationalism</li>
+            <li>Anti-LGBT legislation, conversion therapy, or "gender critical" ideology</li>
+            <li>Anti-immigrant movements or "great replacement" conspiracy theories</li>
+            <li>MAGA, the American far-right movement, and its international equivalents</li>
+            <li>Caste-based discrimination or advocacy for caste segregation</li>
+            <li>Denial or trivialization of genocides, the Holocaust, slavery, or colonialism</li>
+          </ul>
+          <p>
+            "I'm just asking questions" and "I'm just playing devil's advocate" don't
+            get you a pass. If you're spreading fascist talking points, we don't care
+            what rhetorical wrapper you put around them. Go complain about it on
+            Truth Social or whatever, we genuinely do not care.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Concern trolling</summary>
+          <p>
+            Pretending to be a well-meaning participant while actually trying to
+            undermine the community, derail conversations, or normalize harmful ideas.
+            Classic example: "I support trans people BUT..." followed by anti-trans rhetoric.
+            Or asking moderators to "hear both sides" when one side is literal bigotry.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Sealioning</summary>
+          <p>
+            Repeatedly demanding evidence, explanations, or debate from someone
+            in bad faith. Usually looks like someone very politely but relentlessly
+            asking a marginalized person to justify their own existence or prove
+            that oppression is real. If you've been given an answer and you keep
+            asking the same question in slightly different words, that's sealioning.
+          </p>
+        </details>
+
+        <details class="block">
+          <summary>Tone policing</summary>
+          <p>
+            Dismissing what someone is saying because of how they said it.
+            If a trans person is angry about transphobia, telling them to
+            "calm down" or "be more civil" instead of addressing the transphobia
+            is tone policing. The person being harassed does not owe their
+            harasser politeness.
+          </p>
+        </details>
+      </section>
+
+      <section id="prohibited">
+        <h2 class="section">Prohibited conduct</h2>
+        <p>
+          The following will get you warned, temporarily banned, or permanently
+          banned depending on severity. Moderators decide which.
+        </p>
+
+        <h3>Hate and bigotry</h3>
+
+        <div class="rule">
+          <strong>Homophobia, biphobia, transphobia, enbyphobia, or queerphobia of any kind</strong>
+          <span class="subtext">This includes "I don't hate them I just think..." type comments. You're not being subtle. We've heard it all before.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Racism, antisemitism, islamophobia, or xenophobia</strong>
+          <span class="subtext">Includes "race realism," "western civilization" dogwhistles, triple parentheses, and all the other stuff people think is clever. It's not.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Caste-based discrimination or casteism</strong>
+          <span class="subtext">Discrimination or harassment based on caste identity, advocacy for caste segregation, or dismissing caste oppression as "not real" or "just a cultural thing." Caste discrimination is a global human rights issue and it has no place here.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Ableism</strong>
+          <span class="subtext">Mocking mental illness, neurodivergence, or disability. Using "autistic" or "r*tarded" as insults. Telling people to "just get over" their conditions. That kind of thing.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Misogyny, transmisogyny, or sexism</strong>
+          <span class="subtext">Includes incel rhetoric, "men's rights" talking points used to attack women or trans people, and the whole "females" thing. If you call women "females" unironically in 2026, we have questions about you.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Anti-furry, anti-otherkin, or anti-therian harassment</strong>
+          <span class="subtext">These are real identities held by real people in this community. "Attack helicopter" jokes are from 2014 and they weren't funny then either.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Mocking anyone's religion, spiritual practices, or lack thereof</strong>
+          <span class="subtext">You can criticize religious institutions and their political actions. You can't mock someone personally for what they believe or don't believe.</span>
+        </div>
+
+        <h3>Harassment and abuse</h3>
+
+        <div class="rule">
+          <strong>Stalking, doxxing, or threatening anyone</strong>
+          <span class="subtext">Publishing someone's real name, address, workplace, school, or any other private information. Threatening to do so counts too. Instant permanent ban.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Sexual harassment or unwanted sexual content</strong>
+          <span class="subtext">Don't send people sexual messages they didn't ask for. Don't post NSFW content in Poke spaces. This should be obvious.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Deliberate misgendering or deadnaming</strong>
+          <span class="subtext">If someone tells you their pronouns or their name, use them. "Accidentally" doing it over and over stops being an accident real fast.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Impersonating another person or community member</strong>
+          <span class="subtext">Don't pretend to be someone you're not, whether that's another community member, a moderator, or a public figure.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Encouraging others to harass someone (brigading)</strong>
+          <span class="subtext">Linking to someone's profile or messages with "look at this idiot" energy, rallying people to mass-report someone, etc.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Posting someone's private messages, real name, location, or photos without consent</strong>
+          <span class="subtext">What happens in DMs stays in DMs unless there's a safety concern being reported to moderators.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Creating accounts to evade a ban</strong>
+          <span class="subtext">If you got banned and you come back on an alt, that's another ban. We will keep doing this as long as you keep trying.</span>
+        </div>
+
+        <h3>Disruptive behavior</h3>
+
+        <div class="rule">
+          <strong>Spamming channels, issues, or pull requests</strong>
+          <span class="subtext">This includes AI-generated spam, repetitive messages, and low-effort mass-submissions.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Deliberately derailing conversations</strong>
+          <span class="subtext">Turning every discussion into your personal soapbox, changing the subject to something inflammatory, etc.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Posting shock content, gore, or disturbing imagery</strong>
+          <span class="subtext">There's no reason to post this stuff. Don't.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Using offensive or hateful usernames or profile pictures</strong>
+          <span class="subtext">If your username is a slur or your pfp is a swastika, you're getting banned before you even say anything.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Concern trolling, sealioning, or tone policing</strong>
+          <span class="subtext">See definitions above. We know what these look like. You're not as subtle as you think.</span>
+        </div>
+
+        <h3>Political extremism</h3>
+
+        <div class="rule">
+          <strong>Promoting or defending fascism, nazism, or authoritarian regimes</strong>
+          <span class="subtext">If you think fascism had "some good points" or that a dictator "wasn't that bad," you've already told us everything we need to know about you.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Posting far-right propaganda, memes, or recruitment material</strong>
+          <span class="subtext">We know what the pipeline looks like. Pepe with the SS hat, "13/50" statistics, "despite making up..." copypastas. Save it for your echo chamber. Actually, don't save it at all. Go touch grass.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Defending or glorifying genocides, mass violence, or ethnic cleansing</strong>
+          <span class="subtext">This includes Holocaust denial, slavery apologia, colonial nostalgia, and "but what about..." deflections. History happened. Deal with it.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Defending or glorifying billionaires who actively harm people</strong>
+          <span class="subtext">Yes, including Elon Musk. The man bought a social media platform and turned it into a fascist recruitment tool. If that's your hero, you're in the wrong community.</span>
+        </div>
+
+        <div class="rule">
+          <strong>Posting "ironic" hate imagery or dog whistles</strong>
+          <span class="subtext">"It's just a joke" is not a defense. If your joke requires the audience to be bigoted to find it funny, it's not a joke, it's just bigotry with plausible deniability.</span>
+        </div>
+
+        <div class="callout-red">
+          If you think any of the above should be up for debate, this is not the community for you.
+          You're free to go start your own project where you can be as hateful as you want.
+          We hear Truth Social is nice this time of year.
+        </div>
+      </section>
+
+      <section id="speech">
+        <h2 class="section">Political speech</h2>
+        <p>
+          Poke is a political project whether people like that or not. Free software
+          is political. Privacy is political. Running an alternative YouTube frontend
+          that doesn't track people is political.
+        </p>
+        <p>
+          We're not going to pretend to be neutral. Poke is pro-trans,
+          pro-queer, pro-privacy, anti-fascist, and anti-corporate-surveillance.
+          These are not debatable positions within this community. If you want a
+          "both sides" debate about whether trans people deserve rights, go ask
+          a right-wing subreddit. They love that stuff. We don't.
+        </p>
+        <p>
+          You're welcome to have political opinions that differ from ours on things
+          like economic policy, urban planning, or whatever. We're not a political
+          party. But if your politics include "some people shouldn't have rights"
+          then you're not welcome here.
+        </p>
+
+        <details class="block">
+          <summary>What about "free speech"?</summary>
+          <p>
+            Free speech means the government can't arrest you for your opinions.
+            It doesn't mean a free software project has to host your bigotry.
+            We're not the government. We're a community with standards.
+            You're free to say whatever you want somewhere else. Maybe on
+            one of those "free speech" platforms that are somehow always full
+            of nazis. Wonder why that is.
+          </p>
+        </details>
+      </section>
+
+      <section id="identity">
+        <h2 class="section">Identity &amp; pronouns</h2>
+        <p>
+          Everyone in this community deserves to be referred to correctly.
+          Not optional, not up for debate.
+        </p>
+        <ul>
+          <li><strong>Use the pronouns someone tells you to use.</strong> Every time. If you mess up, correct yourself and move on. Don't make it a big dramatic apology. Just fix it.</li>
+          <li><strong>Neopronouns are valid.</strong> xe/xem, ze/zir, it/its, fae/faer, whatever someone uses. You don't need to understand something to respect it.</li>
+          <li><strong>Some people use no pronouns.</strong> They want to be referred to by name only. That's valid. Use their name where you'd normally use a pronoun.</li>
+          <li><strong>Deliberate misgendering is harassment.</strong> Doing it once and correcting yourself is a mistake. Doing it over and over is targeted harassment.</li>
+          <li><strong>Deadnaming is harassment.</strong> If someone has a new name, use it. Their old name is not your business.</li>
+        </ul>
+
+        <h3>Non-human identities</h3>
+        <p>
+          This community welcomes otherkin, therians, furries, robotkin, plural
+          systems, and anyone else. These are real identities held by real people
+          and they get the same respect as any other identity here.
+        </p>
+        <ul>
+          <li>Mocking someone for being otherkin, therian, or furry is harassment</li>
+          <li>"Identifying as an attack helicopter" type jokes are stale and unfunny and will get you banned</li>
+          <li>Plural systems (people with multiple identities sharing one body) are welcome and their system members are treated as individuals</li>
+        </ul>
+      </section>
+
+      <section id="minors">
+        <h2 class="section">Protecting minors</h2>
+        <p>
+          People under 18 participate in free software communities and they
+          participate in ours. They're welcome here and protecting them is
+          everyone's responsibility.
+        </p>
+        <ul>
+          <li>Do not post sexual or NSFW content anywhere in Poke spaces</li>
+          <li>Do not send sexual messages to anyone, especially minors</li>
+          <li>Do not ask minors for personal information, photos, or location</li>
+          <li>Adults who engage in predatory behavior toward minors will be permanently banned and reported to relevant authorities with zero warning</li>
+        </ul>
+        <div class="callout-red">
+          Zero exceptions. Predatory behavior toward minors = immediate permanent ban
+          and a report to the appropriate authorities. No warnings, no appeals.
+        </div>
+      </section>
+
+      <section id="misinfo">
+        <h2 class="section">Misinformation</h2>
+        <p>
+          We care about honesty. Spreading false information in Poke spaces is
+          not allowed, even when it's about stuff we don't like.
+        </p>
+
+        <div class="rule">
+          <strong>Don't spread blatant misinformation about software</strong>
+          <span class="subtext">
+            Even about proprietary software. You can criticize Windows, macOS,
+            Chrome, or any other proprietary software all you want, and we
+            encourage that. But stick to the real problems (and there are plenty).
+            Don't make stuff up. Don't say "Windows sends all your files to
+            the NSA" if you can't back that up. Don't use silly names like
+            "Microslop" or "Winblows" and then present made-up claims as fact.
+            The real issues with proprietary software are bad enough without
+            inventing fake ones.
+          </span>
+        </div>
+
+        <div class="rule">
+          <strong>Don't spread misinformation about people</strong>
+          <span class="subtext">
+            Don't make up stuff about community members, maintainers, or anyone
+            else. Don't fabricate screenshots. Don't put words in people's mouths.
+          </span>
+        </div>
+
+        <div class="rule">
+          <strong>Don't spread conspiracy theories as fact</strong>
+          <span class="subtext">
+            Flat earth, anti-vax, QAnon, "5G causes cancer," any of that.
+            You can discuss these topics critically (like debunking them),
+            but presenting conspiracy theories as truth will get you warned
+            or removed.
+          </span>
+        </div>
+
+        <p>
+          The short version: criticize things for real reasons with real evidence.
+          The free software movement has plenty of legitimate criticisms of
+          proprietary software, surveillance capitalism, and corporate control.
+          You don't need to make stuff up, and doing so actually hurts the
+          credibility of the real arguments.
+        </p>
+      </section>
+
+      <section id="contributions">
+        <h2 class="section">Code &amp; contributions</h2>
+        <p>
+          When you contribute code, documentation, or other work to Poke:
+        </p>
+        <ul>
+          <li><strong>Write descriptive commit messages.</strong> "fixed the thing" is bad. "fix video playback crash on iOS Safari when seeking" is good.</li>
+          <li><strong>No hateful content in code.</strong> Variable names, comments, strings, Easter eggs, test data. If a moderator finds slurs in your test fixtures, that's a ban.</li>
+          <li><strong>Don't submit malicious code.</strong> Backdoors, data exfiltration, intentional vulnerabilities, or code designed to harm users will get you permanently banned and may be reported.</li>
+          <li><strong>Don't submit code you don't have the right to submit.</strong> If it's from a project with an incompatible license, don't put it in Poke. We take <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">free software licensing</a> seriously.</li>
+          <li><strong>Don't spam pull requests.</strong> Low-effort PRs that change whitespace, rename variables for no reason, or "fix typos" that aren't actually typos are disruptive and annoying.</li>
+          <li><strong>Review comments should be constructive.</strong> "This code sucks" is not a review. "This could cause a memory leak because X, here's a suggestion" is a review.</li>
+        </ul>
+      </section>
+
+      <section id="ai">
+        <h2 class="section">AI content policy</h2>
+        <p>
+          When we say "AI" in this section, we mean <strong>generative AI</strong>:
+          large language models (LLMs), image generators, voice synthesizers, and
+          similar tools that create text, images, audio, or code from prompts.
+          We don't mean video game AI, spam filters, autocomplete, or any of
+          the other things that have been called "AI" for decades. Those are fine.
+          This section is specifically about generative AI tools.
+        </p>
+
+        <p>
+          Using generative AI tools is allowed in Poke as long as you're honest
+          about it and you're not causing problems. We recommend ethical AI
+          providers like <a href="https://www.anthropic.com/" target="_blank" rel="noopener">Anthropic's Claude</a>
+          which are built with safety and transparency in mind.
+        </p>
+
+        <ul>
+          <li><strong>Label AI-generated content.</strong> If you used a generative AI to write code, generate text, or create an image, say so. Don't pass it off as your own work.</li>
+          <li><strong>Don't flood with AI content.</strong> Submitting dozens of AI-generated issues, PRs, or messages is spam regardless of quality.</li>
+          <li><strong>Don't use AI to generate hate material, fake screenshots, impersonations, or propaganda.</strong></li>
+          <li><strong>Don't use AI to create fake community members or fake consensus.</strong> If you're using a chatbot to pretend to be multiple people agreeing with you, that's ban-worthy and also genuinely pathetic.</li>
+          <li><strong>AI-generated code in PRs must be reviewed and understood by the person submitting it.</strong> If you can't explain what your PR does because a chatbot wrote it, don't submit it.</li>
+          <li><strong>Using AI to help with translation, documentation, debugging, or brainstorming is fine</strong> as long as you review the output, it's accurate, and you're transparent about it.</li>
+        </ul>
+      </section>
+
+      <section id="disagreements">
+        <h2 class="section">Disagreements &amp; conflict</h2>
+        <p>
+          People disagree. That's normal. Technical disagreements, different
+          priorities, different opinions on implementation, that's all part of
+          working on software together.
+        </p>
+        <ul>
+          <li><strong>Argue about the idea, not the person.</strong> "I think this approach has a problem because X" is fine. "You clearly don't know what you're doing" is not.</li>
+          <li><strong>Know when to stop.</strong> If a discussion is going in circles, step away. Come back later or let a maintainer make the call.</li>
+          <li><strong>Maintainers have final say on technical decisions.</strong> You can disagree, but once a decision is made, accept it or fork the project. That's how free software works.</li>
+          <li><strong>Don't take technical disagreements personal.</strong> Someone rejecting your PR is not a personal insult.</li>
+          <li><strong>If you're getting heated, take a break.</strong> Close the tab. Go do something else. Come back when you're calm.</li>
+        </ul>
+
+        <div class="callout-warn">
+          If a disagreement turns into personal attacks or harassment,
+          moderators will step in. You may not like the outcome.
+        </div>
+      </section>
+
+      <section id="enforcement">
+        <h2 class="section">Enforcement</h2>
+        <p>
+          Moderators and maintainers enforce these rules. They have discretion
+          to act on anything that harms the community, even if it's not
+          explicitly listed here. If you're being awful in a way we didn't
+          think to write down, you can still be removed.
+        </p>
+
+        <h3>Levels</h3>
+        <ul>
+          <li><strong>Verbal warning.</strong> A moderator tells you to stop. This is a courtesy. Take it seriously.</li>
+          <li><strong>Message removal.</strong> Your message gets deleted. If it keeps happening, a ban follows.</li>
+          <li><strong>Temporary ban.</strong> You're locked out for a set period. How long depends on what you did.</li>
+          <li><strong>Permanent ban.</strong> You're removed forever. This is for hate speech, harassment, predatory behavior, or repeated violations.</li>
+        </ul>
+
+        <h3>What doesn't get a warning first</h3>
+        <p>
+          Some things skip straight to a ban:
+        </p>
+        <ul>
+          <li>Slurs or hate speech directed at someone</li>
+          <li>Doxxing or threats of violence</li>
+          <li>Predatory behavior toward minors</li>
+          <li>Posting nazi/fascist imagery or propaganda</li>
+          <li>Ban evasion</li>
+          <li>Submitting malicious code</li>
+        </ul>
+
+        <h3>Appeals</h3>
+        <p>
+          If you were temporarily banned and you think it was a mistake, you
+          can email <span class="mono">iamashley@duck.com</span> with your
+          side of the story. Be honest, be specific. Appeals for permanent
+          bans due to hate speech or predatory behavior will not be considered.
+        </p>
+      </section>
+
+      <section id="reporting">
+        <h2 class="section">Reporting</h2>
+        <p>
+          If someone is violating this code of conduct, please report it:
+        </p>
+        <ul>
+          <li>Email: <span class="mono">iamashley@duck.com</span></li>
+          <li>Codeberg: <a href="https://codeberg.org/ashleyirispuppy/poke/issues" target="_blank" rel="noopener">Open an issue</a> (for non-sensitive stuff)</li>
+        </ul>
+
+        <h3>What happens when you report</h3>
+        <ul>
+          <li>Your report is seen by the moderation team, not the whole community</li>
+          <li>We'll look at what happened and take action if the rules were broken</li>
+          <li>We won't reveal who reported unless you specifically say it's okay</li>
+          <li>Retaliating against someone for making a report is itself a bannable offense</li>
+        </ul>
+
+        <p>
+          If you're not sure whether something crosses the line, report it
+          anyway. We'd rather look at something and decide it's fine than
+          miss something that needed action.
+        </p>
+      </section>
+
+      <section id="naming">
+        <h2 class="section">Naming &amp; modification rules</h2>
+        <p>
+          This code of conduct is licensed under CC BY-SA 4.0, so you can share
+          and remix it. But if you modify it, you can't use names that imply
+          it's the official Poke version. Modified versions cannot be called:
+        </p>
+        <ul>
+          <li>Poke Code of Conduct</li>
+          <li>Poketube Code of Conduct</li>
+          <li>Poke Project Code of Conduct</li>
+          <li>Poke Community Guidelines</li>
+          <li>Or any other name that implies official Poke endorsement</li>
+        </ul>
+        <p>
+          If you change it, rename it clearly. If someone forks this and
+          rewrites it to allow hate or remove protections for marginalized
+          people, we reserve the right to publicly call that out.
+        </p>
+
+        <details class="block">
+          <summary>Legal text</summary>
+          <p>
+            By using or redistributing this work (or any derivative), you agree
+            to these naming and modification rules. If you distribute a modified
+            version, you <strong>must</strong> change its name/title so as not to
+            imply it is the official "Poke Code of Conduct." You <strong>may not</strong>
+            call your modified document "Poke," "Poketube," or any variant thereof
+            unless the version is entirely unchanged. This name-change requirement
+            binds all downstream recipients of derivative versions.
+          </p>
+        </details>
+      </section>
+
+      <section id="contact">
+        <h2 class="section">Contact</h2>
+        <p>
+          Questions, concerns, or reports:
+        </p>
+        <ul>
+          <li>Email: <span class="mono">iamashley@duck.com</span></li>
+          <li>Codeberg: <a href="https://codeberg.org/ashleyirispuppy/poke/issues" target="_blank" rel="noopener">Open an Issue</a></li>
+        </ul>
+      </section>
+
+      <section id="license">
+        <h2 class="section">License</h2>
+        <p class="small">
+          &copy; 2021-2026 Poke Project.
+          Licensed under <strong>Creative Commons Attribution-ShareAlike 4.0 International</strong> (CC BY-SA 4.0).
+          If you distribute a modified version, you must rename it (see naming rules above).
+        </p>
+      </section>
+
+      <footer class="site small" aria-label="Document footer">
+        <p><a href="#top">Return to Top</a></p>
+      </footer>
+
+    </main>
   </div>
-</header>
-
-<main class="wrap">
-<section class="hero">
-  <h1 class="doc-title">Poke Project — Code of Conduct</h1>
-  <p class="doc-lede">
-    <strong>Respect, decency, and kindness are mandatory.</strong><br>
-  </p>
-</section>
-
-<nav class="toc">
-  <h2>Contents</h2>
-  <ul>
-    <li><a href="#why">Why This Exists</a></li>
-    <li><a href="#values">Our Values</a></li>
-    <li><a href="#definitions">Key Definitions</a></li>
-    <li><a href="#prohibited">Prohibited Conduct</a></li>
-    <li><a href="#identity">Respecting Identity & Pronouns</a></li>
-    <li><a href="#ai">AI-Generated Content Policy</a></li>
-    <li><a href="#naming">Naming & Modification Rules</a></li>
-    <li><a href="#enforcement">Enforcement & Bans</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#license">License</a></li>
-  </ul>
-</nav>
-
-<section id="why">
-  <h2 class="section">Why This Exists</h2>
-  <p>
-    The Internet can be a place of wonder or cruelty.  
-    The Poke community was made to be a corner of safety and openness — one where people, no matter what form or identity they hold, can create freely.  
-  </p>
-  <p>
-    This Code of Conduct prevents harassment, gatekeeping, or extremist ideology from contaminating that freedom.  
-    Right-wing hate, fascism, and political extremism have no place here.  
-    This isn’t about policing opinions — it’s about keeping fascists, bigots, and those who defend violence out of a Free Software space.  
-    If that offends someone? That’s on them.  
-  </p>
-</section>
-
-<section id="values">
-  <h2 class="section">Our Values</h2>
-  <ul>
-    <li>Freedom — the GNU kind: the right to study, share, and change code.</li>
-    <li>Kindness — treating others like people, not profiles.</li>
-    <li>Community — diverse, queer-friendly, and inclusive by default.</li>
-    <li>Safety — a space free from hate, harassment, and propaganda.</li>
-    <li>Empathy — we defend one another, not bullies or billionaires.</li>
-  </ul>
-</section>
-
-<section id="definitions">
-  <h2 class="section">Key Definitions</h2>
-  <ul>
-    <li><strong>Hate Speech:</strong> Language or behavior attacking people based on who they are — race, gender, sexuality, identity, or beliefs.</li>
-    <li><strong>Harassment:</strong> Repeated unwanted attention, intimidation, or mockery, public or private.</li>
-    <li><strong>Far-Right Content:</strong> Ideology promoting fascism, racism, nationalism, or authoritarian control (MAGA, anti-LGBT, anti-minority rhetoric).</li>
-    <li><strong>Genocide Denial:</strong> Attempts to justify, minimize, or deny real genocides or crimes against humanity.</li>
-    <li><strong>Inappropriate Content:</strong> Defending abusers, promoting fascists, or hero-worshiping billionaires (yes, including Elon Musk) for clout.</li>
-  </ul>
-</section>
-
-<section id="prohibited">
-  <h2 class="section">Prohibited Conduct</h2>
-  <p>The following behavior will get you warned, removed, or banned across Poke and its forks:</p>
-  <ul>
-    <li>Homophobia, transphobia, racism, sexism, or xenophobia.</li>
-    <li>Mocking queer, trans, nonbinary, or neurodivergent people.</li>
-    <li>Promoting or defending genocide, slavery, or oppression.</li>
-    <li>Posting or supporting far-right, MAGA, or extremist propaganda.</li>
-    <li>Defending or glorifying Elon Musk, fascists, or authoritarian regimes.</li>
-    <li>Trolling, stalking, impersonating, or using hate usernames.</li>
-    <li>Posting dehumanizing or violent imagery.</li>
-    <li>AI spam, generated hate material, or fake community members.</li>
-  </ul>
-  <p>If you hate the idea of people being free, kind, or weird — this community isn’t for you.  
-  You’re free to laugh somewhere else; we’ll laugh at your tears while you leave.</p>
-</section>
-
-<section id="identity">
-  <h2 class="section">Respecting Identity & Pronouns</h2>
-  <p>
-    Every person and creature deserves respect.  
-    This community welcomes humans, non-humans, otherkin, furries, robotkin, system members, and anyone else.  
-  </p>
-  <ul>
-  <li>Pronouns are <strong>not optional</strong> — use what someone tells you, every single time.</li>
-  <li>
-    Some people genuinely use <strong>no pronouns</strong> (or “none”) as part of their identity — that’s valid.  
-    In those cases, refer to them by name instead of using pronouns.  
-    If you’re confused, just ask politely and move on.
-  </li>
-  <li>
-    However, if you say “I don’t have pronouns” because you think grammar is oppression or you want to mock queer people — congratulations, you just outed yourself as both wrong and boring.  
-    You literally just used a pronoun, by the way — <em>“I”</em>. Wild how that works, huh?  
-    Everyone has pronouns in language; respecting others isn’t optional, and grammar isn’t a battlefield.
-  </li>
-     <li>Misgendering is banned, period. There are no “debates” about it.</li>
-    <li>Dehumanizing someone for being otherkin, furry, or robotkin will get you banned faster than you can say “tolerance.”</li>
-    <li>If you think these identities are “cringe” or “weird,” you’re free to go touch grass and scream into a void instead.</li>
-  </ul>
-  <p>
-    All beings — human or not — who act in kindness are welcome. 
-  </p>
-</section>
-
-<section id="ai">
-  <h2 class="section">AI-Generated Content Policy</h2>
-  <p>
-    Poke values art, expression, and honesty — not spam.  
-    AI tools can help when used transparently and ethically:
-  </p>
-  <ul>
-    <li>Mark clearly when content is generated.</li>
-    <li>Do not upload generated political content, propaganda, or hate.</li>
-    <li>AI media pretending to be real people, or fake contributors, is banned.</li>
-    <li>Generated works must not contain stolen copyrighted content or misinformation.</li>
-  </ul>
-  <p>
-    Offenders who use AI to harass, spam, or manipulate others will be banned permanently.
-  </p>
-</section>
-
-<section id="naming">
-  <h2 class="section">Naming & Modification Rules</h2>
-  <p>
-    You can share or remix this document freely, but if you modify it, you cannot use names implying it’s official.  
-    Forbidden titles include (but aren’t limited to):
-  </p>
-  <ul>
-    <li>Poke Code of Conduct</li>
-    <li>Poketube Code of Conduct</li>
-    <li>Poke Project Code of Conduct</li>
-    <li>Poke Community Guidelines</li>
-  </ul>
-  <p>
-    If you alter it, rename it clearly — and don’t spread misinformation about its origin.  
-    Forks that rewrite it to allow hate or fascism may be publicly called out.
-  </p>
-  <details class="block">
-  <summary>Legal text</summary>
-  <p>
-    By using or redistributing this work (or any derivative), you agree to these naming & modification rules.  
-    If you distribute a modified version of this Code of Conduct, you <strong>must</strong> change its name/title so as not to imply it is the official “Poke Code of Conduct.”  
-    You <strong>may not</strong> call your modified document “Poke,” “Poketube,” or any variant thereof unless the version is <em>entirely unchanged</em>.  
-    This name-change requirement binds all downstream recipients of derivative versions.
-  </p>
-</details>
-</section>
-
-<section id="enforcement">
-  <h2 class="section">Enforcement & Bans</h2>
-  <p>
-    Moderators and maintainers have the power to act against any harmful behavior.  
-    You don’t get to “argue your free speech rights” here — this isn’t Twitter, and we’re not Elon.
-  </p>
-  <ul>
-    <li><strong>Warning:</strong> You’ll get a calm message telling you what needs to stop.</li>
-    <li><strong>Temporary Ban:</strong> You’ll be locked out for a set time — cool off, or stay gone.</li>
-    <li><strong>Permanent Ban:</strong> Hate promoters, bigots, and serial abusers will be removed forever.</li>
-  </ul>
-  <p>
-    If you repeatedly harass people, defend violence, or mock identities, you’re banned — no appeals, no second chances.  
-  </p>
-</section>
-
-<section id="contact">
-  <h2 class="section">Contact</h2>
-  <p>To report abuse or violations, contact:</p>
-  <ul>
-    <li>Email: <span class="mono">iamashley@duck.com</span></li>
-    <li>Discord: <a href="https://discord.gg/pfKSQ3pMfW" target="_blank" rel="noopener">Poke Community Server</a></li>
-    <li>Repository: <a href="https://codeberg.org/ashleyirispuppy/poke/issues" target="_blank" rel="noopener">Open an Issue</a></li>
-  </ul>
-  <p>Reports are confidential, handled with our privacy policy</p>
-</section>
-
-<section id="license">
-  <h2 class="section">License</h2>
-  <p class="small">
-    © 2021–2025 Poke Project.  
-    Licensed under <strong>CC BY-SA 4.0 International</strong>.  <p>If you distribute a modified version of this Code of Conduct, you <strong>must</strong> change its name/title so as not to imply that it is the official “Poke Code of Conduct.” You <strong>may not</strong> call your modified document “Poke,” “Poketube,” or any variant thereof unless your version is <em>entirely unchanged</em>.  
-  This name-change requirement is binding on all recipients of derivative versions.
-</p>
-
-  </p>
-</section>
-
-<footer class="site small">
-  <p><a href="#top">Return to Top</a></p>
-</footer>
-</main>
 </body>
 </html>
