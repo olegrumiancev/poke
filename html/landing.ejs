@@ -952,9 +952,15 @@
     var gotItBtn = document.getElementById('pokePolicyGotIt');
     var privacyLink = document.getElementById('pokePolicyReadPrivacy');
     var cocLink = document.getElementById('pokePolicyReadCoC');
-
+ 
     if (!modal || !gotItBtn) return;
-
+ 
+    // only show on poketube.fun
+    if (window.location.hostname !== 'poketube.fun') {
+      modal.hidden = true;
+      return;
+    }
+ 
     // check if already seen - only shows once ever per browser
     // also never show after march 30 2026
     try {
@@ -963,18 +969,18 @@
         return;
       }
     } catch (e) {}
-
+ 
     // lock scrolling
     document.body.classList.add('poke-scroll-locked');
-
+ 
     function dismiss() {
       modal.hidden = true;
       document.body.classList.remove('poke-scroll-locked');
       try { localStorage.setItem(KEY, '1'); } catch (e) {}
     }
-
+ 
     gotItBtn.addEventListener('click', dismiss);
-
+ 
     // clicking either link also marks as seen
     if (privacyLink) privacyLink.addEventListener('click', function () {
       try { localStorage.setItem(KEY, '1'); } catch (e) {}
@@ -982,12 +988,12 @@
     if (cocLink) cocLink.addEventListener('click', function () {
       try { localStorage.setItem(KEY, '1'); } catch (e) {}
     });
-
+ 
     // close on overlay click (outside modal)
     modal.addEventListener('click', function (e) {
       if (e.target === modal) dismiss();
     });
-
+ 
     // close on escape
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !modal.hidden) dismiss();
