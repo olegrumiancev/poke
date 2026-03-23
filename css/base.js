@@ -1121,9 +1121,8 @@ _seekPostTimers: []
       // Protect newly-started audio from stall-pause for 1.5s
       state.audioStartGraceUntil = Math.max(state.audioStartGraceUntil, now() + 1500);
       try {
-        const targetVol = (coupledMode && audio)
-          ? (_snapshotVol > 0.01 ? _snapshotVol : targetVolFromVideo())
-          : 1;
+        // Always use live video volume as source of truth (reflects localStorage)
+        const targetVol = (coupledMode && audio) ? targetVolFromVideo() : 1;
 
         // Check if audio is already playing (retry call after successful first play).
         const audioAlreadyPlaying = coupledMode && audio && !audio.paused;
