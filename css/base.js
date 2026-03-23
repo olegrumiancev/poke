@@ -1124,8 +1124,10 @@ _seekPostTimers: []
     function _doSingleCleanPlay(gen) {
       if (_recoveryGen !== gen) return;
       _playAttempts++;
-      // During startup recovery, commit play intent so full machinery activates
-      if (state.startupPhase || wantsStartupAutoplay()) {
+      // During startup recovery, commit play intent — but NEVER override user pause
+      if ((state.startupPhase || wantsStartupAutoplay()) &&
+          !state.userGesturePauseIntent && state.userPauseIntentPresetAt === 0 &&
+          !userPauseLockActive() && !MediumQualityManager.intentPaused) {
         state.intendedPlaying = true;
         state.bufferHoldIntendedPlaying = true;
       }
@@ -3685,6 +3687,13 @@ _seekPostTimers: []
     state.strictBufferHoldFrames = 0;
     state.strictBufferHoldConfirmed = false;
   }
+  // Safe audio time write — guarantees _allowAudioTimeWrite is always reset
+  function safeWriteAudioTime(t) {
+    if (!audio || !isFinite(t) || t < 0) return;
+    state._allowAudioTimeWrite = true;
+    try { audio.currentTime = t; } catch {}
+    state._allowAudioTimeWrite = false;
+  }
   function clearAudioPauseLocks() {
     state.isProgrammaticAudioPause = false;
     state.videoStallAudioPaused = false;
@@ -3692,7 +3701,7 @@ _seekPostTimers: []
     state.stallAudioPausedSince = 0;
     state.audioPauseUntil = 0;
     state.audioEventsSquelchedUntil = 0;
-    state.audioPausedSince = 0;
+    // NOTE: intentionally NOT clearing audioPausedSince — it's used for stuck-detection
   }
   function setPauseEventGuard(ms = 1000) {
     state.pauseEventGuardUntil = Math.max(state.pauseEventGuardUntil, now() + Math.max(0, Number(ms) || 0));
@@ -5884,18 +5893,14 @@ _seekPostTimers: []
       // CRITICAL: never seek audio to near-0 when it's well into the track
       const wouldRestart = vtAtFinalize < 0.5 && atCurrent > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
       if (!wouldRestart && Math.abs(atCurrent - vtAtFinalize) > 0.05) {
-        state._allowAudioTimeWrite = true;
-        try { audio.currentTime = vtAtFinalize; } catch {}
-        state._allowAudioTimeWrite = false;
+        safeWriteAudioTime(vtAtFinalize);
         const _fSeekId = state.seekId;
         setTimeout(() => {
           if (state.seekId !== _fSeekId && state.seeking) return;
           const _at = Number(audio.currentTime) || 0;
           const _wouldRestart2 = vtAtFinalize < 0.5 && _at > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
           if (!_wouldRestart2 && Math.abs(_at - vtAtFinalize) > 0.2) {
-            state._allowAudioTimeWrite = true;
-            try { audio.currentTime = vtAtFinalize; } catch {}
-            state._allowAudioTimeWrite = false;
+            safeWriteAudioTime(vtAtFinalize);
           }
         }, 120);
       }
@@ -5981,9 +5986,7 @@ _seekPostTimers: []
       const at2 = Number(audio.currentTime) || 0;
       const _fsWouldRestart = vt2 < 0.5 && at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
       if (!_fsWouldRestart && Math.abs(at2 - vt2) > 0.05) {
-        state._allowAudioTimeWrite = true;
-        try { audio.currentTime = vt2; } catch {}
-        state._allowAudioTimeWrite = false;
+        safeWriteAudioTime(vt2);
       }
     }
 
@@ -6055,11 +6058,7 @@ _seekPostTimers: []
               const _sgWouldRestart = vt < 0.5 && _sgAt > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
               if (!_sgWouldRestart) {
                 const _bufAhead = bufferedAhead(audio, vt);
-                if (_bufAhead > 0.1) {
-                  state._allowAudioTimeWrite = true;
-                  try { audio.currentTime = vt; } catch {}
-                  state._allowAudioTimeWrite = false;
-                }
+                if (_bufAhead > 0.1) safeWriteAudioTime(vt);
               }
               // If not buffered, let runSync handle it via quietSeekAudio
             }
@@ -6067,9 +6066,7 @@ _seekPostTimers: []
           }
           if (!audio.paused || getVideoPaused()) return;
           clearAudioPauseLocks();
-          state._allowAudioTimeWrite = true;
-          try { if (isFinite(vt)) audio.currentTime = vt; } catch {}
-          state._allowAudioTimeWrite = false;
+          safeWriteAudioTime(vt);
           execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 })
           .then(ok => { if (ok) softUnmuteAudio(AUDIO_SAFE_FADE_DURATION_MS).catch(() => {}); })
           .catch(() => {});
@@ -8502,9 +8499,7 @@ _seekPostTimers: []
             const _seekAudioAt = Number(audio.currentTime) || 0;
             const _seekWouldRestart = seekTime < 0.5 && _seekAudioAt > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
             if (!_seekWouldRestart) {
-              state._allowAudioTimeWrite = true;
-              try { audio.currentTime = seekTime; } catch {}
-              state._allowAudioTimeWrite = false;
+              safeWriteAudioTime(seekTime);
             }
             // If audio was paused (from previous seek), restart it
             if (audio.paused && state.seekWantedPlaying) {
@@ -8552,23 +8547,15 @@ _seekPostTimers: []
           // Guard: never seek audio to near-0 when it's well into playback
           const _wouldRestart = newTime < 0.5 && _curAudioTime > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
           if (!_wouldRestart && Math.abs(_curAudioTime - newTime) > 0.2) {
-            state._allowAudioTimeWrite = true;
-            try { audio.currentTime = newTime; } catch {}
-            state._allowAudioTimeWrite = false;
+            safeWriteAudioTime(newTime);
           }
           const _seekedId = state.seekId;
           setTimeout(() => {
             if (state.seekId !== _seekedId) return;
             const _at2 = Number(audio.currentTime) || 0;
             const _wr2 = newTime < 0.5 && _at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
-            if (_wr2) return;
-            state._allowAudioTimeWrite = true;
-            try {
-              if (Math.abs(_at2 - newTime) > 0.15) audio.currentTime = newTime;
-            } catch {}
-            state._allowAudioTimeWrite = false;
+            if (!_wr2 && Math.abs(_at2 - newTime) > 0.15) safeWriteAudioTime(newTime);
           }, 80);
-          state._allowAudioTimeWrite = false;
         }
         state.driftStableFrames = 0;
         state.lastDrift = 0;
@@ -9132,10 +9119,8 @@ _seekPostTimers: []
         state.audioEverStarted = true;
         return;
       }
-      if (state.startupKickInFlight) {
-        // The startup kick is running playTogether which already handles audio startup
-        // via execProgrammaticAudioPlay. Competing with it causes extra play/pause events
-        // and increment the rapid-play-pause counter. Back off significantly.
+      if (state.startupKickInFlight || NotMakePlayBackFixingNoticable.isRecovering()) {
+        // Startup kick or NMPBFN recovery owns play(). Don't compete.
         state.audioStartupPlayRetries++;
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 4);
         return;
@@ -9147,8 +9132,11 @@ _seekPostTimers: []
         return;
       }
       try {
-        state.intendedPlaying = true;
-        state.bufferHoldIntendedPlaying = true;
+        if (!state.userGesturePauseIntent && state.userPauseIntentPresetAt === 0 &&
+            !userPauseLockActive() && !MediumQualityManager.intentPaused) {
+          state.intendedPlaying = true;
+          state.bufferHoldIntendedPlaying = true;
+        }
         squelchAudioEvents(400);
         const p = audio.play();
         if (p && p.then) {
