@@ -236,6 +236,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function isLoopDesired() {
     // Explicit no-loop override via query param or global
     if (qs.get("loop") === "0" || qs.get("loop") === "false" || window.forceNoLoop === true) return false;
+    // Check native element loop property directly — if explicitly set to false, respect it
+    try { if (videoEl.loop === false && !_userExplicitLoop) return false; } catch {}
     return _userExplicitLoop ||
     qs.get("loop") === "1" ||
     qs.get("loop") === "true" ||
@@ -252,47 +254,65 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- loop prevention
   function enforceNoLoop(el) {
     if (!el) return;
-    // Only strip loop if user doesn't want it
-    if (!isLoopDesired()) {
-      try { el.loop = false; el.removeAttribute("loop"); } catch {}
+    // Get the NATIVE prototype descriptor before overriding
+    const nativeDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "loop");
+    const nativeSet = nativeDesc && nativeDesc.set;
+    const nativeGet = nativeDesc && nativeDesc.get;
+
+    // Force native loop=false via prototype setter (bypasses any JS override)
+    function forceNativeLoopFalse() {
+      try {
+        if (nativeSet) nativeSet.call(el, false);
+        el.removeAttribute("loop");
+      } catch {}
     }
+
+    // Set native loop state FIRST, before installing property descriptor
+    if (!isLoopDesired()) forceNativeLoopFalse();
+
+    // Install property descriptor that intercepts JS-level loop access
     try {
-      const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "loop") ||
-                   Object.getOwnPropertyDescriptor(el, "loop");
-      if (desc) {
-        Object.defineProperty(el, "loop", {
-          get() { return isLoopDesired(); },
-          set(v) {
-            // Block ALL runtime loop changes — only initial HTML attribute matters.
-            // This prevents browser extensions, ad scripts, or Video.js internals
-            // from accidentally enabling loop during normal playback.
-            if (!v && !isLoopDesired()) {
-              _userExplicitLoop = false;
-              if (desc.set) desc.set.call(el, false);
-              try { el.removeAttribute("loop"); } catch {}
-            }
-            // If code wants to enable loop, only allow if it was already desired
-            if (v && isLoopDesired()) {
-              if (desc.set) desc.set.call(el, true);
-            }
-            // Otherwise: silently ignore the set (don't change _userExplicitLoop)
-          },
-          configurable: true
-        });
-      }
-    } catch {}
-    try {
-      const obs = new MutationObserver(mutations => {
-        for (const m of mutations) {
-          if (m.type === "attributes" && m.attributeName === "loop") {
-            if (el.hasAttribute("loop") && !isLoopDesired()) {
-              el.removeAttribute("loop");
-            }
+      Object.defineProperty(el, "loop", {
+        get() { return isLoopDesired(); },
+        set(v) {
+          if (v && !isLoopDesired()) {
+            // Something is trying to enable loop when it shouldn't be — block it
+            forceNativeLoopFalse();
+            return;
           }
+          if (!v) {
+            _userExplicitLoop = false;
+            forceNativeLoopFalse();
+            return;
+          }
+          // v=true and isLoopDesired()=true — allow
+          if (nativeSet) nativeSet.call(el, true);
+        },
+        configurable: true
+      });
+    } catch {}
+
+    // MutationObserver catches HTML attribute changes
+    try {
+      const obs = new MutationObserver(() => {
+        if (el.hasAttribute("loop") && !isLoopDesired()) {
+          el.removeAttribute("loop");
+          if (nativeSet) nativeSet.call(el, false);
         }
       });
       obs.observe(el, { attributes: true, attributeFilter: ["loop"] });
     } catch {}
+
+    // Periodic enforcement — some browsers/extensions re-enable loop
+    // Check every 5s and force-disable if needed
+    setInterval(() => {
+      if (!isLoopDesired()) {
+        try {
+          const actualLoop = nativeGet ? nativeGet.call(el) : false;
+          if (actualLoop) forceNativeLoopFalse();
+        } catch {}
+      }
+    }, 5000);
   }
   enforceNoLoop(videoEl);
   if (audio) enforceNoLoop(audio);
@@ -378,6 +398,7 @@ document.addEventListener("DOMContentLoaded", () => {
     isProgrammaticAudioPause: false,
     audioEventsSquelchedUntil: 0,
     audioPlayInFlight: null,
+    _audioPlayInFlightAt: 0,
     audioPlayGeneration: 0,
     audioPlayUntil: 0,
     audioPauseUntil: 0,
@@ -826,8 +847,9 @@ _seekPostTimers: []
   function _bgKeepaliveTick() {
     if (!state.intendedPlaying) return;
     if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
-    if (state.restarting || state.seeking || state.seekBuffering || state.strictBufferHold) return;
-    // Only block keepalive during RECOVERING (NMPBFN owns play), not SETTLING
+    if (state.restarting || state.seeking || state.seekBuffering) return;
+    // In foreground, respect buffer hold. In background, keepalive must fire to keep media alive.
+    if (state.strictBufferHold && document.visibilityState !== "hidden") return;
     if (NotMakePlayBackFixingNoticable.isRecovering()) return;
     // Keep media alive when: hidden, immune (tab transition), or blurred
     // (alt-tab without full tab switch — window loses focus but stays "visible").
@@ -1545,7 +1567,8 @@ _seekPostTimers: []
     function _shouldRun() {
       if (!coupledMode || !audio || !state.intendedPlaying) return false;
       if (state.seeking || state.seekBuffering || state.restarting) return false;
-      if (state.strictBufferHold || state.videoWaiting || state.audioWaiting) return false;
+      // NOTE: intentionally NOT blocking during videoWaiting/audioWaiting/strictBufferHold.
+      // The watchdog must run during stalls to detect stuck stall state.
       if (state.startupPhase) return false;
       if (startupSettleActive()) return false;
       if (NotMakePlayBackFixingNoticable.isRecovering()) return false;
@@ -1563,9 +1586,39 @@ _seekPostTimers: []
       const vPaused = getVideoPaused();
       const aPaused = !!audio.paused;
 
-      // Rule 1: Audio should not be paused when video is playing
-      if (!vPaused && aPaused && state.intendedPlaying && !state.videoStallAudioPaused &&
-          t > state.stallAudioResumeHoldUntil && t > state.audioPauseUntil) {
+      // Rule 0: Detect and clear STUCK stall state.
+      // If video is playing (not paused) but videoWaiting/videoStallAudioPaused are still set,
+      // the stall recovery failed to clear them. Force-clear after 3s to unstick audio.
+      if (!vPaused && state.intendedPlaying) {
+        const stallAge = state.stallAudioPausedSince > 0 ? t - state.stallAudioPausedSince : Infinity;
+        if ((state.videoStallAudioPaused || state.videoWaiting) && stallAge > 2000) {
+          state.videoWaiting = false;
+          state.videoStallAudioPaused = false;
+          state.stallAudioPausedSince = 0;
+          state.stallAudioResumeHoldUntil = 0;
+          state.audioPauseUntil = 0;
+          clearBufferHold();
+        }
+        // Clear stuck stallAudioResumeHoldUntil — either expired or >1.5s old
+        if (state.stallAudioResumeHoldUntil > 0 && t > state.stallAudioResumeHoldUntil) {
+          state.stallAudioResumeHoldUntil = 0;
+        }
+        // Clear stuck audioPlayInFlight (promise hung for >5s)
+        if (state.audioPlayInFlight && state._audioPlayInFlightAt > 0 &&
+            (t - state._audioPlayInFlightAt) > 5000) {
+          state.audioPlayInFlight = null;
+        }
+      }
+
+      // Rule 1: Audio should not be paused when video is playing (and not buffering)
+      if (!vPaused && aPaused && state.intendedPlaying &&
+          t > state.stallAudioResumeHoldUntil && t > state.audioPauseUntil &&
+          !state.strictBufferHold && !state.videoWaiting) {
+        // Even if videoStallAudioPaused is set, if video is playing and stall is old, force restart
+        if (state.videoStallAudioPaused) {
+          state.videoStallAudioPaused = false;
+          state.stallAudioPausedSince = 0;
+        }
         safeSetAudioTime(vt);
         execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
         _schedule(); return;
@@ -4508,28 +4561,37 @@ _seekPostTimers: []
   }
 
   function timeInBuffered(media, t) {
-    try {
-      const br = media.buffered;
-      if (!br || br.length === 0 || !isFinite(t)) return false;
-      for (let i = 0; i < br.length; i++) {
-        const s = br.start(i) - EPS;
-        const e = br.end(i) + EPS;
-        if (t >= s && t <= e) return true;
-      }
-    } catch {}
+    if (!media || !isFinite(t)) return false;
+    const ranges = _getCachedBuffered(media);
+    for (let i = 0; i < ranges.length; i++) {
+      const s = ranges[i][0] - EPS, e = ranges[i][1] + EPS;
+      if (t >= s && t <= e) return true;
+    }
     return false;
   }
 
-  function bufferedAhead(media, t) {
+  // Cached buffer range reads — media.buffered is a live DOM property that forces
+  // browser recomputation on every access. Cache for 100ms to reduce CPU on slow devices.
+  const _bufferCache = new WeakMap();
+  function _getCachedBuffered(media) {
+    const cached = _bufferCache.get(media);
+    const t = performance.now();
+    if (cached && (t - cached.at) < 100) return cached.ranges;
     try {
       const br = media.buffered;
-      if (!br || br.length === 0 || !isFinite(t)) return 0;
-      for (let i = 0; i < br.length; i++) {
-        const s = br.start(i) - EPS;
-        const e = br.end(i) + EPS;
-        if (t >= s && t <= e) return Math.max(0, e - t);
-      }
-    } catch {}
+      const ranges = [];
+      for (let i = 0; i < br.length; i++) ranges.push([br.start(i), br.end(i)]);
+      _bufferCache.set(media, { ranges, at: t });
+      return ranges;
+    } catch { return []; }
+  }
+  function bufferedAhead(media, t) {
+    if (!media || !isFinite(t)) return 0;
+    const ranges = _getCachedBuffered(media);
+    for (let i = 0; i < ranges.length; i++) {
+      const s = ranges[i][0] - EPS, e = ranges[i][1] + EPS;
+      if (t >= s && t <= e) return Math.max(0, e - t);
+    }
     return 0;
   }
 
@@ -4595,8 +4657,8 @@ _seekPostTimers: []
     // If these flags have been stuck for >8s, something went wrong; force-clear them
     // to prevent permanent audio disconnection.
     const stallAge = state.videoStallSince ? (now() - state.videoStallSince) : 0;
-    if (stallAge > 8000) {
-      // Safety release — stall flags stuck too long, force-clear to reconnect audio
+    if (stallAge > 4000) {
+      // Safety release — stall flags stuck >4s, force-clear to reconnect audio
       state.videoWaiting = false;
       state.videoStallAudioPaused = false;
       state.stallAudioResumeHoldUntil = 0;
@@ -4759,9 +4821,14 @@ _seekPostTimers: []
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // Never start audio during seeking, seek-buffering, or strict buffer hold
+    // Never start audio during seeking or seek-buffering — unconditional.
     if (state.seeking || state.seekBuffering) return false;
-    if (state.strictBufferHold && !force) return false;
+    // Block during buffer hold — but allow during startup (audio should start with video)
+    if (state.strictBufferHold && state.audioEverStarted) return false;
+    // Never start audio while video is actively buffering — this is the #1 cause
+    // of audio playing while video is frozen. Allow during startup first kick and background.
+    if (state.videoWaiting && audio.paused && !isHiddenBackground() &&
+        state.audioEverStarted && !state.startupPhase) return false;
 
     // Don't start audio if video is paused — unless force is set (user play,
     // tab return, etc.) or we're in a recent user action window where video
@@ -4816,6 +4883,7 @@ _seekPostTimers: []
       // indefinitely (e.g. network stall during autoplay), which would block all future audio starts.
       const playTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error("audio-play-timeout")), 4000));
       state.audioPlayInFlight = Promise.race([Promise.resolve(p), playTimeout]);
+      state._audioPlayInFlightAt = now();
       state.audioPlayUntil = Math.max(state.audioPlayUntil, now() + Math.max(400, squelchMs));
       state.audioLastPlayPauseTs = now();
       state.stateChangeCooldownUntil = now() + STATE_CHANGE_COOLDOWN_MS;
@@ -7931,11 +7999,12 @@ _seekPostTimers: []
         state.bufferHoldIntendedPlaying = true;
       }
 
-      // SINGLE audio kick: video is confirmed playing. Start audio exactly once.
+      // SINGLE audio kick: video is confirmed playing. Start audio immediately.
+      // Don't gate on strictBufferHold/videoWaiting here — execProgrammaticAudioPlay
+      // handles that with startup awareness (allows first audio start).
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
-          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering() &&
-          !state.strictBufferHold) {
+          !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
         clearAudioPauseLocks();
         clearAudioForcePlayTimer(); // Stop forceAudioStartupPlay retries — we handle it
         const _vtNow = safeGetVideoTime();
@@ -7943,7 +8012,7 @@ _seekPostTimers: []
         try { if (audio.muted && !state.userMutedAudio) audio.muted = false; } catch {}
         execProgrammaticAudioPlay({ squelchMs: 400, force: true, minGapMs: 0 }).catch(() => {});
         state.audioEverStarted = true;
-        state.audioStartGraceUntil = now() + 800;
+        state.audioStartGraceUntil = now() + 400;
       }
 
       if (!state.firstPlayCommitted && !state.startupKickInFlight) {
@@ -8466,8 +8535,21 @@ _seekPostTimers: []
 
         clearSeekSyncFinalizeTimer();
         clearSeekWatchdog();
-        // Get seek target from multiple sources — video.js currentTime() may
-        // not reflect the target yet during 'seeking', so also check the native element.
+
+        // Auto-loop detection: if browser natively looped (seek to ~0 right after
+        // being near the end), and looping is NOT desired, stop playback.
+        if (!isLoopDesired() && state.firstPlayCommitted && !state.restarting) {
+          const _dur = (() => { try { return Number(video.duration()) || 0; } catch { return 0; } })();
+          const _prevVt = state.lastKnownGoodVT || 0;
+          const _nowVt = Number(videoEl.currentTime) || 0;
+          if (_dur > 1 && _prevVt > _dur - 2 && _nowVt < 1) {
+            // Browser auto-looped — this is unwanted. Stop everything.
+            hardStop();
+            return;
+          }
+        }
+
+        // Get seek target from multiple sources
         const vjsTime = Number(video.currentTime());
         const nativeTime = Number(videoEl.currentTime);
         const innerEl = video?.el?.()?.querySelector?.("video");
@@ -8897,7 +8979,15 @@ _seekPostTimers: []
         // Don't stop keepalive immediately — keep it running during immunity
         // so it catches any late browser pauses. Stop after immunity expires.
         setTimeout(() => {
-          if (!isTabReturnImmune()) stopBgAudioKeepalive();
+          // Only stop keepalive if immunity expired AND video is confirmed playing
+          if (!isTabReturnImmune() && !getVideoPaused() && state.intendedPlaying) {
+            stopBgAudioKeepalive();
+          } else if (!isTabReturnImmune()) {
+            // Video still not playing — retry in 2s
+            setTimeout(() => {
+              if (!isTabReturnImmune() && document.visibilityState === "visible") stopBgAudioKeepalive();
+            }, 2000);
+          }
         }, 3500);
         // Let the tab-return manager handle immunity, intercept, rapid counter
         // resets, alt-tab flag clearing, instant play, and bbtab/wakeup retry.
