@@ -606,21 +606,22 @@ _seekPostTimers: []
   }
 
   // CONTINUOUS ENFORCEMENT: if audio is playing but video is stalled/waiting/paused,
-  // immediately mute audio. This catches cases where audio was already playing when
+  // pause audio immediately. This catches cases where audio was already playing when
   // video entered a stall state. Runs via requestAnimationFrame for minimal overhead.
   let _audioEnforcerActive = false;
   function _audioBufferEnforcer() {
     if (!coupledMode || !audio || !_audioEnforcerActive) return;
-    // Only enforce in foreground, post-startup
     if (document.visibilityState === "hidden" || state.startupPhase || !state.audioEverStarted) {
       requestAnimationFrame(_audioBufferEnforcer);
       return;
     }
-    if (!audio.paused && state.intendedPlaying) {
-      const shouldBeSilent = state.videoWaiting || state.strictBufferHold ||
-        (state.videoStallAudioPaused && !state.seeking);
-      if (shouldBeSilent && audio.volume > 0.01) {
-        try { audio.volume = 0; } catch {}
+    if (!audio.paused && state.intendedPlaying && !state.seeking && !state.seekBuffering) {
+      const shouldStop = state.videoWaiting || state.strictBufferHold ||
+        (state.videoStallAudioPaused);
+      if (shouldStop) {
+        state.isProgrammaticAudioPause = true;
+        try { audio.volume = 0; audio.pause(); } catch {}
+        setTimeout(() => { state.isProgrammaticAudioPause = false; }, 200);
       }
     }
     requestAnimationFrame(_audioBufferEnforcer);
