@@ -275,18 +275,15 @@ document.addEventListener("DOMContentLoaded", () => {
       Object.defineProperty(el, "loop", {
         get() { return isLoopDesired(); },
         set(v) {
-          if (v && !isLoopDesired()) {
-            // Something is trying to enable loop when it shouldn't be — block it
-            forceNativeLoopFalse();
-            return;
-          }
-          if (!v) {
+          if (v) {
+            // User/code wants loop enabled — honor it
+            _userExplicitLoop = true;
+            if (nativeSet) nativeSet.call(el, true);
+          } else {
+            // User/code wants loop disabled — honor it
             _userExplicitLoop = false;
             forceNativeLoopFalse();
-            return;
           }
-          // v=true and isLoopDesired()=true — allow
-          if (nativeSet) nativeSet.call(el, true);
         },
         configurable: true
       });
@@ -3244,6 +3241,7 @@ _seekPostTimers: []
 
 
   const EPS = 1.0;
+  const HAVE_CURRENT_DATA = 2;
   const HAVE_FUTURE_DATA = 3;
   const HAVE_ENOUGH_DATA = 4;
   const STRICT_BUFFER_AHEAD_SEC = 0.25;
@@ -7887,7 +7885,7 @@ _seekPostTimers: []
         if (_dur > 1 && _ct > _dur - 2.5) _nearEnd = true;
       } catch {}
       // During NMPBFN recovery/settling, don't stall-pause audio — NMPBFN owns playback
-      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(now() < state.seekCooldownUntil) && !(state.tabReturnImmuneUntil > now()) && !_nearEnd && !NotMakePlayBackFixingNoticable.isActive() && !(now() < state.audioStartGraceUntil)) {
+      if (coupledMode && audio && !audio.paused && !state.seeking && !state.seekResumeInFlight && !state.seekBuffering && !(now() < state.seekCooldownUntil) && !(state.tabReturnImmuneUntil > now()) && !_nearEnd && !NotMakePlayBackFixingNoticable.isRecovering() && !(now() < state.audioStartGraceUntil)) {
         // Mute audio on stall, then pause after 100ms if stall persists
         try { audio.volume = 0; } catch {}
         if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
@@ -9224,13 +9222,11 @@ _seekPostTimers: []
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 4);
         return;
       }
-      if (state.strictBufferHold || state.videoWaiting) {
-        state.audioStartupPlayRetries++;
-        state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS * 2);
-        return;
-      }
-      const vrs = getVideoReadyState();
-      if (vrs < 2) {
+      // Don't wait for video readyState or buffer hold during startup —
+      // start audio as soon as AUDIO has data. Waiting for video delays audio
+      // by seconds on slow connections, causing the "audio starts late" bug.
+      const ars = Number(audio.readyState || 0);
+      if (ars < 2) {
         state.audioStartupPlayRetries++;
         state.audioForcePlayTimer = setTimeout(tryPlay, AUDIO_STARTUP_PLAY_RETRY_MS);
         return;
