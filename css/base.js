@@ -594,32 +594,33 @@ _seekPostTimers: []
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
       if (state.seeking || state.seekBuffering) return Promise.resolve();
-      // Block during video buffering/stall/not-ready in foreground (post-startup)
-      if (document.visibilityState !== "hidden" && state.audioEverStarted && !state.startupPhase) {
+      // Block during video buffering/stall — NO EXCEPTIONS in foreground
+      if (document.visibilityState !== "hidden") {
         if (state.videoWaiting || state.strictBufferHold) return Promise.resolve();
-        // Also block if video is paused and we didn't intend to play
-        const vn = getVideoNode();
-        if (vn && vn.paused && !state.intendedPlaying) return Promise.resolve();
       }
       return _origAudioPlay();
     };
   }
 
-  // CONTINUOUS ENFORCEMENT: if audio is playing but video is stalled/waiting/paused,
-  // pause audio immediately. This catches cases where audio was already playing when
-  // video entered a stall state. Runs via requestAnimationFrame for minimal overhead.
+  // CONTINUOUS ENFORCEMENT: if audio is playing but video is not ready to play,
+  // pause audio. NO EXCEPTIONS. Runs every frame via RAF.
   let _audioEnforcerActive = false;
   function _audioBufferEnforcer() {
     if (!coupledMode || !audio || !_audioEnforcerActive) return;
-    if (document.visibilityState === "hidden" || state.startupPhase || !state.audioEverStarted) {
+    if (document.visibilityState === "hidden") {
       requestAnimationFrame(_audioBufferEnforcer);
       return;
     }
-    if (!audio.paused && state.intendedPlaying && !state.seeking && !state.seekBuffering) {
-      const shouldStop = state.videoWaiting || state.strictBufferHold ||
-        (state.videoStallAudioPaused);
-      if (shouldStop) {
+    // If audio is playing, check if video is in a state where audio should also play
+    if (!audio.paused && !state.seeking && !state.seekBuffering && !state.restarting) {
+      const vn = getVideoNode();
+      const videoReady = vn && !vn.paused && (Number(vn.readyState || 0) >= HAVE_FUTURE_DATA);
+      const videoBuffering = state.videoWaiting || state.strictBufferHold;
+      // Audio should stop if: video is buffering OR video isn't ready to produce frames
+      if (videoBuffering || (!videoReady && state.audioEverStarted)) {
         state.isProgrammaticAudioPause = true;
+        state.videoStallAudioPaused = true;
+        state.stallAudioPausedSince = state.stallAudioPausedSince || now();
         try { audio.volume = 0; audio.pause(); } catch {}
         setTimeout(() => { state.isProgrammaticAudioPause = false; }, 200);
       }
@@ -3370,12 +3371,19 @@ _seekPostTimers: []
         const vol = parseFloat(savedVol);
         if (!isNaN(vol) && vol >= 0 && vol <= 1) {
           video.volume(vol);
+          // Apply to audio element immediately — don't wait for volumechange event
+          if (coupledMode && audio) {
+            try { audio.volume = vol; } catch {}
+          }
         }
       }
       const savedMuted = localStorage.getItem(MUTED_STORAGE_KEY);
       if (savedMuted !== null) {
         const muted = savedMuted === "true";
         video.muted(muted);
+        if (coupledMode && audio) {
+          try { audio.muted = muted; } catch {}
+        }
       }
     } catch {}
   }
@@ -9355,13 +9363,21 @@ _seekPostTimers: []
   setupUserPauseIntentDetection();
   // Load saved volume BEFORE binding events — prevents autoplay at default volume
   loadSavedVolume();
-  // Sync audio element volume to match video immediately
+  // Sync audio element volume to match video immediately after loading saved volume
   if (coupledMode && audio) {
     try {
       const _initTarget = targetVolFromVideo();
       audio.volume = clamp01(_initTarget);
-      if (state.userMutedAudio) audio.muted = true;
+      if (state.userMutedAudio || video.muted()) audio.muted = true;
     } catch {}
+    // Re-apply after a short delay in case video.js overrides our volume during init
+    setTimeout(() => {
+      try {
+        loadSavedVolume();
+        const _t = targetVolFromVideo();
+        if (Math.abs(audio.volume - _t) > 0.05) audio.volume = clamp01(_t);
+      } catch {}
+    }, 200);
   }
   setupMediaSession();
   bindCommonMediaEvents();
