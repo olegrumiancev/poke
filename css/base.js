@@ -594,9 +594,10 @@ _seekPostTimers: []
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
       if (state.seeking || state.seekBuffering) return Promise.resolve();
+      // Only enforce buffer gate AFTER audio has started once. During first startup,
+      // allow audio.play() through so it can start alongside video. The RAF manager
+      // will catch any issues post-startup.
       if (document.visibilityState !== "hidden" && state.audioEverStarted && state.firstPlayCommitted) {
-        // During seek cooldown, readyState drops briefly even for buffered seeks.
-        // Don't block audio during this transient window.
         const inSeekCooldown = now() < state.seekCooldownUntil;
         if (!inSeekCooldown) {
           const vn = getVideoNode();
@@ -608,65 +609,105 @@ _seekPostTimers: []
     };
   }
 
-  // --- MakeSureAudioIsntPlayingWhenVideoIsBuffering
-  // Checks REAL video element readyState every frame. Does NOT rely on state flags
-  // (videoWaiting etc.) which get cleared/set by event handlers and have gaps.
-  // If video readyState < HAVE_FUTURE_DATA (3), audio must be paused. Period.
+  // --- MakeSureAudioIsntPlayingWhenVideoIsBuffering (MSAIPWVIB)
+  // Checks REAL video element readyState every frame. Does NOT rely on state flags.
+  // If video can't produce frames, audio MUST be stopped. Zero tolerance.
   const MakeSureAudioIsntPlayingWhenVideoIsBuffering = (() => {
     let _active = false;
+    let _videoReadySince = 0; // timestamp when video readyState first reached HAVE_FUTURE_DATA
+    let _lastPauseAt = 0;    // don't spam pause() calls
+    const READY_CONFIRM_MS = 150; // video must be ready for 150ms before audio can restart
+
+    function isVideoTrulyReady() {
+      const vn = getVideoNode();
+      if (!vn) return false;
+      const vrs = Number(vn.readyState || 0);
+      if (vn.paused) return false;
+      if (vrs < HAVE_FUTURE_DATA) { _videoReadySince = 0; return false; }
+      // Video readyState is >= 3. Has it been stable for READY_CONFIRM_MS?
+      if (!_videoReadySince) _videoReadySince = now();
+      return (now() - _videoReadySince) >= READY_CONFIRM_MS;
+    }
+
+    function _forceStopAudio() {
+      const t = now();
+      // Don't spam pause() — once per 150ms max
+      if (t - _lastPauseAt < 150) return;
+      _lastPauseAt = t;
+      state.isProgrammaticAudioPause = true;
+      state.videoStallAudioPaused = true;
+      state.stallAudioPausedSince = state.stallAudioPausedSince || t;
+      state.bufferHoldIntendedPlaying = state.intendedPlaying;
+      try { audio.volume = 0; } catch {}
+      try { if (!audio.paused) audio.pause(); } catch {}
+      setTimeout(() => { state.isProgrammaticAudioPause = false; }, 300);
+    }
+
     function _tick() {
       if (!_active || !coupledMode || !audio) return;
-      if (document.visibilityState === "hidden" || state.seeking || state.seekBuffering || state.restarting) {
-        requestAnimationFrame(_tick);
-        return;
-      }
-      // Don't enforce during seek cooldown — readyState drops briefly after seek even for buffered positions
-      if (now() < state.seekCooldownUntil) {
-        requestAnimationFrame(_tick);
-        return;
-      }
-      if (!audio.paused) {
-        const vn = getVideoNode();
-        const vrs = vn ? Number(vn.readyState || 0) : 0;
-        const videoPaused = vn ? vn.paused : true;
-        const videoNotReady = vrs < HAVE_FUTURE_DATA || videoPaused;
-        if (videoNotReady && state.audioEverStarted && state.firstPlayCommitted && state.intendedPlaying) {
-          state.isProgrammaticAudioPause = true;
-          state.videoStallAudioPaused = true;
-          state.stallAudioPausedSince = state.stallAudioPausedSince || now();
-          try { audio.volume = 0; audio.pause(); } catch {}
-          setTimeout(() => { state.isProgrammaticAudioPause = false; }, 200);
+      // Skip in background (keepalive manages bg playback)
+      if (document.visibilityState === "hidden") { requestAnimationFrame(_tick); return; }
+      // Skip during seeking (seek machinery handles sync)
+      if (state.seeking || state.seekBuffering || state.restarting) { requestAnimationFrame(_tick); return; }
+      // Skip during seek cooldown (readyState drops briefly after seek)
+      if (now() < state.seekCooldownUntil) { requestAnimationFrame(_tick); return; }
+      // Skip during NMPBFN recovery (it owns playback)
+      if (NotMakePlayBackFixingNoticable.isRecovering()) { requestAnimationFrame(_tick); return; }
+
+      // CORE CHECK: is audio playing but video not truly ready?
+      if (!audio.paused && state.audioEverStarted && state.firstPlayCommitted) {
+        if (!isVideoTrulyReady()) {
+          _forceStopAudio();
         }
       }
+
+      // REVERSE CHECK: audio is paused due to stall, video is now ready — clear stall flag
+      // (actual audio restart is handled by armResumeAfterBuffer / video.on("playing") / runSync)
+      if (audio.paused && state.videoStallAudioPaused && isVideoTrulyReady()) {
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+        state.stallAudioResumeHoldUntil = 0;
+      }
+
       requestAnimationFrame(_tick);
     }
-    function start() { if (!_active) { _active = true; requestAnimationFrame(_tick); } }
+
+    function start() { if (!_active) { _active = true; _videoReadySince = 0; requestAnimationFrame(_tick); } }
     function stop() { _active = false; }
-    return { start, stop };
+    function onSeekStart() { _videoReadySince = 0; }
+    return { start, stop, onSeekStart, isVideoTrulyReady };
   })();
 
-  // --- MakeSureVIDEOIsntPlayingWhenAudiosBuffering
-  // Same concept but for audio buffering. If audio readyState < HAVE_FUTURE_DATA,
-  // pause video so they stay in sync.
+  // --- MakeSureVIDEOIsntPlayingWhenAudiosBuffering (MSVIPWAB)
+  // If audio readyState < HAVE_FUTURE_DATA while video plays, pause video.
   const MakeSureVIDEOIsntPlayingWhenAudiosBuffering = (() => {
     let _active = false;
+    let _audioReadySince = 0;
+    const READY_CONFIRM_MS = 150;
+
+    function isAudioTrulyReady() {
+      if (!audio) return true;
+      const ars = Number(audio.readyState || 0);
+      if (ars < HAVE_FUTURE_DATA) { _audioReadySince = 0; return false; }
+      if (!_audioReadySince) _audioReadySince = now();
+      return (now() - _audioReadySince) >= READY_CONFIRM_MS;
+    }
+
     function _tick() {
       if (!_active || !coupledMode || !audio) return;
       if (document.visibilityState === "hidden" || state.seeking || state.seekBuffering || state.restarting) {
-        requestAnimationFrame(_tick);
-        return;
+        requestAnimationFrame(_tick); return;
       }
-      const ars = Number(audio.readyState || 0);
+      if (now() < state.seekCooldownUntil) { requestAnimationFrame(_tick); return; }
+
       const vn = getVideoNode();
-      if (vn && !vn.paused && ars < HAVE_FUTURE_DATA && state.audioEverStarted &&
+      if (vn && !vn.paused && !isAudioTrulyReady() && state.audioEverStarted &&
           state.firstPlayCommitted && state.intendedPlaying) {
-        // Audio not ready — pause video to keep them in sync
         if (!state.audioStallVideoPaused) {
           state.audioStallVideoPaused = true;
           execProgrammaticVideoPause();
         }
-      } else if (state.audioStallVideoPaused && ars >= HAVE_FUTURE_DATA) {
-        // Audio recovered — resume video
+      } else if (state.audioStallVideoPaused && isAudioTrulyReady()) {
         state.audioStallVideoPaused = false;
         if (vn && vn.paused && state.intendedPlaying && !userPauseLockActive()) {
           execProgrammaticVideoPlay();
@@ -674,9 +715,11 @@ _seekPostTimers: []
       }
       requestAnimationFrame(_tick);
     }
-    function start() { if (!_active) { _active = true; requestAnimationFrame(_tick); } }
+
+    function start() { if (!_active) { _active = true; _audioReadySince = 0; requestAnimationFrame(_tick); } }
     function stop() { _active = false; }
-    return { start, stop };
+    function onSeekStart() { _audioReadySince = 0; }
+    return { start, stop, onSeekStart, isAudioTrulyReady };
   })();
 
   if (coupledMode && audio) {
@@ -3396,7 +3439,7 @@ _seekPostTimers: []
   // Minimum readyState the VIDEO element must report before audio can resume after a stall.
   // HAVE_FUTURE_DATA (3) means the browser has decoded enough to play for at least a moment.
   // We do NOT use bufferedAhead here — readyState is more reliable and faster to become true.
-  const MIN_STALL_VIDEO_RS = 3; // HAVE_FUTURE_DATA
+  const MIN_STALL_VIDEO_RS = 4; // HAVE_ENOUGH_DATA — require full buffer before restarting audio
   // If videoStallAudioPaused has been set for this long but video is playing fine, force-clear.
   const STALL_WATCHDOG_MS = 5000;
   // How often to run the stall-state watchdog check in the heartbeat
@@ -5427,9 +5470,9 @@ _seekPostTimers: []
       const checkTime = Math.max(vtNow, atNow || 0);
       const inBg = document.visibilityState === "hidden" || !isWindowFocused();
       const vNode = getVideoNode();
-      // Primary gate: readyState ≥ HAVE_FUTURE_DATA (3) — more reliable than bufferedAhead
+      // Primary gate: readyState ≥ HAVE_ENOUGH_DATA (4) — ensures stable buffer before resume
       const vRS = Number(vNode.readyState || 0);
-      const videoReady = vRS >= HAVE_FUTURE_DATA;
+      const videoReady = vRS >= HAVE_ENOUGH_DATA;
       const ready = inBg
       ? (canPlayAt(vNode, checkTime) && canPlayAt(audio, checkTime))
       : (videoReady && bothPlayableAt(checkTime));
@@ -8618,6 +8661,8 @@ _seekPostTimers: []
         state.seeking = true;
         state._seekStartedAt = performance.now();
         try { MakeSureAudioIsNotCuttingOrWeird.onSeekStart(); } catch {}
+        try { MakeSureAudioIsntPlayingWhenVideoIsBuffering.onSeekStart(); } catch {}
+        try { MakeSureVIDEOIsntPlayingWhenAudiosBuffering.onSeekStart(); } catch {}
         state.seekWantedPlaying = state.intendedPlaying;
         state.playRequestedDuringSeek = state.intendedPlaying;
         state.seekCompleted = false;
