@@ -588,11 +588,19 @@ _allowAudioTimeWrite: false,
 _seekPostTimers: []
   };
 
-  // Gate audio.play() — block during seeking/seekBuffering so nothing can restart audio mid-seek.
+  // Gate audio.play() — the SINGLE definitive gate for ALL audio play attempts.
+  // Every audio.play() call in the entire player goes through this wrapper.
   if (audio && typeof audio.play === "function") {
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
+      // Block during seeking
       if (state.seeking || state.seekBuffering) return Promise.resolve();
+      // Block during video buffering — audio must NEVER play while video is frozen.
+      // Only exception: background tab (keepalive needs to fire) and first startup kick.
+      if (state.videoWaiting && document.visibilityState !== "hidden" &&
+          state.audioEverStarted && !state.startupPhase) {
+        return Promise.resolve();
+      }
       return _origAudioPlay();
     };
   }
@@ -4215,6 +4223,8 @@ _seekPostTimers: []
 
   async function softUnmuteAudio(ms = AUDIO_SAFE_FADE_DURATION_MS) {
     if (!audio) return;
+    // Never restore audio volume while video is buffering — audio should stay silent
+    if (state.videoWaiting && state.videoStallAudioPaused) return;
     const target = targetVolFromVideo();
     if (Math.abs(clamp01(audio.volume) - target) < 0.02 && !state.audioFading) return;
     state.audioFading = true;
@@ -4394,7 +4404,15 @@ _seekPostTimers: []
 
   function safeSetCT(media, t) {
     try {
-      if (media && isFinite(t) && t >= 0) media.currentTime = t;
+      if (!media || !isFinite(t) || t < 0) return;
+      // Prevent unwanted restart: never seek video to near-0 after first play
+      // unless explicitly restarting (loop) or user-initiated seek
+      if (t < 0.5 && state.firstPlayCommitted && !state.restarting &&
+          !isLoopDesired() && (Number(media.currentTime) || 0) > 2 &&
+          !(state.seeking && state.pendingSeekTarget != null && state.pendingSeekTarget < 0.5)) {
+        return; // block unwanted restart
+      }
+      media.currentTime = t;
     } catch {}
   }
 
@@ -6494,6 +6512,18 @@ _seekPostTimers: []
     if (!isFinite(vtRaw) || !isFinite(atRaw)) {
       scheduleSync(); return;
     }
+
+    // Auto-loop detection: if video position jumped backward to near 0 from near
+    // the end, and loop is NOT desired, the browser auto-looped. Stop it.
+    if (!isLoopDesired() && state.firstPlayCommitted && !state.restarting && !state.seeking) {
+      const _dur = (() => { try { return Number(video.duration()) || 0; } catch { return 0; } })();
+      const _prev = state.lastKnownGoodVT || 0;
+      if (_dur > 1 && _prev > _dur - 2 && vtRaw < 1) {
+        hardStop();
+        return;
+      }
+    }
+
     let vt = vtRaw;
     let at = atRaw;
     const vPaused = getVideoPaused();
