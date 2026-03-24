@@ -593,16 +593,41 @@ _seekPostTimers: []
   if (audio && typeof audio.play === "function") {
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
-      // Block during seeking
       if (state.seeking || state.seekBuffering) return Promise.resolve();
-      // Block during video buffering — audio must NEVER play while video is frozen.
-      // Only exception: background tab (keepalive needs to fire) and first startup kick.
-      if (state.videoWaiting && document.visibilityState !== "hidden" &&
-          state.audioEverStarted && !state.startupPhase) {
-        return Promise.resolve();
+      // Block during video buffering/stall/not-ready in foreground (post-startup)
+      if (document.visibilityState !== "hidden" && state.audioEverStarted && !state.startupPhase) {
+        if (state.videoWaiting || state.strictBufferHold) return Promise.resolve();
+        // Also block if video is paused and we didn't intend to play
+        const vn = getVideoNode();
+        if (vn && vn.paused && !state.intendedPlaying) return Promise.resolve();
       }
       return _origAudioPlay();
     };
+  }
+
+  // CONTINUOUS ENFORCEMENT: if audio is playing but video is stalled/waiting/paused,
+  // immediately mute audio. This catches cases where audio was already playing when
+  // video entered a stall state. Runs via requestAnimationFrame for minimal overhead.
+  let _audioEnforcerActive = false;
+  function _audioBufferEnforcer() {
+    if (!coupledMode || !audio || !_audioEnforcerActive) return;
+    // Only enforce in foreground, post-startup
+    if (document.visibilityState === "hidden" || state.startupPhase || !state.audioEverStarted) {
+      requestAnimationFrame(_audioBufferEnforcer);
+      return;
+    }
+    if (!audio.paused && state.intendedPlaying) {
+      const shouldBeSilent = state.videoWaiting || state.strictBufferHold ||
+        (state.videoStallAudioPaused && !state.seeking);
+      if (shouldBeSilent && audio.volume > 0.01) {
+        try { audio.volume = 0; } catch {}
+      }
+    }
+    requestAnimationFrame(_audioBufferEnforcer);
+  }
+  if (coupledMode && audio) {
+    _audioEnforcerActive = true;
+    requestAnimationFrame(_audioBufferEnforcer);
   }
   // Gate audio.currentTime — during seeking, only allow writes from seek handlers
   // (they set _allowAudioTimeWrite=true). Safety: if state.seeking stuck >10s, force-clear.
