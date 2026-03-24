@@ -594,42 +594,93 @@ _seekPostTimers: []
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
       if (state.seeking || state.seekBuffering) return Promise.resolve();
-      // Block during video buffering/stall — NO EXCEPTIONS in foreground
       if (document.visibilityState !== "hidden") {
+        // Check REAL video readyState, not just flags. This is bulletproof.
+        const vn = getVideoNode();
+        const vrs = vn ? Number(vn.readyState || 0) : 0;
+        // Block if: video not ready (readyState < 3) AND audio has started before
+        // AND we're past startup. During first startup, allow both to start together.
+        if (vrs < HAVE_FUTURE_DATA && state.audioEverStarted && state.firstPlayCommitted) {
+          return Promise.resolve();
+        }
+        // Also block on flags as backup
         if (state.videoWaiting || state.strictBufferHold) return Promise.resolve();
       }
       return _origAudioPlay();
     };
   }
 
-  // CONTINUOUS ENFORCEMENT: if audio is playing but video is not ready to play,
-  // pause audio. NO EXCEPTIONS. Runs every frame via RAF.
-  let _audioEnforcerActive = false;
-  function _audioBufferEnforcer() {
-    if (!coupledMode || !audio || !_audioEnforcerActive) return;
-    if (document.visibilityState === "hidden") {
-      requestAnimationFrame(_audioBufferEnforcer);
-      return;
-    }
-    // If audio is playing, check if video is in a state where audio should also play
-    if (!audio.paused && !state.seeking && !state.seekBuffering && !state.restarting) {
-      const vn = getVideoNode();
-      const videoReady = vn && !vn.paused && (Number(vn.readyState || 0) >= HAVE_FUTURE_DATA);
-      const videoBuffering = state.videoWaiting || state.strictBufferHold;
-      // Audio should stop if: video is buffering OR video isn't ready to produce frames
-      if (videoBuffering || (!videoReady && state.audioEverStarted)) {
-        state.isProgrammaticAudioPause = true;
-        state.videoStallAudioPaused = true;
-        state.stallAudioPausedSince = state.stallAudioPausedSince || now();
-        try { audio.volume = 0; audio.pause(); } catch {}
-        setTimeout(() => { state.isProgrammaticAudioPause = false; }, 200);
+  // --- MakeSureAudioIsntPlayingWhenVideoIsBuffering
+  // Checks REAL video element readyState every frame. Does NOT rely on state flags
+  // (videoWaiting etc.) which get cleared/set by event handlers and have gaps.
+  // If video readyState < HAVE_FUTURE_DATA (3), audio must be paused. Period.
+  const MakeSureAudioIsntPlayingWhenVideoIsBuffering = (() => {
+    let _active = false;
+    function _tick() {
+      if (!_active || !coupledMode || !audio) return;
+      if (document.visibilityState === "hidden" || state.seeking || state.seekBuffering || state.restarting) {
+        requestAnimationFrame(_tick);
+        return;
       }
+      if (!audio.paused) {
+        const vn = getVideoNode();
+        const vrs = vn ? Number(vn.readyState || 0) : 0;
+        const videoPaused = vn ? vn.paused : true;
+        // Video not ready to play = audio must stop
+        const videoNotReady = vrs < HAVE_FUTURE_DATA || videoPaused;
+        // Exception: during first startup kick before audio ever started, allow both to start together
+        if (videoNotReady && state.audioEverStarted && state.firstPlayCommitted && state.intendedPlaying) {
+          state.isProgrammaticAudioPause = true;
+          state.videoStallAudioPaused = true;
+          state.stallAudioPausedSince = state.stallAudioPausedSince || now();
+          try { audio.volume = 0; audio.pause(); } catch {}
+          setTimeout(() => { state.isProgrammaticAudioPause = false; }, 200);
+        }
+      }
+      requestAnimationFrame(_tick);
     }
-    requestAnimationFrame(_audioBufferEnforcer);
-  }
+    function start() { if (!_active) { _active = true; requestAnimationFrame(_tick); } }
+    function stop() { _active = false; }
+    return { start, stop };
+  })();
+
+  // --- MakeSureVIDEOIsntPlayingWhenAudiosBuffering
+  // Same concept but for audio buffering. If audio readyState < HAVE_FUTURE_DATA,
+  // pause video so they stay in sync.
+  const MakeSureVIDEOIsntPlayingWhenAudiosBuffering = (() => {
+    let _active = false;
+    function _tick() {
+      if (!_active || !coupledMode || !audio) return;
+      if (document.visibilityState === "hidden" || state.seeking || state.seekBuffering || state.restarting) {
+        requestAnimationFrame(_tick);
+        return;
+      }
+      const ars = Number(audio.readyState || 0);
+      const vn = getVideoNode();
+      if (vn && !vn.paused && ars < HAVE_FUTURE_DATA && state.audioEverStarted &&
+          state.firstPlayCommitted && state.intendedPlaying) {
+        // Audio not ready — pause video to keep them in sync
+        if (!state.audioStallVideoPaused) {
+          state.audioStallVideoPaused = true;
+          execProgrammaticVideoPause();
+        }
+      } else if (state.audioStallVideoPaused && ars >= HAVE_FUTURE_DATA) {
+        // Audio recovered — resume video
+        state.audioStallVideoPaused = false;
+        if (vn && vn.paused && state.intendedPlaying && !userPauseLockActive()) {
+          execProgrammaticVideoPlay();
+        }
+      }
+      requestAnimationFrame(_tick);
+    }
+    function start() { if (!_active) { _active = true; requestAnimationFrame(_tick); } }
+    function stop() { _active = false; }
+    return { start, stop };
+  })();
+
   if (coupledMode && audio) {
-    _audioEnforcerActive = true;
-    requestAnimationFrame(_audioBufferEnforcer);
+    MakeSureAudioIsntPlayingWhenVideoIsBuffering.start();
+    MakeSureVIDEOIsntPlayingWhenAudiosBuffering.start();
   }
   // Gate audio.currentTime — during seeking, only allow writes from seek handlers
   // (they set _allowAudioTimeWrite=true). Safety: if state.seeking stuck >10s, force-clear.
@@ -3410,20 +3461,20 @@ _seekPostTimers: []
   if (!state.pageFullyLoaded) {
     window.addEventListener("load", () => {
       state.pageFullyLoaded = true;
+      // Only kick startup if playback hasn't already started — prevents double play
+      if (state.firstPlayCommitted && state.audioEverStarted) return;
       if (coupledMode && state.startupPhase && !state.startupPrimed) {
         maybePrimeStartup();
-        if (state.startupPrimed) {
+        if (state.startupPrimed && !state.startupKickDone) {
           scheduleStartupAutoplayKick();
-        } else {
-          // Buffer not ready yet — schedule retry so autoplay isn't lost
+        } else if (!state.startupPrimed) {
           scheduleStartupAutoplayRetry();
         }
-        forceAudioStartupPlay();
+        if (!state.audioEverStarted) forceAudioStartupPlay();
       } else if (coupledMode && state.startupPhase && state.startupPrimed && !state.startupKickDone && !state.firstPlayCommitted) {
-        // Already primed but kick hasn't fired yet — kick now
         scheduleStartupAutoplayKick();
-        forceAudioStartupPlay();
-      } else if (!coupledMode && wantsStartupAutoplay()) {
+        if (!state.audioEverStarted) forceAudioStartupPlay();
+      } else if (!coupledMode && wantsStartupAutoplay() && !state.firstPlayCommitted) {
         scheduleSync(0);
       }
     }, { once: true, passive: true });
