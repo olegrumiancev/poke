@@ -594,17 +594,15 @@ _seekPostTimers: []
     const _origAudioPlay = audio.play.bind(audio);
     audio.play = function() {
       if (state.seeking || state.seekBuffering) return Promise.resolve();
-      if (document.visibilityState !== "hidden") {
-        // Check REAL video readyState, not just flags. This is bulletproof.
-        const vn = getVideoNode();
-        const vrs = vn ? Number(vn.readyState || 0) : 0;
-        // Block if: video not ready (readyState < 3) AND audio has started before
-        // AND we're past startup. During first startup, allow both to start together.
-        if (vrs < HAVE_FUTURE_DATA && state.audioEverStarted && state.firstPlayCommitted) {
-          return Promise.resolve();
+      if (document.visibilityState !== "hidden" && state.audioEverStarted && state.firstPlayCommitted) {
+        // During seek cooldown, readyState drops briefly even for buffered seeks.
+        // Don't block audio during this transient window.
+        const inSeekCooldown = now() < state.seekCooldownUntil;
+        if (!inSeekCooldown) {
+          const vn = getVideoNode();
+          const vrs = vn ? Number(vn.readyState || 0) : 0;
+          if (vrs < HAVE_FUTURE_DATA) return Promise.resolve();
         }
-        // Also block on flags as backup
-        if (state.videoWaiting || state.strictBufferHold) return Promise.resolve();
       }
       return _origAudioPlay();
     };
@@ -622,13 +620,16 @@ _seekPostTimers: []
         requestAnimationFrame(_tick);
         return;
       }
+      // Don't enforce during seek cooldown — readyState drops briefly after seek even for buffered positions
+      if (now() < state.seekCooldownUntil) {
+        requestAnimationFrame(_tick);
+        return;
+      }
       if (!audio.paused) {
         const vn = getVideoNode();
         const vrs = vn ? Number(vn.readyState || 0) : 0;
         const videoPaused = vn ? vn.paused : true;
-        // Video not ready to play = audio must stop
         const videoNotReady = vrs < HAVE_FUTURE_DATA || videoPaused;
-        // Exception: during first startup kick before audio ever started, allow both to start together
         if (videoNotReady && state.audioEverStarted && state.firstPlayCommitted && state.intendedPlaying) {
           state.isProgrammaticAudioPause = true;
           state.videoStallAudioPaused = true;
@@ -1693,10 +1694,10 @@ _seekPostTimers: []
         }
       }
 
-      // Rule 1: Audio should not be paused when video is playing (and not buffering)
+      // Rule 1: Audio should not be paused when video is playing
+      // (MakeSureAudioIsntPlayingWhenVideoIsBuffering handles buffer enforcement)
       if (!vPaused && aPaused && state.intendedPlaying &&
-          t > state.stallAudioResumeHoldUntil && t > state.audioPauseUntil &&
-          !state.strictBufferHold && !state.videoWaiting) {
+          t > state.stallAudioResumeHoldUntil && t > state.audioPauseUntil) {
         // Even if videoStallAudioPaused is set, if video is playing and stall is old, force restart
         if (state.videoStallAudioPaused) {
           state.videoStallAudioPaused = false;
@@ -4922,14 +4923,8 @@ _seekPostTimers: []
     const { squelchMs = 500, minGapMs = 300, force = false } = opts;
     if (!coupledMode || !audio || typeof audio.play !== "function") return false;
 
-    // Never start audio during seeking or seek-buffering — unconditional.
+    // Block during seeking — audio.play() gate also blocks but this is a fast early return
     if (state.seeking || state.seekBuffering) return false;
-    // Block during buffer hold — but allow during startup (audio should start with video)
-    if (state.strictBufferHold && state.audioEverStarted) return false;
-    // Never start audio while video is actively buffering — this is the #1 cause
-    // of audio playing while video is frozen. Allow during startup first kick and background.
-    if (state.videoWaiting && audio.paused && !isHiddenBackground() &&
-        state.audioEverStarted && !state.startupPhase) return false;
 
     // Don't start audio if video is paused — unless force is set (user play,
     // tab return, etc.) or we're in a recent user action window where video
