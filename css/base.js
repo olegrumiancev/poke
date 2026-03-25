@@ -301,15 +301,17 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
 
     // Periodic enforcement — some browsers/extensions re-enable loop
-    // Check every 5s and force-disable if needed
+    // Check every 2s and force-disable if needed (was 5s, reduced for reliability)
     setInterval(() => {
       if (!isLoopDesired()) {
         try {
           const actualLoop = nativeGet ? nativeGet.call(el) : false;
           if (actualLoop) forceNativeLoopFalse();
         } catch {}
+        // Also check the attribute directly
+        try { if (el.hasAttribute("loop")) el.removeAttribute("loop"); } catch {}
       }
-    }, 5000);
+    }, 2000);
   }
   enforceNoLoop(videoEl);
   if (audio) enforceNoLoop(audio);
@@ -1031,7 +1033,8 @@ _seekPostTimers: []
     if (state.restarting || state.seeking || state.seekBuffering) return;
     // In foreground, respect buffer hold. In background, keepalive must fire to keep media alive.
     if (state.strictBufferHold && document.visibilityState !== "hidden") return;
-    if (NotMakePlayBackFixingNoticable.isRecovering()) return;
+    // NMPBFN recovery should not block keepalive when hidden — audio may stop permanently
+    if (NotMakePlayBackFixingNoticable.isRecovering() && document.visibilityState !== "hidden") return;
     // Keep media alive when: hidden, immune (tab transition), or blurred
     // (alt-tab without full tab switch — window loses focus but stays "visible").
     // No BPMM gate — oscillation circuit-breaker must never block keepalive.
@@ -1769,16 +1772,34 @@ _seekPostTimers: []
 
       // Rule 0: Detect and clear STUCK stall state.
       // If video is playing (not paused) but videoWaiting/videoStallAudioPaused are still set,
-      // the stall recovery failed to clear them. Force-clear after 3s to unstick audio.
-      if (!vPaused && state.intendedPlaying) {
+      // the stall recovery failed to clear them. Force-clear after 2s to unstick audio.
+      if (state.intendedPlaying) {
         const stallAge = state.stallAudioPausedSince > 0 ? t - state.stallAudioPausedSince : Infinity;
         if ((state.videoStallAudioPaused || state.videoWaiting) && stallAge > 2000) {
-          state.videoWaiting = false;
-          state.videoStallAudioPaused = false;
-          state.stallAudioPausedSince = 0;
-          state.stallAudioResumeHoldUntil = 0;
-          state.audioPauseUntil = 0;
-          clearBufferHold();
+          // Double-check: is video actually buffering right now?
+          const _r0Vrs = getVideoReadyState();
+          const _r0Spinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+          if (_r0Vrs >= HAVE_FUTURE_DATA && !_r0Spinner) {
+            // Video has data — stall flags are stale, clear them
+            state.videoWaiting = false;
+            state.videoStallSince = 0;
+            state.videoStallAudioPaused = false;
+            state.stallAudioPausedSince = 0;
+            state.stallAudioResumeHoldUntil = 0;
+            state.audioPauseUntil = 0;
+            state.audioEventsSquelchedUntil = 0;
+            clearBufferHold();
+          } else if (stallAge > 6000) {
+            // Even if genuinely buffering, 6s is too long — force-clear
+            state.videoWaiting = false;
+            state.videoStallSince = 0;
+            state.videoStallAudioPaused = false;
+            state.stallAudioPausedSince = 0;
+            state.stallAudioResumeHoldUntil = 0;
+            state.audioPauseUntil = 0;
+            state.audioEventsSquelchedUntil = 0;
+            clearBufferHold();
+          }
         }
         // Clear stuck stallAudioResumeHoldUntil — either expired or >1.5s old
         if (state.stallAudioResumeHoldUntil > 0 && t > state.stallAudioResumeHoldUntil) {
@@ -1788,6 +1809,21 @@ _seekPostTimers: []
         if (state.audioPlayInFlight && state._audioPlayInFlightAt > 0 &&
             (t - state._audioPlayInFlightAt) > 5000) {
           state.audioPlayInFlight = null;
+        }
+        // Clear stuck audioPauseUntil / audioEventsSquelchedUntil (>3s)
+        if (state.audioPauseUntil > 0 && t > state.audioPauseUntil) state.audioPauseUntil = 0;
+        if (state.audioEventsSquelchedUntil > 0 && t > state.audioEventsSquelchedUntil) state.audioEventsSquelchedUntil = 0;
+        // Detect BOTH paused but intendedPlaying — something is wrong, force restart
+        if (vPaused && aPaused && !state.strictBufferHold && !state.seekBuffering && !state.seeking &&
+            document.visibilityState === "visible" && !userPauseLockActive() && !mediaSessionForcedPauseActive()) {
+          clearBufferHold();
+          clearAudioPauseLocks();
+          state.videoWaiting = false;
+          state.videoStallSince = 0;
+          execProgrammaticVideoPlay();
+          safeSetAudioTime(vt);
+          execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
+          _schedule(); return;
         }
       }
 
@@ -1800,9 +1836,14 @@ _seekPostTimers: []
         // CHECK: is video truly ready? If the buffer manager says no, don't restart audio.
         const _vrsRule1 = getVideoReadyState();
         const _vjsWaiting = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
-        if (_vrsRule1 < HAVE_FUTURE_DATA || _vjsWaiting || state.videoWaiting) {
+        if (_vrsRule1 < HAVE_FUTURE_DATA || _vjsWaiting) {
           // Video is NOT ready — do NOT restart audio. Let the buffer manager handle it.
           _schedule(); return;
+        }
+        // readyState is fine — clear stale videoWaiting flag if set
+        if (state.videoWaiting && _vrsRule1 >= HAVE_FUTURE_DATA && !_vjsWaiting) {
+          state.videoWaiting = false;
+          state.videoStallSince = 0;
         }
         // Video is ready — safe to restart audio
         if (state.videoStallAudioPaused) {
@@ -4633,10 +4674,11 @@ _seekPostTimers: []
     if ((isTabReturnImmune() || NotMakePlayBackFixingNoticable.shouldBlockSeek()) && state.firstPlayCommitted) return;
     try {
       if (isFinite(t) && t >= 0) {
-        // Never seek audio backward to near 0 when it's already playing
+        // Never seek audio backward to near 0 when it's already playing — UNLESS user initiated
         if (t < 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired()) {
           const currentAt = Number(audio.currentTime) || 0;
-          if (currentAt > 0.5) return;
+          const _ssRecentUser = (performance.now() - (state.lastUserActionTime || 0)) < 3000;
+          if (currentAt > 0.5 && !_ssRecentUser) return;
         }
         const timeDiff = Math.abs((audio.currentTime || 0) - t);
         if (timeDiff > 0.05) {
@@ -4982,7 +5024,8 @@ _seekPostTimers: []
 
   function execProgrammaticVideoPlay() {
     // Don't play video during strict buffer hold — wait for buffer to fill
-    if (state.strictBufferHold && !state.seekResumeInFlight && !state.startupKickInFlight) return;
+    // Exception: during seek cooldown, the buffer hold may be stale from pre-seek state
+    if (state.strictBufferHold && !state.seekResumeInFlight && !state.startupKickInFlight && !(now() < state.seekCooldownUntil)) return;
     VisibilityGuard.onPlayCalled();
     state.isProgrammaticVideoPlay = true;
     try {
@@ -6107,21 +6150,24 @@ _seekPostTimers: []
       if (coupledMode && audio && !isTabReturnImmune() && !NotMakePlayBackFixingNoticable.shouldBlockSeek()) {
         const _vt = Number(video.currentTime()) || 0;
         const _at = Number(audio.currentTime) || 0;
+        const _recentUser = (now() - state.lastUserActionTime) < 3000;
         // Never seek audio backward to near 0 when it's playing into the track
-        const _wouldRestart = _vt < 0.5 && _at > 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+        const _wouldRestart = _vt < 0.5 && _at > 0.5 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_recentUser;
         if (isFinite(_vt) && !_wouldRestart) {
-          try { audio.currentTime = _vt; } catch {}
+          safeWriteAudioTime(_vt);
         }
       }
       if (forCoupled) {
         state.seekResumeInFlight = true;
         state.videoWaiting = false;
+        state.videoStallSince = 0;
         state.videoStallAudioPaused = false;
         state.stallAudioPausedSince = 0;
         state.stallAudioResumeHoldUntil = 0;
         state.audioPauseUntil = 0;
         state.audioEventsSquelchedUntil = 0;
         state.isProgrammaticAudioPause = false;
+        clearAudioPauseLocks();
         playTogether().catch(() => {}).finally(() => { state.seekResumeInFlight = false; });
       } else {
         state.isProgrammaticVideoPlay = true;
@@ -6204,15 +6250,16 @@ _seekPostTimers: []
     // Sync audio to exact video position — bypass gate, but guard against near-0 restart
     if (isFinite(vtAtFinalize) && coupledMode && audio) {
       const atCurrent = Number(audio.currentTime) || 0;
-      // CRITICAL: never seek audio to near-0 when it's well into the track
-      const wouldRestart = vtAtFinalize < 0.5 && atCurrent > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+      const _fsRecentUser = (now() - state.lastUserActionTime) < 3000;
+      // CRITICAL: never seek audio to near-0 when it's well into the track — UNLESS user initiated
+      const wouldRestart = vtAtFinalize < 0.5 && atCurrent > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_fsRecentUser;
       if (!wouldRestart && Math.abs(atCurrent - vtAtFinalize) > 0.05) {
         safeWriteAudioTime(vtAtFinalize);
         const _fSeekId = state.seekId;
         setTimeout(() => {
           if (state.seekId !== _fSeekId && state.seeking) return;
           const _at = Number(audio.currentTime) || 0;
-          const _wouldRestart2 = vtAtFinalize < 0.5 && _at > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+          const _wouldRestart2 = vtAtFinalize < 0.5 && _at > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_fsRecentUser;
           if (!_wouldRestart2 && Math.abs(_at - vtAtFinalize) > 0.2) {
             safeWriteAudioTime(vtAtFinalize);
           }
@@ -6298,7 +6345,8 @@ _seekPostTimers: []
     const vt2 = Number(video.currentTime());
     if (isFinite(vt2) && coupledMode && audio) {
       const at2 = Number(audio.currentTime) || 0;
-      const _fsWouldRestart = vt2 < 0.5 && at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+      const _fs2RecentUser = (now() - state.lastUserActionTime) < 3000;
+      const _fsWouldRestart = vt2 < 0.5 && at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_fs2RecentUser;
       if (!_fsWouldRestart && Math.abs(at2 - vt2) > 0.05) {
         safeWriteAudioTime(vt2);
       }
@@ -6361,7 +6409,13 @@ _seekPostTimers: []
           if (state.playSessionId !== _seekGuaranteeSession) return;
           if (!state.intendedPlaying || state.seeking || state.restarting) return;
           if (!coupledMode || !audio) return;
-          if (state.strictBufferHold || state.videoWaiting) return;
+          if (state.strictBufferHold) return;
+          // Don't bail on stale videoWaiting — check real readyState instead
+          if (state.videoWaiting) {
+            const _sgVrs = getVideoReadyState();
+            if (_sgVrs >= HAVE_FUTURE_DATA) { state.videoWaiting = false; state.videoStallSince = 0; }
+            else return; // genuinely buffering
+          }
           if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
           const vt = Number(video.currentTime()) || 0;
           // Fix drift only when both are playing and drift is significant
@@ -6826,10 +6880,21 @@ _seekPostTimers: []
             if (!state.resumeOnVisible) {
               state.resumeOnVisible = true;
             }
-            if (state.firstPlayCommitted && state.startupKickDone && !state.bgResumeInFlight &&
-              BackgroundPlaybackManagerManager.shouldAttemptBgResume()) {
-              seamlessBgCatchUp().catch(() => {});
+            // Try to resume in background — keepalive may have failed
+            if (state.firstPlayCommitted && state.startupKickDone && !state.bgResumeInFlight) {
+              if (BackgroundPlaybackManagerManager.shouldAttemptBgResume()) {
+                seamlessBgCatchUp().catch(() => {});
+              } else {
+                // BPMM said no, but if audio has been dead for >3s, force a keepalive kick
+                if (coupledMode && audio && audio.paused && state.intendedPlaying) {
+                  try { audio.play().catch(() => {}); } catch {}
+                }
+                const _bgVn = getVideoNode();
+                if (_bgVn && _bgVn.paused && state.intendedPlaying) {
+                  try { _bgVn.play().catch(() => {}); } catch {}
+                }
               }
+            }
           } else {
             // Don't schedule a bgResumeRetry if executeSeamlessWakeup is already pending —
             // competing resume attempts produce the visible play→pause stutter on tab return.
@@ -6884,18 +6949,26 @@ _seekPostTimers: []
           // Catch audio playing while video is buffering (videoWaiting set between runSync cycles).
           // This is a safety net — the waiting handler is the primary fix, but runSync
           // provides a ~500ms backstop for any edge case that slips through.
-          if (state.videoWaiting && coupledMode && !aPaused && !NotMakePlayBackFixingNoticable.isActive() && !(now() < state.audioStartGraceUntil)) {
-            state.videoStallAudioPaused = true;
-            state.stallAudioPausedSince = now();
-            state.audioPausedSince = 0;
-            state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
-            cancelActiveFade();
-            state.isProgrammaticAudioPause = true;
-            // Don't increment audioPlayGeneration — it kills in-flight play attempts
-            squelchAudioEvents(5200);
-            state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 5000);
-            try { audio.volume = 0; audio.pause(); } catch {}
-            setTimeout(() => { state.isProgrammaticAudioPause = false; }, 500);
+          if (state.videoWaiting && coupledMode && !aPaused && !NotMakePlayBackFixingNoticable.isActive() && !(now() < state.audioStartGraceUntil) && !(now() < state.seekCooldownUntil)) {
+            // Verify with real readyState — videoWaiting flag can be stale
+            const _syncVrs = getVideoReadyState();
+            const _syncSpinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+            if (_syncVrs < HAVE_FUTURE_DATA || _syncSpinner) {
+              state.videoStallAudioPaused = true;
+              state.stallAudioPausedSince = now();
+              state.audioPausedSince = 0;
+              state.stallAudioResumeHoldUntil = now() + MIN_STALL_AUDIO_RESUME_MS;
+              cancelActiveFade();
+              state.isProgrammaticAudioPause = true;
+              squelchAudioEvents(800);
+              state.audioPauseUntil = Math.max(state.audioPauseUntil, now() + 800);
+              try { audio.volume = 0; audio.pause(); } catch {}
+              setTimeout(() => { state.isProgrammaticAudioPause = false; }, 500);
+            } else {
+              // readyState is fine — clear stale videoWaiting
+              state.videoWaiting = false;
+              state.videoStallSince = 0;
+            }
           }
           state.audioPausedSince = 0;
           state.videoSyncRetryTs = 0;
@@ -8225,12 +8298,15 @@ _seekPostTimers: []
       }
       // --- coupled mode: UltraStabilizer: notify video playing
       try { UltraStabilizer.onVideoPlaying(); } catch {}
-      // Clear videoWaiting — video is confirmed playing, it has data
-      if (getVideoReadyState() >= HAVE_CURRENT_DATA) {
-        state.videoWaiting = false;
-      }
-      state.startupAudioHoldUntil = 0;
+      // Clear videoWaiting — video is confirmed playing, it MUST have data
+      state.videoWaiting = false;
       state.videoStallSince = 0;
+      state.startupAudioHoldUntil = 0;
+      // Also clear stall audio pause if video is now confirmed playing
+      if (state.videoStallAudioPaused && getVideoReadyState() >= HAVE_FUTURE_DATA) {
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+      }
 
       // If video is playing during autoplay startup but intendedPlaying isn't set yet,
       // set it now — UNLESS user explicitly paused.
@@ -8827,14 +8903,20 @@ _seekPostTimers: []
         state.seekCooldownUntil = now() + 1500;
 
         state.videoWaiting = false;
+        state.videoStallSince = 0;
         state.audioWaiting = false;
         state.audioStallVideoPaused = false;
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+        state.stallAudioResumeHoldUntil = 0;
         if (state._stallVideoPauseTimer) { clearTimeout(state._stallVideoPauseTimer); state._stallVideoPauseTimer = null; }
         if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
         clearAudioPauseLocks();
         state.stateChangeCooldownUntil = 0;
         state.audioFadeCompleteUntil = 0;
         state.audioPlayUntil = 0;
+        state.audioPauseUntil = 0;
+        state.audioEventsSquelchedUntil = 0;
         clearBufferHold();
 
         const watchdogSeekId = state.seekId;
@@ -8898,6 +8980,13 @@ _seekPostTimers: []
         clearAudioPauseLocks();
         state.audioWaiting = false;
         state.audioStallVideoPaused = false;
+        // Clear stale stall flags — seek completed, fresh data at new position
+        state.videoWaiting = false;
+        state.videoStallSince = 0;
+        state.videoStallAudioPaused = false;
+        state.stallAudioPausedSince = 0;
+        state.stallAudioResumeHoldUntil = 0;
+        if (state._stallAudioPauseTimer) { clearTimeout(state._stallAudioPauseTimer); state._stallAudioPauseTimer = null; }
         // Get the definitive seek target — video.currentTime() is reliable after seeked
         const newTime = Number(video.currentTime());
         state.lastKnownGoodVT = newTime;
@@ -8905,8 +8994,9 @@ _seekPostTimers: []
         state.pendingSeekTarget = newTime;
         if (coupledMode && audio && isFinite(newTime) && newTime >= 0) {
           const _curAudioTime = Number(audio.currentTime) || 0;
-          // Guard: never seek audio to near-0 when it's well into playback
-          const _wouldRestart = newTime < 0.5 && _curAudioTime > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+          const _recentUserSeek = (now() - state.lastUserActionTime) < 3000;
+          // Guard: never seek audio to near-0 when it's well into playback — UNLESS user initiated
+          const _wouldRestart = newTime < 0.5 && _curAudioTime > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_recentUserSeek;
           if (!_wouldRestart && Math.abs(_curAudioTime - newTime) > 0.2) {
             safeWriteAudioTime(newTime);
           }
@@ -8914,7 +9004,7 @@ _seekPostTimers: []
           setTimeout(() => {
             if (state.seekId !== _seekedId) return;
             const _at2 = Number(audio.currentTime) || 0;
-            const _wr2 = newTime < 0.5 && _at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired();
+            const _wr2 = newTime < 0.5 && _at2 > 1.0 && state.firstPlayCommitted && !state.restarting && !isLoopDesired() && !_recentUserSeek;
             if (!_wr2 && Math.abs(_at2 - newTime) > 0.15) safeWriteAudioTime(newTime);
           }, 80);
         }
@@ -8934,6 +9024,50 @@ _seekPostTimers: []
         } catch {}
         if (isLoopDesired()) { restartLoop().catch(() => {}); return; }
         hardStop();
+      });
+
+      // --- Anti-loop detection via timeupdate
+      // The seeking handler catches most auto-loops, but if the browser loops
+      // without firing "seeking" (some browsers do this), we catch it here.
+      // Track position and detect backward jumps from near-end to near-start.
+      let _lastTimeupdateVt = 0;
+      let _lastTimeupdateTs = 0;
+      video.on("timeupdate", () => {
+        if (isLoopDesired() || state.restarting || state.seeking || state.seekBuffering) {
+          _lastTimeupdateVt = Number(video.currentTime()) || 0;
+          _lastTimeupdateTs = now();
+          return;
+        }
+        const ct = Number(video.currentTime()) || 0;
+        const dur = (() => { try { return Number(video.duration()) || 0; } catch { return 0; } })();
+        if (dur > 1 && state.firstPlayCommitted) {
+          // Detect: position was near end (>dur-3), now it's near start (<1.5)
+          // AND no recent user action (user restart is fine)
+          const _wasNearEnd = _lastTimeupdateVt > dur - 3;
+          const _nowNearStart = ct < 1.5;
+          const _recentUser = (now() - state.lastUserActionTime) < 3000;
+          const _timeSinceLast = now() - _lastTimeupdateTs;
+          if (_wasNearEnd && _nowNearStart && !_recentUser && _timeSinceLast < 2000) {
+            // Browser auto-looped without our knowledge — stop it
+            hardStop();
+            // Force native loop off again
+            try {
+              const _nDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "loop");
+              if (_nDesc && _nDesc.set) { _nDesc.set.call(videoEl, false); }
+              videoEl.removeAttribute("loop");
+              const _inner = video?.el?.()?.querySelector?.("video");
+              if (_inner && _inner !== videoEl) {
+                if (_nDesc && _nDesc.set) _nDesc.set.call(_inner, false);
+                _inner.removeAttribute("loop");
+              }
+            } catch {}
+            _lastTimeupdateVt = ct;
+            _lastTimeupdateTs = now();
+            return;
+          }
+        }
+        _lastTimeupdateVt = ct;
+        _lastTimeupdateTs = now();
       });
   }
 
@@ -9312,6 +9446,25 @@ _seekPostTimers: []
           // without the aggressive seeking that causes glitches
           setFastSync(800);
           scheduleSync(300);
+
+          // Safety fallback: if playback hasn't resumed 2s after tab return, force it
+          const _tabReturnSession = state.playSessionId;
+          setTimeout(() => {
+            if (state.playSessionId !== _tabReturnSession) return;
+            if (!state.intendedPlaying || state.seeking || state.restarting) return;
+            if (userPauseLockActive() || mediaSessionForcedPauseActive()) return;
+            if (document.visibilityState !== "visible") return;
+            const _vn = getVideoNode();
+            if (_vn && _vn.paused) {
+              try { _vn.play().catch(() => {}); } catch {}
+            }
+            if (coupledMode && audio && audio.paused) {
+              clearAudioPauseLocks();
+              const _vt = safeGetVideoTime();
+              if (isFinite(_vt)) safeSetAudioTime(_vt);
+              execProgrammaticAudioPlay({ squelchMs: 300, force: true, minGapMs: 0 }).catch(() => {});
+            }
+          }, 2000);
         }
         // Startup retry on tab-return: kick the startup kick regardless.
         if (wantsStartupAutoplay()) {
