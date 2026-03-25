@@ -236,8 +236,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function isLoopDesired() {
     // Explicit no-loop override via query param or global
     if (qs.get("loop") === "0" || qs.get("loop") === "false" || window.forceNoLoop === true) return false;
-    // Check native element loop property directly — if explicitly set to false, respect it
-    try { if (videoEl.loop === false && !_userExplicitLoop) return false; } catch {}
+    // Check the _userExplicitLoop flag (set at init from HTML attr) and query params.
+    // DO NOT read videoEl.loop here — it would recurse through our property descriptor.
     return _userExplicitLoop ||
     qs.get("loop") === "1" ||
     qs.get("loop") === "true" ||
@@ -270,17 +270,22 @@ document.addEventListener("DOMContentLoaded", () => {
     // Set native loop state FIRST, before installing property descriptor
     if (!isLoopDesired()) forceNativeLoopFalse();
 
-    // Install property descriptor that intercepts JS-level loop access
+    // Install property descriptor that intercepts JS-level loop access.
+    // el.loop = true/false passes through to native normally.
+    // _userExplicitLoop tracks whether the user INTENTIONALLY wants loop
+    // (set via HTML attribute at load time, or via video.loop = true at runtime).
+    // The anti-loop detection (timeupdate, play event, ended event) checks isLoopDesired()
+    // which reads _userExplicitLoop. If nobody explicitly set loop=true, auto-loops are blocked.
     try {
       Object.defineProperty(el, "loop", {
-        get() { return isLoopDesired(); },
+        get() {
+          try { return nativeGet ? nativeGet.call(el) : false; } catch { return false; }
+        },
         set(v) {
           if (v) {
-            // User/code wants loop enabled — honor it
             _userExplicitLoop = true;
             if (nativeSet) nativeSet.call(el, true);
           } else {
-            // User/code wants loop disabled — honor it
             _userExplicitLoop = false;
             forceNativeLoopFalse();
           }
@@ -631,18 +636,19 @@ _seekPostTimers: []
       // allow audio.play() through so it can start alongside video. The RAF manager
       // will catch any issues post-startup.
       if (document.visibilityState !== "hidden" && state.audioEverStarted && state.firstPlayCommitted) {
-        const inSeekCooldown = now() < state.seekCooldownUntil;
-        // ALWAYS check Video.js spinner — even during seek cooldown.
-        // The spinner is the most reliable indicator of actual buffering.
+        // ALWAYS check Video.js spinner — the most reliable indicator of actual buffering.
         try {
           const vjsEl = video?.el?.();
           if (vjsEl && vjsEl.classList && vjsEl.classList.contains("vjs-waiting")) return Promise.resolve();
         } catch {}
-        if (!inSeekCooldown) {
-          const vn = getVideoNode();
-          const vrs = vn ? Number(vn.readyState || 0) : 0;
-          if (vrs < HAVE_FUTURE_DATA) return Promise.resolve();
-        }
+        // ALWAYS check readyState — even during seek cooldown.
+        // readyState < HAVE_CURRENT_DATA (2) means truly no data at current position.
+        // readyState < HAVE_FUTURE_DATA (3) means not enough to play smoothly.
+        const vn = getVideoNode();
+        const vrs = vn ? Number(vn.readyState || 0) : 0;
+        if (vrs < HAVE_CURRENT_DATA) return Promise.resolve(); // Hard block: no data at all
+        const inSeekCooldown = now() < state.seekCooldownUntil;
+        if (!inSeekCooldown && vrs < HAVE_FUTURE_DATA) return Promise.resolve(); // Soft block: not enough for smooth play
       }
       return _origAudioPlay();
     };
@@ -1057,8 +1063,22 @@ _seekPostTimers: []
     const t = now();
     if (isVisible && t - _lastKeepalivePlayAt < 500) return;
     _lastKeepalivePlayAt = t;
+    // In foreground: check video buffer state before playing audio.
+    // In background: video readyState may be stale (browsers throttle bg video),
+    // so only check if visible.
     if (coupledMode && audio && audio.paused && state.intendedPlaying) {
-      try { audio.play().catch(() => {}); } catch {}
+      if (isVisible) {
+        // Foreground keepalive: check video readyState + spinner before audio.play()
+        const _klVn = getVideoNode();
+        const _klRS = _klVn ? Number(_klVn.readyState || 0) : 0;
+        const _klSpinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+        if (_klRS >= HAVE_FUTURE_DATA && !_klSpinner) {
+          try { audio.play().catch(() => {}); } catch {}
+        }
+      } else {
+        // Background keepalive: audio can play while video is throttled
+        try { audio.play().catch(() => {}); } catch {}
+      }
     }
     if (state.intendedPlaying) {
       try {
@@ -1394,9 +1414,17 @@ _seekPostTimers: []
           try { vn.play().catch(() => {}); } catch {}
         }
 
-        // Play audio
+        // Play audio — but ONLY if video is ready (readyState check).
+        // NMPBFN recovery should NOT cause audio during video buffering.
         if (coupledMode && audio && audio.paused) {
-          try { audio.play().catch(() => {}); } catch {}
+          const _nmpVn = getVideoNode();
+          const _nmpRS = _nmpVn ? Number(_nmpVn.readyState || 0) : 0;
+          const _nmpSpinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+          // In background, video readyState may be stale — allow audio
+          // In foreground, require video to be ready
+          if (document.visibilityState === "hidden" || (_nmpRS >= HAVE_FUTURE_DATA && !_nmpSpinner)) {
+            try { audio.play().catch(() => {}); } catch {}
+          }
         }
 
         // Ensure video isn't muted
@@ -4311,6 +4339,8 @@ _seekPostTimers: []
     if (userPauseIntentActive() || userPauseLockActive()) return false;
     if (detectLoop()) return true;
     if (inBgReturnGrace()) return true;
+    // During seek resume or cooldown, suppress pause events — seek machinery owns playback
+    if ((state.seekResumeInFlight || now() < state.seekCooldownUntil) && state.intendedPlaying) return true;
 
     if (
       document.visibilityState === "visible" &&
@@ -4953,20 +4983,36 @@ _seekPostTimers: []
 
     if (getVideoPaused() && !isHiddenBackground()) return true;
 
-    // These checks must run BEFORE the bgPlaybackAllowed early-return (bgPlaybackAllowed is always true).
-    // Block audio when video is actively buffering/stalled — but with a safety timeout.
-    // If these flags have been stuck for >8s, something went wrong; force-clear them
-    // to prevent permanent audio disconnection.
+    // REAL readyState + spinner check — the definitive source of truth.
+    // State flags (videoWaiting etc.) can be stale; readyState is always current.
+    if (document.visibilityState !== "hidden") {
+      const _vn = getVideoNode();
+      const _realRS = _vn ? Number(_vn.readyState || 0) : 0;
+      const _vjsSpinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+      // Block if video readyState < HAVE_FUTURE_DATA (3) OR Video.js spinner visible
+      if (_realRS < HAVE_FUTURE_DATA || _vjsSpinner) {
+        // Safety: don't block forever — if stalled for >4s, force-allow
+        const stallAge = state.videoStallSince ? (now() - state.videoStallSince) : 0;
+        if (stallAge > 4000) {
+          state.videoWaiting = false;
+          state.videoStallAudioPaused = false;
+          state.stallAudioResumeHoldUntil = 0;
+          state.stallAudioPausedSince = 0;
+          state.videoStallSince = 0;
+        } else if (!(now() < state.audioStartGraceUntil)) {
+          return true; // BLOCK — video not ready
+        }
+      }
+    }
+    // Also check state flags as secondary signal
     const stallAge = state.videoStallSince ? (now() - state.videoStallSince) : 0;
     if (stallAge > 4000) {
-      // Safety release — stall flags stuck >4s, force-clear to reconnect audio
       state.videoWaiting = false;
       state.videoStallAudioPaused = false;
       state.stallAudioResumeHoldUntil = 0;
       state.stallAudioPausedSince = 0;
       state.videoStallSince = 0;
     } else {
-      // During audio start grace, don't block — audio just started, let it stabilize
       if (now() < state.audioStartGraceUntil) { /* allow */ }
       else if (state.videoWaiting) return true;
       if (state.videoStallAudioPaused && !(now() < state.audioStartGraceUntil)) return true;
@@ -5175,6 +5221,22 @@ _seekPostTimers: []
       const isUserPlay = (now() - state.lastUserActionTime) < 2000;
       if (audioActuallyPaused) {
         cancelActiveFade();
+      }
+
+      // HARD BUFFER GATE — even with force:true, NEVER start audio when video is actively buffering.
+      // The Video.js spinner is the single most reliable signal. Also check readyState.
+      // Exceptions: background, startup kick, recent user action (user pressed play),
+      // tab-return immunity (NMPBFN handles sync), seek resume.
+      if (document.visibilityState !== "hidden" && state.audioEverStarted && state.firstPlayCommitted &&
+          (now() - state.lastUserActionTime) > 1500 && !isTabReturnImmune() &&
+          !state.seekResumeInFlight && !state.startupKickInFlight) {
+        const _epVn = getVideoNode();
+        const _epRS = _epVn ? Number(_epVn.readyState || 0) : 0;
+        const _epSpinner = (() => { try { const e = video?.el?.(); return e && e.classList && e.classList.contains("vjs-waiting"); } catch { return false; } })();
+        if (_epSpinner || _epRS < HAVE_FUTURE_DATA) {
+          state.isProgrammaticAudioPlay = false;
+          return false;
+        }
       }
 
       const p = audio.play();
@@ -6435,6 +6497,9 @@ _seekPostTimers: []
             softUnmuteAudio(100).catch(() => {});
           }
         } else if (state.seekId === currentSeekId || !state.seeking) {
+          // Guard pause events during seek resume — browser may fire transient pauses
+          setPauseEventGuard(800);
+          markMediaAction("play");
           await playTogether().catch(() => {});
         }
       }
@@ -7981,6 +8046,16 @@ _seekPostTimers: []
       // Also check the native element's seeking flag — the "seeking" event handler
       // may not have fired yet, but the element is already seeking
       try { if (getVideoNode()?.seeking) return; } catch {}
+      // During seek resume or seek cooldown, suppress pause events — the seek
+      // machinery is actively restoring playback. Counter-play immediately.
+      if ((state.seekResumeInFlight || (now() < state.seekCooldownUntil)) &&
+          state.intendedPlaying &&
+          !(state.userPauseIntentPresetAt > 0 && (now() - state.userPauseIntentPresetAt) < 2000) &&
+          !userPauseLockActive()) {
+        const _vn = getVideoNode();
+        if (_vn && typeof _vn.play === 'function') _vn.play().catch(() => {});
+        return;
+      }
       // Immunity check: after tab return, reject pause events if we were playing or in startup.
       // Never fight the user's explicit pause.
       if (state.tabReturnImmuneUntil > now() &&
