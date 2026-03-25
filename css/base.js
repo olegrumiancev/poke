@@ -603,6 +603,11 @@ _seekPostTimers: []
           const vn = getVideoNode();
           const vrs = vn ? Number(vn.readyState || 0) : 0;
           if (vrs < HAVE_FUTURE_DATA) return Promise.resolve();
+          // Also check Video.js spinner
+          try {
+            const vjsEl = video?.el?.();
+            if (vjsEl && vjsEl.classList && vjsEl.classList.contains("vjs-waiting")) return Promise.resolve();
+          } catch {}
         }
       }
       return _origAudioPlay();
@@ -624,6 +629,13 @@ _seekPostTimers: []
       const vrs = Number(vn.readyState || 0);
       if (vn.paused) return false;
       if (vrs < HAVE_FUTURE_DATA) { _videoReadySince = 0; return false; }
+      // Check Video.js spinner — if visible, video is buffering regardless of readyState
+      try {
+        const vjsEl = video?.el?.();
+        if (vjsEl && vjsEl.classList && vjsEl.classList.contains("vjs-waiting")) {
+          _videoReadySince = 0; return false;
+        }
+      } catch {}
       // Video readyState is >= 3. Has it been stable for READY_CONFIRM_MS?
       if (!_videoReadySince) _videoReadySince = now();
       return (now() - _videoReadySince) >= READY_CONFIRM_MS;
@@ -3409,7 +3421,7 @@ _seekPostTimers: []
   const USER_SPAM_ACTIVE_MS = 1500;        // how long spam state stays active after threshold
   const MAX_AUDIO_PLAY_ATTEMPTS = 8;
   const AUDIO_PLAY_ATTEMPT_RESET_MS = 5000;
-  const AUDIO_STARTUP_PLAY_RETRY_MS = 300;
+  const AUDIO_STARTUP_PLAY_RETRY_MS = 150; // Fast retries for quick audio startup
   const MAX_AUDIO_STARTUP_RETRIES = 20;
   const STARTUP_SETTLE_MS = 1500;
   const LOOP_DETECTION_WINDOW_MS = 2000;
@@ -8150,10 +8162,12 @@ _seekPostTimers: []
         state.bufferHoldIntendedPlaying = true;
       }
 
-      // SINGLE audio kick: video is confirmed playing. Start audio immediately.
-      // Don't gate on strictBufferHold/videoWaiting here — execProgrammaticAudioPlay
-      // handles that with startup awareness (allows first audio start).
+      // SINGLE audio kick: only when video has ENOUGH data to sustain playback.
+      // readyState >= 3 (HAVE_FUTURE_DATA) means at least 1 frame ahead. This prevents
+      // audio blips from brief "playing" events at readyState 2.
+      const _vrsForKick = Number(getVideoNode()?.readyState || 0);
       if (coupledMode && audio && audio.paused && state.intendedPlaying &&
+          _vrsForKick >= HAVE_FUTURE_DATA &&
           !userPauseLockActive() && !mediaSessionForcedPauseActive() &&
           !state.seeking && !state.seekBuffering && !NotMakePlayBackFixingNoticable.isRecovering()) {
         clearAudioPauseLocks();
