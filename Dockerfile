@@ -1,11 +1,5 @@
-## To build the image, run:
-## docker build -t poketube .
-
-## To run the image, run:
-## docker run -d  -p 6003:6003 poketube
-
 # Base (Debian)
-FROM debian
+FROM debian:12-slim
 
 # Set Work Directory
 WORKDIR /poketube
@@ -14,21 +8,19 @@ COPY . /poketube
 # Expose Ports
 EXPOSE 6003
 
-# Install Requirements
-RUN apt-get update && apt-get -y install \
-    libcurl4-openssl-dev make g++ ca-certificates curl gnupg
+# Install build deps + Node + Python 3.11
+RUN apt-get update && apt-get install -y \
+    ca-certificates curl gnupg make g++ \
+    nodejs npm \
+    python3.11 python3.11-venv python3.11-distutils \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install NodeJS v18
-RUN mkdir -p /etc/apt/keyrings
-RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-
-RUN echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_16.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-
-RUN apt-get update
-RUN apt-get -y install nodejs npm
+# Make sure node-gyp uses Python 3.11 (has distutils) [web:39][web:44]
+ENV PYTHON=/usr/bin/python3.11
 
 # Install Packages
 RUN npm install
 
 # Run
-CMD npm start
+CMD ["npm", "start"]
